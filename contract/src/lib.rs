@@ -5,12 +5,15 @@
 //! account, and `setup_finalize` deletes the deployer's full-access key, so
 //! from then on funds only move through this contract's rules.
 
+use near_sdk::json_types::U128;
 use near_sdk::store::IterableMap;
 use near_sdk::{env, near, BorshStorageKey, PanicOnDefault};
 use tapvault_core::{domain, policy};
 
 pub mod auth;
 pub mod error;
+pub mod events;
+pub mod setup;
 pub mod types;
 
 use auth::{verify_p256, NearSha256};
