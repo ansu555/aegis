@@ -4,3 +4,9 @@ neardev/
 *.wasm
 __pycache__/
 .DS_Store
+android/.gradle/
+android/build/
+android/*/build/
+android/local.properties
+android/.kotlin/
+android/app/src/main/assets/tapvault_contract.wasm
