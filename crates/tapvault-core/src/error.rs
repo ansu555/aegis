@@ -18,6 +18,13 @@ pub enum CoreError {
     EmvModulusTooLarge,
     EmvTerminalDataLayout,
     EmvChallengeMismatch,
+    // WebAuthn
+    WebAuthnAuthDataTooShort,
+    WebAuthnRpIdMismatch,
+    WebAuthnUserNotPresent,
+    WebAuthnUserNotVerified,
+    WebAuthnTypeMismatch,
+    WebAuthnChallengeMismatch,
 }
 
 impl fmt::Display for CoreError {
