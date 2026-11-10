@@ -13,6 +13,7 @@ use tapvault_core::{domain, policy};
 pub mod auth;
 pub mod error;
 pub mod events;
+pub mod proposals;
 pub mod setup;
 pub mod types;
 
@@ -107,4 +108,8 @@ fn account_bytes() -> Vec<u8> {
 /// Block time in whole seconds.
 fn now_secs() -> i64 {
     (env::block_timestamp_ms() / 1000) as i64
+}
+
+fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
 }
