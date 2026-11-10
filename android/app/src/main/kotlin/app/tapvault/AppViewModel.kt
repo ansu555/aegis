@@ -219,7 +219,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (store.setupStep < 1) {
             progress("Creating your wallet account on NEAR testnet")
-            val a = ob.createAccounts()
+            val sponsor = BuildConfig.SPONSOR_ACCOUNT.takeIf { it.isNotBlank() }?.let { Onboarding.Sponsor(it, NearKey.fromSecret(BuildConfig.SPONSOR_KEY)) }
+            val a = ob.createAccounts(sponsor = sponsor) { note(it) }
             store.walletAccount = a.wallet; store.walletKey = a.walletKey.secretString()
             store.gasAccount = a.gas; store.gasKey = a.gasKey.secretString()
             setStep(1)
