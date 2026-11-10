@@ -447,6 +447,9 @@ fn open_proposals_are_capped_per_signer() {
     fails("too many open proposals", || {
         w.propose_by_phone(send_near(NEAR));
     });
+    // proposals that can no longer complete don't keep blocking the owner
+    w.advance(tapvault_contract::CARD_APPROVAL_WINDOW + 61);
+    w.propose_by_phone(send_near(NEAR));
 }
 
 #[test]

@@ -47,9 +47,17 @@ impl Tapvault {
             }
         }
 
-        let open = self.proposals.values().filter(|p| p.proposer == idx).count();
-        check(open < MAX_OPEN_PER_SIGNER, ERR_TOO_MANY_OPEN);
+        // Count only proposals that can still complete: same signer set, and
+        // either already approved or still inside the card-approval window.
+        // Dead ones don't block the owner; close_stale cleans them up.
         let now = now_secs();
+        let epoch = self.signer_epoch;
+        let live = |p: &Proposal| {
+            p.signer_epoch == epoch
+                && (p.ready_ts.is_some() || now <= p.created_ts.saturating_add(CARD_APPROVAL_WINDOW + 60))
+        };
+        let open = self.proposals.values().filter(|p| p.proposer == idx && live(p)).count();
+        check(open < MAX_OPEN_PER_SIGNER, ERR_TOO_MANY_OPEN);
         check(
             policy::rate_limit(&mut self.rate_window_start, &mut self.proposals_in_window, idx as usize, now),
             ERR_RATE_LIMITED,

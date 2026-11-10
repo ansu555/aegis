@@ -251,13 +251,13 @@ pub struct Proposal {
     /// When the proposal first had every approval it needs. Delays run from
     /// here, so the owner always gets the full delay to react.
     pub ready_ts: Option<i64>,
-    /// When the card challenge seed was sealed. Card approvals must follow
-    /// within `CARD_APPROVAL_WINDOW`.
     /// Bit i set ⇔ signers[i] approved.
     pub approvals: u8,
     /// Block randomness captured in a later block than the proposal; the
     /// card approval challenge is derived from it. `None` until sealed.
     pub seed: Option<[u8; 32]>,
+    /// When the seed was sealed. Card approvals must follow within
+    /// `CARD_APPROVAL_WINDOW`.
     pub sealed_ts: Option<i64>,
     pub action: Action,
 }
