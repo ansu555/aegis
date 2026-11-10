@@ -18,6 +18,7 @@ pub mod guard;
 pub mod proposals;
 pub mod setup;
 pub mod types;
+pub mod views;
 
 use auth::{verify_p256, NearSha256};
 use error::*;
