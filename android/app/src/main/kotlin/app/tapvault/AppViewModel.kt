@@ -133,8 +133,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     val act = activity ?: throw IllegalStateException("app is not in the foreground")
                     if (!act.hasNfc) throw IllegalStateException("This phone has no NFC. Use the demo card (Settings).")
                     if (!act.nfcEnabled) throw IllegalStateException("Turn on NFC in Android settings, then try again.")
-                    val tag = act.awaitTag().get(2, TimeUnit.MINUTES)
-                    IsoDepTransceiver(tag).use { block(it) }
+                    try {
+                        val tag = act.awaitTag().get(2, TimeUnit.MINUTES)
+                        IsoDepTransceiver(tag).use { block(it) }
+                    } finally {
+                        act.stopReader()
+                    }
                 }
             } catch (e: android.nfc.TagLostException) {
                 note("card moved away (attempt ${attempt + 1}); hold it still")
@@ -203,7 +207,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val ob = Onboarding(near)
         if (!KeystoreSigner.exists()) {
             progress("Creating your phone key in secure hardware")
-            KeystoreSigner.create()
+            try {
+                KeystoreSigner.create()
+            } catch (e: java.security.GeneralSecurityException) {
+                throw IllegalStateException("Set up a screen lock (PIN, pattern or fingerprint) on this phone first. (${e.message})")
+            } catch (e: IllegalStateException) {
+                throw IllegalStateException("Set up a screen lock (PIN, pattern or fingerprint) on this phone first. (${e.message})")
+            }
             note("phone key stored in ${phone.hardwareLabel}")
         }
         if (store.setupStep < 1) {

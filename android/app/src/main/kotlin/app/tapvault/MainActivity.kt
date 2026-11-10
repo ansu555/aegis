@@ -47,13 +47,21 @@ class MainActivity : FragmentActivity() {
         )
     }
 
-    /** Arm the NFC reader and return a future that completes with the next card. */
+    /**
+     * Arm the NFC reader and return a future that completes with the next
+     * card. The reader stays on until [stopReader]: switching it off while
+     * the card is still signing would drop the link.
+     */
     fun awaitTag(): CompletableFuture<Tag> {
         val f = CompletableFuture<Tag>()
         pendingTag = f
         runOnUiThread { startReader() }
-        f.whenComplete { _, _ -> runOnUiThread { nfc?.disableReaderMode(this) } }
         return f
+    }
+
+    fun stopReader() {
+        pendingTag = null
+        runOnUiThread { nfc?.disableReaderMode(this) }
     }
 
     fun cancelTag() {
