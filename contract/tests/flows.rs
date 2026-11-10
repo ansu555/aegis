@@ -1,0 +1,429 @@
+//! End-to-end flows against the contract in near-sdk's mocked runtime, with
+//! a software phone key (P-256) and the simulated EMV card. Everything the
+//! signers sign is computed here independently from the contract.
+
+#![allow(unused_must_use)] // `execute` returns a promise we don't run here
+
+use std::panic::{catch_unwind, AssertUnwindSafe};
+
+use near_sdk::json_types::{Base64VecU8, U128, U64};
+use near_sdk::test_utils::VMContextBuilder;
+use near_sdk::{testing_env, NearToken, PromiseOrValue};
+use p256::ecdsa::signature::Signer;
+use p256::ecdsa::{Signature, SigningKey};
+use tapvault_contract::setup::Possession;
+use tapvault_contract::types::*;
+use tapvault_contract::Tapvault;
+use tapvault_core::testcard::TestCard;
+use tapvault_core::{domain, SoftSha256 as S};
+
+const WALLET: &str = "wallet.testnet";
+const RELAYER: &str = "relayer.testnet";
+const DAY: i64 = 86_400;
+const NEAR: u128 = 1_000_000_000_000_000_000_000_000;
+const T0: i64 = 1_800_000_000;
+
+fn acct() -> &'static [u8] {
+    WALLET.as_bytes()
+}
+
+fn b64(v: impl Into<Vec<u8>>) -> Base64VecU8 {
+    Base64VecU8(v.into())
+}
+
+fn ctx(predecessor: &str, t: i64, seed: u8) {
+    testing_env!(VMContextBuilder::new()
+        .current_account_id(WALLET.parse().unwrap())
+        .predecessor_account_id(predecessor.parse().unwrap())
+        .signer_account_id(predecessor.parse().unwrap())
+        .block_timestamp(t as u64 * 1_000_000_000)
+        .block_height((t - T0) as u64 + 100)
+        .random_seed([seed; 32])
+        .account_balance(NearToken::from_near(100))
+        .build());
+}
+
+/// Run `f` and require that it panics with a message containing `msg`.
+fn fails(msg: &str, f: impl FnOnce()) {
+    let err = catch_unwind(AssertUnwindSafe(f)).expect_err("call should have failed");
+    let text = err
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| err.downcast_ref::<&str>().map(|s| s.to_string()))
+        .unwrap_or_default();
+    assert!(text.contains(msg), "expected {msg:?}, got {text:?}");
+}
+
+struct Phone(SigningKey);
+
+impl Phone {
+    fn new(k: u8) -> Self {
+        Phone(SigningKey::from_slice(&[k; 32]).unwrap())
+    }
+    fn key(&self) -> SignerKey {
+        SignerKey::P256 { pubkey: b64(self.0.verifying_key().to_encoded_point(true).as_bytes()), webauthn: None }
+    }
+    fn sign(&self, msg: &[u8; 32]) -> P256Sig {
+        let s: Signature = self.0.sign(msg);
+        P256Sig { signature: b64(s.to_bytes().to_vec()), webauthn: None }
+    }
+}
+
+struct Card(TestCard);
+
+impl Card {
+    fn new() -> Self {
+        Card(TestCard::default())
+    }
+    fn key(&self) -> SignerKey {
+        SignerKey::EmvCard {
+            modulus: b64(self.0.modulus.clone()),
+            exponent: self.0.exponent,
+            un_offset: TestCard::UN_OFFSET,
+            un_len: TestCard::UN_LEN,
+            terminal_data_len: TestCard::TERMINAL_DATA_LEN,
+        }
+    }
+    fn tap(&mut self, challenge: &[u8; 32]) -> CardSig {
+        let (sdad, td) = self.0.sign_challenge(challenge);
+        CardSig { sdad: b64(sdad), terminal_data: b64(td) }
+    }
+}
+
+fn key_hash(k: &SignerKey) -> [u8; 32] {
+    match k {
+        SignerKey::P256 { pubkey, .. } => domain::key_hash_p256::<S>(&pubkey.0),
+        SignerKey::EmvCard { modulus, exponent, .. } => domain::key_hash_emv::<S>(&modulus.0, *exponent),
+    }
+}
+
+fn intent(id: u64, action: &Action) -> [u8; 32] {
+    domain::intent_hash::<S>(acct(), id, &near_sdk::borsh::to_vec(action).unwrap())
+}
+
+fn send_near(amount: u128) -> Action {
+    Action::Transfer { asset: Asset::Near, amount: U128(amount), receiver: "bob.testnet".parse().unwrap() }
+}
+
+/// A finalized wallet: signer 0 = phone, signer 1 = card, threshold 2,
+/// NEAR limits of 5 instant / 8 per day.
+struct Wallet {
+    c: Tapvault,
+    phone: Phone,
+    card: Card,
+    t: i64,
+    seed: u8,
+}
+
+impl Wallet {
+    fn new() -> Self {
+        let phone = Phone::new(7);
+        let mut card = Card::new();
+        ctx(WALLET, T0, 1);
+        let mut c = Tapvault::new(phone.key(), phone.sign(&domain::create_message::<S>(acct(), &key_hash(&phone.key()))));
+
+        let ck = card.key();
+        let ch = domain::card_enroll_challenge::<S>(acct(), 1, &key_hash(&ck));
+        let auth = phone.sign(&domain::setup_add_message::<S>(acct(), 1, &key_hash(&ck)));
+        c.setup_add_signer(ck, 0, auth, Possession::Card(card.tap(&ch)));
+
+        let args = FinalizeArgs {
+            threshold: 2,
+            delays: DelaysCfg { transfer: DAY, config: DAY, recovery: 3 * DAY },
+            limits: vec![LimitInit { asset: Asset::Near, instant_max: U128(5 * NEAR), daily_max: U128(8 * NEAR) }],
+        };
+        let msg = domain::finalize_message::<S>(acct(), &near_sdk::borsh::to_vec(&args).unwrap());
+        c.setup_finalize(args, 0, phone.sign(&msg));
+        Wallet { c, phone, card, t: T0, seed: 1 }
+    }
+
+    fn as_relayer(&self) {
+        ctx(RELAYER, self.t, self.seed);
+    }
+
+    fn advance(&mut self, secs: i64) {
+        self.t += secs;
+        self.seed = self.seed.wrapping_add(1);
+        self.as_relayer();
+    }
+
+    fn propose_by_phone(&mut self, action: Action) -> u64 {
+        self.as_relayer();
+        let id = self.c.get_wallet().next_proposal_id.0;
+        let sig = self.phone.sign(&intent(id, &action));
+        let got = self.c.propose(action, SignerProof::P256 { signer_index: 0, sig }).0;
+        assert_eq!(got, id);
+        got
+    }
+
+    /// The scheduled `seal_challenge` receipt runs in a later block.
+    fn seal(&mut self, id: u64) -> [u8; 32] {
+        self.advance(1);
+        ctx(WALLET, self.t, self.seed);
+        self.c.seal_challenge(U64(id));
+        self.as_relayer();
+        let p = self.c.get_proposal(U64(id)).unwrap();
+        let mut i = [0u8; 32];
+        hex_into(&p.intent_hash, &mut i);
+        let ch = domain::card_approve_challenge::<S>(&i, &[self.seed; 32]);
+        assert_eq!(p.card_challenge.as_deref(), Some(hex(&ch).as_str()));
+        ch
+    }
+
+    fn card_approves(&mut self, id: u64) {
+        let ch = self.seal(id);
+        let sig = self.card.tap(&ch);
+        self.c.approve_card(U64(id), 1, sig);
+    }
+}
+
+fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+fn hex_into(s: &str, out: &mut [u8; 32]) {
+    for (i, o) in out.iter_mut().enumerate() {
+        *o = u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap();
+    }
+}
+
+fn spent_near(c: &Tapvault) -> u128 {
+    c.get_wallet().limits.iter().find(|l| l.asset == Asset::Near).unwrap().spent.0
+}
+
+#[test]
+fn setup_produces_a_locked_two_signer_wallet() {
+    let w = Wallet::new();
+    let v = w.c.get_wallet();
+    assert!(!v.setup_mode);
+    assert_eq!(v.threshold, 2);
+    assert_eq!(v.signers.len(), 2);
+}
+
+#[test]
+fn setup_rejects_a_card_that_does_not_prove_possession() {
+    let phone = Phone::new(7);
+    let mut card = Card::new();
+    ctx(WALLET, T0, 1);
+    let mut c = Tapvault::new(phone.key(), phone.sign(&domain::create_message::<S>(acct(), &key_hash(&phone.key()))));
+    let ck = card.key();
+    let auth = phone.sign(&domain::setup_add_message::<S>(acct(), 1, &key_hash(&ck)));
+    // card signs something other than its enrolment challenge
+    let wrong = card.tap(&[0xEE; 32]);
+    fails("Card signature", || c.setup_add_signer(ck, 0, auth, Possession::Card(wrong)));
+}
+
+#[test]
+fn phone_plus_card_sends_instantly_within_limits() {
+    let mut w = Wallet::new();
+    let id = w.propose_by_phone(send_near(3 * NEAR));
+    fails("Not enough approvals", || {
+        w.c.execute(U64(id));
+    });
+    w.card_approves(id);
+    assert!(matches!(w.c.execute(U64(id)), PromiseOrValue::Promise(_)));
+    assert_eq!(spent_near(&w.c), 3 * NEAR);
+    assert!(w.c.get_proposal(U64(id)).is_none());
+}
+
+#[test]
+fn card_cannot_approve_before_the_challenge_is_sealed() {
+    let mut w = Wallet::new();
+    let id = w.propose_by_phone(send_near(NEAR));
+    let early = w.card.tap(&[0u8; 32]);
+    fails("not sealed", || w.c.approve_card(U64(id), 1, early));
+}
+
+#[test]
+fn a_skimmed_card_signature_cannot_approve_another_proposal() {
+    let mut w = Wallet::new();
+    let a = w.propose_by_phone(send_near(NEAR));
+    let ch_a = w.seal(a);
+    let skimmed = w.card.tap(&ch_a);
+
+    let b = w.propose_by_phone(send_near(NEAR));
+    w.seal(b);
+    fails("Card signature", || w.c.approve_card(U64(b), 1, skimmed));
+}
+
+#[test]
+fn over_limit_transfers_wait_for_the_delay() {
+    let mut w = Wallet::new();
+    let id = w.propose_by_phone(send_near(6 * NEAR));
+    w.card_approves(id);
+    fails("Delay has not elapsed", || {
+        w.c.execute(U64(id));
+    });
+    w.advance(DAY);
+    w.c.execute(U64(id));
+}
+
+#[test]
+fn daily_limit_rolls_over() {
+    let mut w = Wallet::new();
+    for amount in [5 * NEAR, 3 * NEAR] {
+        let id = w.propose_by_phone(send_near(amount));
+        w.card_approves(id);
+        w.c.execute(U64(id));
+    }
+    // 8 NEAR spent today: even 1 more is delayed
+    let id = w.propose_by_phone(send_near(NEAR));
+    w.card_approves(id);
+    fails("Delay has not elapsed", || {
+        w.c.execute(U64(id));
+    });
+    // a day later the allowance is back and the proposal is also past its delay
+    w.advance(DAY);
+    w.c.execute(U64(id));
+    assert_eq!(spent_near(&w.c), NEAR);
+}
+
+#[test]
+fn failed_transfer_gives_allowance_back() {
+    let mut w = Wallet::new();
+    let id = w.propose_by_phone(send_near(2 * NEAR));
+    w.card_approves(id);
+    w.c.execute(U64(id));
+    assert_eq!(spent_near(&w.c), 2 * NEAR);
+
+    testing_env!(
+        VMContextBuilder::new()
+            .current_account_id(WALLET.parse().unwrap())
+            .predecessor_account_id(WALLET.parse().unwrap())
+            .block_timestamp(w.t as u64 * 1_000_000_000)
+            .build(),
+        near_sdk::test_vm_config(),
+        near_sdk::RuntimeFeesConfig::test(),
+        Default::default(),
+        vec![near_sdk::PromiseResult::Failed]
+    );
+    assert!(!w.c.on_transfer(U64(id), Asset::Near, U128(2 * NEAR), w.t));
+    assert_eq!(spent_near(&w.c), 0);
+}
+
+#[test]
+fn adding_an_enrolled_key_again_is_refused() {
+    let mut w = Wallet::new();
+    let id = w.propose_by_phone(Action::Config { ops: vec![ConfigOp::AddSigner(w.card.key())] });
+    w.card_approves(id);
+    w.advance(DAY);
+    fails("Signer already enrolled", || {
+        w.c.execute(U64(id));
+    });
+}
+
+#[test]
+fn a_card_proposal_is_not_an_approval() {
+    let mut w = Wallet::new();
+    let action = send_near(NEAR);
+    let id = w.c.get_wallet().next_proposal_id.0;
+    let proof = w.card.tap(&domain::card_propose_challenge::<S>(&intent(id, &action)));
+    w.c.propose(action, SignerProof::Card { signer_index: 1, sig: proof });
+    assert_eq!(w.c.get_proposal(U64(id)).unwrap().approvals, 0);
+    // even after the card's real approval, the phone is still missing
+    w.card_approves(id);
+    fails("Not enough approvals", || {
+        w.c.execute(U64(id));
+    });
+}
+
+#[test]
+fn freeze_blocks_transfers_and_signatures_are_single_use() {
+    let mut w = Wallet::new();
+    let id = w.propose_by_phone(send_near(NEAR));
+    w.card_approves(id);
+
+    let ch = domain::card_freeze_challenge::<S>(acct(), 0);
+    let tap = w.card.tap(&ch);
+    w.c.freeze(SignerProof::Card { signer_index: 1, sig: tap.clone() });
+    assert!(w.c.get_wallet().frozen);
+    fails("Wallet is frozen", || {
+        w.c.execute(U64(id));
+    });
+    fails("Wallet is frozen", || {
+        w.propose_by_phone(send_near(NEAR));
+    });
+
+    // Unfreeze is a delayed config change.
+    let un = w.propose_by_phone(Action::Config { ops: vec![ConfigOp::Unfreeze] });
+    w.card_approves(un);
+    w.advance(DAY);
+    w.c.execute(U64(un));
+    assert!(!w.c.get_wallet().frozen);
+
+    // The old freeze signature is spent (nonce moved on).
+    fails("Card signature", || w.c.freeze(SignerProof::Card { signer_index: 1, sig: tap }));
+}
+
+#[test]
+fn config_changes_void_other_proposals() {
+    let mut w = Wallet::new();
+    let pay = w.propose_by_phone(send_near(NEAR));
+    let cfg = w.propose_by_phone(Action::Config {
+        ops: vec![ConfigOp::SetLimit(LimitInit {
+            asset: Asset::Near,
+            instant_max: U128(NEAR),
+            daily_max: U128(2 * NEAR),
+        })],
+    });
+    w.card_approves(cfg);
+    fails("Delay has not elapsed", || {
+        w.c.execute(U64(cfg));
+    });
+    w.advance(DAY);
+    w.c.execute(U64(cfg));
+
+    assert!(w.c.get_proposal(U64(pay)).unwrap().stale);
+    let seed_ch = w.seal(pay);
+    let tap = w.card.tap(&seed_ch);
+    fails("Signer set changed", || w.c.approve_card(U64(pay), 1, tap));
+    w.c.close_stale(U64(pay));
+    assert!(w.c.get_proposal(U64(pay)).is_none());
+}
+
+#[test]
+fn a_card_cannot_veto_its_own_removal_but_the_phone_can_veto_anything() {
+    let mut w = Wallet::new();
+    let ck = w.card.key();
+    let remove = Action::Config { ops: vec![ConfigOp::RemoveSigner { key_hash: b64(key_hash(&ck).to_vec()) }] };
+    let id = w.propose_by_phone(remove);
+    let i = intent(id, &w.c.get_proposal(U64(id)).unwrap().action);
+
+    let tap = w.card.tap(&domain::card_cancel_challenge::<S>(&i));
+    fails("may not cancel", || w.c.cancel(U64(id), SignerProof::Card { signer_index: 1, sig: tap }));
+
+    let sig = w.phone.sign(&domain::cancel_message::<S>(&i));
+    w.c.cancel(U64(id), SignerProof::P256 { signer_index: 0, sig });
+    assert!(w.c.get_proposal(U64(id)).is_none());
+}
+
+#[test]
+fn forged_or_misdirected_phone_signatures_are_rejected() {
+    let mut w = Wallet::new();
+    let action = send_near(NEAR);
+    let id = w.c.get_wallet().next_proposal_id.0;
+
+    // a different key
+    let thief = Phone::new(9);
+    let sig = thief.sign(&intent(id, &action));
+    fails("P-256 signature invalid", || {
+        w.c.propose(action.clone(), SignerProof::P256 { signer_index: 0, sig });
+    });
+
+    // the right key over a different action (amount changed after signing)
+    let sig = w.phone.sign(&intent(id, &send_near(2 * NEAR)));
+    fails("P-256 signature invalid", || {
+        w.c.propose(action, SignerProof::P256 { signer_index: 0, sig });
+    });
+}
+
+#[test]
+fn proposals_are_rate_limited_per_signer() {
+    let mut w = Wallet::new();
+    for _ in 0..tapvault_core::policy::MAX_PROPOSALS_PER_DAY {
+        w.propose_by_phone(send_near(NEAR));
+    }
+    fails("rate limit", || {
+        w.propose_by_phone(send_near(NEAR));
+    });
+}

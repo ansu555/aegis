@@ -22,3 +22,4 @@ tapvault-core = { path = "../crates/tapvault-core" }
 
 [dev-dependencies]
 near-sdk = { version = "5", features = ["unit-testing"] }
+tapvault-core = { path = "../crates/tapvault-core", features = ["test-card"] }
