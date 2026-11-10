@@ -37,6 +37,11 @@ pub struct ProposalView {
     pub created_ts: i64,
     pub created_height: U64,
     pub approvals: u8,
+    pub proposer: u8,
+    /// When it became fully approved; delays run from here.
+    pub ready_ts: Option<i64>,
+    /// Card approvals are accepted until this time.
+    pub card_deadline_ts: Option<i64>,
     /// Approved by a signer set that has since changed; can't execute.
     pub stale: bool,
     pub action: Action,
@@ -115,6 +120,9 @@ impl Tapvault {
             created_ts: p.created_ts,
             created_height: U64(p.created_height),
             approvals: p.approvals,
+            proposer: p.proposer,
+            ready_ts: p.ready_ts,
+            card_deadline_ts: p.sealed_ts.map(|t| t + CARD_APPROVAL_WINDOW),
             stale: p.signer_epoch != self.signer_epoch,
             action: p.action.clone(),
             card_challenge: p.seed.map(|s| hex(&domain::card_approve_challenge::<NearSha256>(&p.intent_hash, &s))),

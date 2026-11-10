@@ -65,6 +65,8 @@ impl SignerKey {
                 check(p256::PublicKey::from_sec1_bytes(p).is_ok(), ERR_INVALID_SIGNER_KEY);
                 if let Some(cfg) = webauthn {
                     check(cfg.rp_id_hash.0.len() == 32, ERR_INVALID_SIGNER_KEY);
+                    // Counts as a deliberate (user-verified) signer, so it must verify the user.
+                    check(cfg.require_uv, ERR_INVALID_SIGNER_KEY);
                 }
             }
             SignerKey::EmvCard { .. } => {
@@ -110,8 +112,9 @@ pub struct MintLimit {
     pub asset: Asset,
     pub instant_max: U128,
     pub daily_max: U128,
-    pub window_start: i64,
-    pub spent: U128,
+    /// When `used` was last brought up to date (allowance refills continuously).
+    pub updated_at: i64,
+    pub used: U128,
 }
 
 impl MintLimit {
@@ -119,14 +122,14 @@ impl MintLimit {
         policy::LimitState {
             instant_max: self.instant_max.0,
             daily_max: self.daily_max.0,
-            window_start: self.window_start,
-            spent: self.spent.0,
+            updated_at: self.updated_at,
+            used: self.used.0,
         }
     }
 
     pub fn store(&mut self, s: policy::LimitState) {
-        self.window_start = s.window_start;
-        self.spent = U128(s.spent);
+        self.updated_at = s.updated_at;
+        self.used = U128(s.used);
     }
 }
 
@@ -243,11 +246,19 @@ pub struct Proposal {
     pub created_ts: i64,
     pub created_height: u64,
     pub signer_epoch: u32,
+    /// Signer index of the proposer (for the per-signer cap on open proposals).
+    pub proposer: u8,
+    /// When the proposal first had every approval it needs. Delays run from
+    /// here, so the owner always gets the full delay to react.
+    pub ready_ts: Option<i64>,
+    /// When the card challenge seed was sealed. Card approvals must follow
+    /// within `CARD_APPROVAL_WINDOW`.
     /// Bit i set ⇔ signers[i] approved.
     pub approvals: u8,
     /// Block randomness captured in a later block than the proposal; the
     /// card approval challenge is derived from it. `None` until sealed.
     pub seed: Option<[u8; 32]>,
+    pub sealed_ts: Option<i64>,
     pub action: Action,
 }
 

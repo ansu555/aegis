@@ -43,9 +43,7 @@ impl Tapvault {
                     ),
                 };
                 PromiseOrValue::Promise(send.then(
-                    Self::ext(env::current_account_id())
-                        .with_static_gas(ON_TRANSFER_GAS)
-                        .on_transfer(id, asset, amount, now),
+                    Self::ext(env::current_account_id()).with_static_gas(ON_TRANSFER_GAS).on_transfer(id, asset, amount),
                 ))
             }
             Action::Config { ops } => {
@@ -61,12 +59,12 @@ impl Tapvault {
     /// NEAR transfers are asynchronous. If one failed, the funds came back;
     /// give its allowance back too.
     #[private]
-    pub fn on_transfer(&mut self, id: U64, asset: Asset, amount: U128, recorded_at: i64) -> bool {
+    pub fn on_transfer(&mut self, id: U64, asset: Asset, amount: U128) -> bool {
         let ok = matches!(env::promise_result(0), PromiseResult::Successful(_));
         if !ok {
             if let Some(l) = self.limits.iter_mut().find(|l| l.asset == asset) {
                 let mut s = l.core();
-                s.unrecord(amount.0, recorded_at);
+                s.unrecord(amount.0, now_secs());
                 l.store(s);
             }
             events::emit("transfer_failed", json!({ "id": id }));
@@ -80,14 +78,9 @@ impl Tapvault {
     fn gate(&self, p: &Proposal, class: ActionClass, now: i64) {
         check(!self.setup_mode, ERR_IN_SETUP);
         check(p.signer_epoch == self.signer_epoch, ERR_STALE_PROPOSAL);
-        let (mut n, mut deliberate) = (0u8, 0u8);
-        for (i, s) in self.signers.iter().enumerate() {
-            if p.approvals & (1 << i) != 0 {
-                n += 1;
-                deliberate += s.is_deliberate() as u8;
-            }
-        }
-        let r = policy::check_execution(class, n, deliberate, self.threshold, &self.delays.into(), p.created_ts, now);
+        let (n, deliberate) = self.count_approvals(p.approvals);
+        let ready = p.ready_ts.unwrap_or(i64::MAX);
+        let r = policy::check_execution(class, n, deliberate, self.threshold, &self.delays.into(), ready, now);
         if let Err(r) = r {
             env::panic_str(match r {
                 Refusal::NotEnoughApprovals => ERR_NOT_ENOUGH_APPROVALS,
@@ -128,8 +121,8 @@ impl Tapvault {
                             asset: l.asset,
                             instant_max: l.instant_max,
                             daily_max: l.daily_max,
-                            window_start: 0,
-                            spent: U128(0),
+                            updated_at: 0,
+                            used: U128(0),
                         });
                     }
                 },
@@ -145,6 +138,7 @@ impl Tapvault {
                 ConfigOp::Unfreeze => {
                     check(self.frozen, ERR_NOT_FROZEN);
                     self.frozen = false;
+                    self.freeze_nonce = new_freeze_nonce(self.freeze_nonce);
                 }
             }
         }

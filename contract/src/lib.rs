@@ -53,9 +53,13 @@ pub struct Tapvault {
 #[near]
 impl Tapvault {
     /// Create the wallet with its first signer, which must be a P-256 key
-    /// (the phone) and must sign the creation message.
+    /// (the phone) and must sign the creation message. Only the wallet
+    /// account itself can initialise it (deploy + `new` in one transaction),
+    /// so nobody can race to set up someone else's wallet.
     #[init]
     pub fn new(first_signer: SignerKey, sig: P256Sig) -> Self {
+        // Checked by hand: near-sdk ignores `#[private]` on `#[init]` methods.
+        check(env::predecessor_account_id() == env::current_account_id(), ERR_INIT_NOT_SELF);
         check(first_signer.is_deliberate(), ERR_WRONG_SIGNER_KIND);
         first_signer.validate();
         let msg = domain::create_message::<NearSha256>(&account_bytes(), &first_signer.key_hash());
@@ -103,6 +107,13 @@ impl Tapvault {
     }
 }
 
+/// A card must approve within this many seconds of its challenge being sealed.
+pub const CARD_APPROVAL_WINDOW: i64 = 600;
+/// Open proposals any one signer may have at a time.
+pub const MAX_OPEN_PER_SIGNER: usize = 4;
+/// A proposal that never gets all its approvals can be closed after this.
+pub const UNAPPROVED_TTL: i64 = policy::DAY;
+
 /// The wallet's account id, as signed in every message.
 fn account_bytes() -> Vec<u8> {
     env::current_account_id().as_str().as_bytes().to_vec()
@@ -111,6 +122,14 @@ fn account_bytes() -> Vec<u8> {
 /// Block time in whole seconds.
 fn now_secs() -> i64 {
     (env::block_timestamp_ms() / 1000) as i64
+}
+
+/// A fresh, unpredictable freeze nonce, so freeze signatures can't be
+/// collected in advance for future nonces.
+fn new_freeze_nonce(old: u64) -> u64 {
+    let s = env::random_seed_array();
+    let n = u64::from_le_bytes(s[..8].try_into().unwrap());
+    if n == old { n.wrapping_add(1) } else { n }
 }
 
 fn hex(b: &[u8]) -> String {

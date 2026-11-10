@@ -38,6 +38,7 @@ impl Tapvault {
     /// transfers, including already-approved ones. Unfreezing is a delayed
     /// config proposal.
     pub fn freeze(&mut self, proof: SignerProof) {
+        check(!self.setup_mode, ERR_IN_SETUP);
         check(!self.frozen, ERR_FROZEN);
         let account = account_bytes();
         let signer = self.signer(proof.signer_index());
@@ -50,16 +51,20 @@ impl Tapvault {
             }
         }
         self.frozen = true;
-        self.freeze_nonce = self.freeze_nonce.checked_add(1).unwrap();
+        self.freeze_nonce = new_freeze_nonce(self.freeze_nonce);
         events::emit("frozen", json!({ "signer_index": proof.signer_index() }));
     }
 
-    /// Permissionless: delete a proposal voided by a config change or past
-    /// every possible execution window, freeing its storage.
+    /// Permissionless: delete a proposal voided by a config change, never
+    /// fully approved within `UNAPPROVED_TTL`, or past every possible
+    /// execution window, freeing its storage.
     pub fn close_stale(&mut self, id: U64) {
         let p = self.proposal(id.0);
         let delays: policy::Delays = self.delays.into();
-        let dead_after = p.created_ts.saturating_add(delays.max()).saturating_add(policy::EXECUTION_WINDOW);
+        let dead_after = match p.ready_ts {
+            Some(r) => r.saturating_add(delays.max()).saturating_add(policy::EXECUTION_WINDOW),
+            None => p.created_ts.saturating_add(UNAPPROVED_TTL),
+        };
         check(p.signer_epoch != self.signer_epoch || now_secs() > dead_after, ERR_NOT_CLOSABLE);
         self.proposals.remove(&id.0);
         env::log_str(&format!("closed stale proposal {}", id.0));

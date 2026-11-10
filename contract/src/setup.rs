@@ -52,10 +52,12 @@ impl Tapvault {
         self.signers.push(new_signer);
     }
 
-    /// Leave setup. If the wallet account itself sends this transaction, the
-    /// key it signed with is deleted, so only the contract can move funds.
+    /// Leave setup. Must be sent by the wallet account itself: the key it
+    /// signed with is deleted, so from then on only the contract moves funds.
+    /// (Check that no other full-access key remains on the account.)
     pub fn setup_finalize(&mut self, args: FinalizeArgs, authorizer_index: u8, sig: P256Sig) {
         check(self.setup_mode, ERR_NOT_IN_SETUP);
+        check(env::signer_account_id() == env::current_account_id(), ERR_FINALIZE_SIGNER);
         let msg = domain::finalize_message::<NearSha256>(&account_bytes(), &borsh_bytes(&args));
         let authorizer = self.signer(authorizer_index);
         check(authorizer.is_deliberate(), ERR_WRONG_SIGNER_KIND);
@@ -70,16 +72,14 @@ impl Tapvault {
                 asset: l.asset,
                 instant_max: l.instant_max,
                 daily_max: l.daily_max,
-                window_start: 0,
-                spent: U128(0),
+                updated_at: 0,
+                used: U128(0),
             })
             .collect();
         self.validate_config();
         self.setup_mode = false;
 
-        if env::signer_account_id() == env::current_account_id() {
-            let _ = Promise::new(env::current_account_id()).delete_key(env::signer_account_pk());
-        }
+        let _ = Promise::new(env::current_account_id()).delete_key(env::signer_account_pk());
         events::emit("setup_finalized", near_sdk::serde_json::json!({ "threshold": self.threshold }));
     }
 }
