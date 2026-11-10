@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "tapvault"
-include(":core")
+include(":core", ":app")
