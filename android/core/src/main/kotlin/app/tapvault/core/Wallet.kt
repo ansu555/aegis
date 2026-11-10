@@ -249,14 +249,39 @@ class TapvaultWallet(
 class Onboarding(private val near: NearClient) {
     class Accounts(val wallet: String, val walletKey: NearKey, val gas: String, val gasKey: NearKey)
 
-    fun createAccounts(prefix: String = "tv"): Accounts {
+    /** A funded testnet account that can create wallets when the faucet refuses. */
+    class Sponsor(val account: String, val key: NearKey) {
+        companion object {
+            /** Enough for the contract's storage (~3.4 NEAR) plus some to send. */
+            val WALLET_FUNDING: BigInteger = Near.parse("4.2")
+            val GAS_FUNDING: BigInteger = Near.parse("0.3")
+        }
+    }
+
+    /**
+     * Two fresh accounts from the testnet faucet. The faucet is rate-limited
+     * per IP; if it refuses and a [sponsor] is configured, the accounts are
+     * created as sub-accounts of the sponsor and funded by it instead.
+     */
+    fun createAccounts(prefix: String = "tv", sponsor: Sponsor? = null, onFallback: (String) -> Unit = {}): Accounts {
         val tag = ByteArray(5).also { java.security.SecureRandom().nextBytes(it) }.hex()
-        val wallet = "$prefix-$tag.testnet"
-        val gas = "$prefix-$tag-gas.testnet"
         val wk = NearKey.random()
         val gk = NearKey.random()
-        near.createTestnetAccount(wallet, wk)
-        near.createTestnetAccount(gas, gk)
+        val faucetError = if (sponsor != null && System.getenv("TAPVAULT_FORCE_SPONSOR") == "1") "skipped" else try {
+            val wallet = "$prefix-$tag.testnet"
+            val gas = "$prefix-$tag-gas.testnet"
+            near.createTestnetAccount(wallet, wk)
+            near.createTestnetAccount(gas, gk)
+            return Accounts(wallet, wk, gas, gk)
+        } catch (e: Exception) {
+            e.message ?: "faucet failed"
+        }
+        if (sponsor == null) throw TapvaultException("The testnet faucet refused ($faucetError). Try again later or from another network.")
+        onFallback("faucet unavailable ($faucetError); funding from ${sponsor.account}")
+        val wallet = "$prefix-$tag.${sponsor.account}"
+        val gas = "$prefix-$tag-gas.${sponsor.account}"
+        near.createSubAccount(sponsor.account, sponsor.key, wallet, wk, Sponsor.WALLET_FUNDING)
+        near.createSubAccount(sponsor.account, sponsor.key, gas, gk, Sponsor.GAS_FUNDING)
         return Accounts(wallet, wk, gas, gk)
     }
 

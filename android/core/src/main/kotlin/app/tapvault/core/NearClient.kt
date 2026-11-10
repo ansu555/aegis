@@ -37,6 +37,18 @@ class NearKey(private val seed: ByteArray) {
 sealed interface NearAction {
     fun borsh(b: Borsh)
 
+    data object CreateAccount : NearAction {
+        override fun borsh(b: Borsh) { b.u8(0) }
+    }
+
+    class Transfer(val yocto: BigInteger) : NearAction {
+        override fun borsh(b: Borsh) { b.u8(3).u128(yocto) }
+    }
+
+    class AddFullAccessKey(val publicKey: ByteArray) : NearAction {
+        override fun borsh(b: Borsh) { b.u8(5).u8(0).fixed(publicKey).u64(0).u8(1) }
+    }
+
     class DeployContract(val code: ByteArray) : NearAction {
         override fun borsh(b: Borsh) { b.u8(1).bytes(code) }
     }
@@ -196,6 +208,14 @@ class NearClient(
             Thread.sleep(1500)
         }
         throw NearRpcException("faucet did not create $account")
+    }
+
+    /** Create `account` (a sub-account of [sponsor]) with [key] and [amount] from the sponsor. */
+    fun createSubAccount(sponsor: String, sponsorKey: NearKey, account: String, key: NearKey, amount: BigInteger): TxResult {
+        require(account.endsWith(".$sponsor")) { "$account isn't a sub-account of $sponsor" }
+        val r = send(sponsor, sponsorKey, account, listOf(NearAction.CreateAccount, NearAction.Transfer(amount), NearAction.AddFullAccessKey(key.publicKey)))
+        if (!r.ok) throw NearRpcException("creating $account failed: ${r.error}")
+        return r
     }
 
     fun explorerTx(hash: String) = "https://testnet.nearblocks.io/txns/$hash"
