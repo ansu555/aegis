@@ -1,0 +1,6 @@
+target/
+neardev/
+.env
+*.wasm
+__pycache__/
+.DS_Store

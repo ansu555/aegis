@@ -1,0 +1,13 @@
+[package]
+name = "tapvault-core"
+version = "0.1.0"
+edition = "2021"
+description = "Dependency-free verification and policy logic for Tapvault (EMV card + P-256 signers)"
+license = "MIT"
+
+[lib]
+name = "tapvault_core"
+
+[dependencies]
+# Intentionally none. Everything security-critical lives here so it can be
+# unit-tested natively and audited without the NEAR toolchain.
