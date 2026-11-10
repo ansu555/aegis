@@ -6,6 +6,18 @@ pub enum CoreError {
     ModulusZero,
     SignatureNotReduced,
     BadLength,
+    // EMV
+    EmvBadHeader,
+    EmvBadTrailer,
+    EmvBadFormat,
+    EmvBadHashAlgorithm,
+    EmvBadDynamicDataLength,
+    EmvBadPadding,
+    EmvHashMismatch,
+    EmvUnsupportedExponent,
+    EmvModulusTooLarge,
+    EmvTerminalDataLayout,
+    EmvChallengeMismatch,
 }
 
 impl fmt::Display for CoreError {
