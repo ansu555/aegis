@@ -82,7 +82,12 @@ Rules that keep this sound:
 
 * **Exactly one seed per proposal.** `seal_challenge` is `#[private]` (only the
   contract can call it) and refuses to overwrite a seed.
-* **Proposals are rate-limited per signer** (24 per day each). Every proposal
+* **Card approvals expire 10 minutes after the seal.** A read of the challenge
+  taken later is useless, so the only way to use a card against a sealed
+  challenge is to be next to it during those minutes (the live-relay case
+  below).
+* **Proposals are limited per signer**: 24 per day, and at most 4 open at a
+  time that can still complete. Every proposal
   is one lottery ticket against an attacker's pool of skimmed signatures. With
   `K` skimmed signatures and `T` proposals, the chance of a hit is about
   `K·T / 2³²`. For `K = 100,000` and `T = 24`, that is about 0.06% per day,
@@ -113,7 +118,9 @@ phone can't do anything".
 Per asset (`Near`, or a NEP-141 token contract such as USDC):
 
 * `instant_max`: the largest single transfer that can execute immediately.
-* `daily_max`: the rolling 24-hour total that can execute immediately.
+* `daily_max`: the daily allowance for immediate transfers. It refills
+  continuously (`daily_max` per 24 hours), so there is no window edge: at
+  most one day's allowance can ever go out at once.
 
 A transfer within both limits executes as soon as it has enough approvals.
 Anything else waits `transfer` delay (default 24 hours, minimum 1 hour),
@@ -132,7 +139,13 @@ callback gives the allowance back.
 | Config change with a phone/key approval | threshold | `config` (default 24 h) |
 | Config change with no phone/key approval (lost phone) | threshold | `recovery` (default 72 h, ≥ config) |
 
-Approved proposals must execute within 7 days after their delay ends.
+**Delays run from full approval.** A proposal's clock starts when it first
+has every approval it needs (`ready_ts`), not when it was proposed. Collecting
+approvals slowly can't shorten the time the owner has to react.
+
+Approved proposals must execute within 7 days after their delay ends. A
+proposal that never gets all its approvals can be deleted by anyone after a
+day (`close_stale`).
 
 **Freeze.** Any single signer can freeze: a phone signs, or a card taps. A
 freeze blocks all transfers, including ones already approved. Unfreezing is a
@@ -206,7 +219,11 @@ terminal does). It must not store or transmit it.
 
 * **One wallet = one NEAR account** running this contract. The account holds
   the NEAR and is the NEP-141 token holder.
-* `setup_finalize`, when sent by the wallet account itself, **deletes the
+* `new` can only be called by the wallet account itself (the app deploys and
+  initialises in one transaction), so nobody can race to initialise someone
+  else's freshly deployed wallet. (near-sdk silently ignores `#[private]` on
+  `#[init]` methods, so this is checked by hand; the sandbox test proves it.)
+* `setup_finalize` must be sent by the wallet account itself and **deletes the
   key it was signed with**. Check with `near account list-keys` that no other
   full-access key remains: after that, only the contract's rules move funds.
 * Proposals live in contract storage and are deleted on execute, cancel or
@@ -230,10 +247,20 @@ terminal does). It must not store or transmit it.
 3. **`AddSigner` via config proposal has no proof of possession.** A bad key
    only hurts the wallet that adds it. Fix by requiring the new key to sign
    during the delay window.
-4. **Card challenges for propose, cancel, freeze and enrolment are
-   deterministic.** They prove possession and only ever stop things or start
-   a proposal that still needs a phone, so a skimmed one can at worst freeze
-   the wallet or cancel a proposal.
+4. **Card challenges for propose, cancel and enrolment are deterministic.**
+   They prove possession and only ever stop things or start a proposal that
+   still needs approvals, so a skimmed one can at worst cancel a proposal or
+   use up one of the card's proposal slots. Freeze challenges use a random
+   nonce that changes on every freeze and unfreeze, so they can't be
+   collected ahead of time.
+4b. **Slow approvers.** A card must approve within 10 minutes of the seal, and
+   a proposal without all its approvals can be closed after a day. A
+   recovery that needs a guardian's phone must therefore be approved within
+   a day, and one that needs two cards kept in different places must be done
+   in one 10-minute session.
+4c. **iPhone.** iOS doesn't let apps talk to payment cards over NFC, so the
+   card tap needs an Android phone (or, later, a USB reader on a computer).
+   An iPhone passkey can still be the phone signer (WebAuthn is supported).
 5. **No upgrade path.** With its keys deleted, the account can't redeploy.
    A delayed `UpgradeCode` config op is the planned fix.
 6. **Deployment cost.** The contract is about 330 KB, so each wallet locks
@@ -256,7 +283,7 @@ From `cargo test -p tapvault-contract --test sandbox -- --ignored --nocapture`:
 
 | Step | Gas |
 |---|---|
-| `new` (P-256 check) | 34.6 Tgas |
+| deploy + `new` (P-256 check) | 56.3 Tgas |
 | `setup_add_signer`, 1024-bit e = 3 card | 34.8 Tgas |
 | `setup_add_signer`, 1984-bit e = 65537 card | 53.5 Tgas |
 | `propose` by phone | 34.7 Tgas, plus 2.0 Tgas for `seal_challenge` |
@@ -267,7 +294,18 @@ From `cargo test -p tapvault-contract --test sandbox -- --ignored --nocapture`:
 
 The limit is 300 Tgas per receipt; the worst step uses under a fifth of it.
 
-## 9. Test plan (next)
+## 9. Security review
+
+An independent review of the contract (read-only, run in a separate session)
+found one high, three medium and three low issues. All were fixed and
+re-reviewed:
+card approvals now expire, delays run from full approval, the daily limit
+refills continuously, `new` and `setup_finalize` must come from the wallet
+account, open proposals are capped per signer, freeze nonces are random,
+freeze is refused during setup, and passkey signers must require user
+verification. This is not a substitute for a professional audit.
+
+## 10. Test plan (next)
 
 * Cards: a matrix of at least 10 real cards (Visa, Mastercard, RuPay, debit
   and credit, several banks) recording DDA vs fDDA vs CDA-only, DDOL,
