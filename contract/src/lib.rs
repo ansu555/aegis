@@ -13,6 +13,7 @@ use tapvault_core::{domain, policy};
 pub mod auth;
 pub mod error;
 pub mod events;
+pub mod execute;
 pub mod proposals;
 pub mod setup;
 pub mod types;
