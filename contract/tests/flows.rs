@@ -170,6 +170,12 @@ impl Wallet {
         ch
     }
 
+    fn cancel_by_phone(&mut self, id: u64) {
+        let i = intent(id, &self.c.get_proposal(U64(id)).unwrap().action);
+        let sig = self.phone.sign(&domain::cancel_message::<S>(&i));
+        self.c.cancel(U64(id), SignerProof::P256 { signer_index: 0, sig });
+    }
+
     fn card_approves(&mut self, id: u64) {
         let ch = self.seal(id);
         let sig = self.card.tap(&ch);
@@ -188,7 +194,8 @@ fn hex_into(s: &str, out: &mut [u8; 32]) {
 }
 
 fn spent_near(c: &Tapvault) -> u128 {
-    c.get_wallet().limits.iter().find(|l| l.asset == Asset::Near).unwrap().spent.0
+    let l = c.get_wallet().limits.into_iter().find(|l| l.asset == Asset::Near).unwrap();
+    l.used.0
 }
 
 #[test]
@@ -259,20 +266,20 @@ fn over_limit_transfers_wait_for_the_delay() {
 }
 
 #[test]
-fn daily_limit_rolls_over() {
+fn daily_allowance_refills() {
     let mut w = Wallet::new();
     for amount in [5 * NEAR, 3 * NEAR] {
         let id = w.propose_by_phone(send_near(amount));
         w.card_approves(id);
         w.c.execute(U64(id));
     }
-    // 8 NEAR spent today: even 1 more is delayed
+    // 8 NEAR used: even 1 more is delayed
     let id = w.propose_by_phone(send_near(NEAR));
     w.card_approves(id);
     fails("Delay has not elapsed", || {
         w.c.execute(U64(id));
     });
-    // a day later the allowance is back and the proposal is also past its delay
+    // a day later the allowance has refilled and the proposal is past its delay
     w.advance(DAY);
     w.c.execute(U64(id));
     assert_eq!(spent_near(&w.c), NEAR);
@@ -297,8 +304,8 @@ fn failed_transfer_gives_allowance_back() {
         Default::default(),
         vec![near_sdk::PromiseResult::Failed]
     );
-    assert!(!w.c.on_transfer(U64(id), Asset::Near, U128(2 * NEAR), w.t));
-    assert_eq!(spent_near(&w.c), 0);
+    assert!(!w.c.on_transfer(U64(id), Asset::Near, U128(2 * NEAR)));
+    assert!(spent_near(&w.c) < NEAR / 1000); // back to (almost) nothing used
 }
 
 #[test]
@@ -337,6 +344,8 @@ fn freeze_blocks_transfers_and_signatures_are_single_use() {
     let tap = w.card.tap(&ch);
     w.c.freeze(SignerProof::Card { signer_index: 1, sig: tap.clone() });
     assert!(w.c.get_wallet().frozen);
+    // the next nonce is random, so future freeze signatures can't be pre-collected
+    assert_ne!(w.c.get_wallet().freeze_nonce.0, 1);
     fails("Wallet is frozen", || {
         w.c.execute(U64(id));
     });
@@ -421,9 +430,113 @@ fn forged_or_misdirected_phone_signatures_are_rejected() {
 fn proposals_are_rate_limited_per_signer() {
     let mut w = Wallet::new();
     for _ in 0..tapvault_core::policy::MAX_PROPOSALS_PER_DAY {
-        w.propose_by_phone(send_near(NEAR));
+        let id = w.propose_by_phone(send_near(NEAR));
+        w.cancel_by_phone(id);
     }
     fails("rate limit", || {
         w.propose_by_phone(send_near(NEAR));
+    });
+}
+
+#[test]
+fn open_proposals_are_capped_per_signer() {
+    let mut w = Wallet::new();
+    for _ in 0..tapvault_contract::MAX_OPEN_PER_SIGNER {
+        w.propose_by_phone(send_near(NEAR));
+    }
+    fails("too many open proposals", || {
+        w.propose_by_phone(send_near(NEAR));
+    });
+}
+
+#[test]
+fn card_approval_window_closes() {
+    let mut w = Wallet::new();
+    let id = w.propose_by_phone(send_near(NEAR));
+    let ch = w.seal(id);
+    // a read of the challenge taken later than the window can't be used
+    w.advance(tapvault_contract::CARD_APPROVAL_WINDOW + 1);
+    let tap = w.card.tap(&ch);
+    fails("approval window has closed", || w.c.approve_card(U64(id), 1, tap));
+}
+
+#[test]
+fn delay_runs_from_full_approval_not_from_proposal() {
+    let mut w = Wallet::new();
+    // a card proposes an over-limit transfer and approves it...
+    let action = send_near(6 * NEAR);
+    let id = w.c.get_wallet().next_proposal_id.0;
+    let i = intent(id, &action);
+    let proof = w.card.tap(&domain::card_propose_challenge::<S>(&i));
+    w.c.propose(action, SignerProof::Card { signer_index: 1, sig: proof });
+    w.card_approves(id);
+    assert_eq!(w.c.get_proposal(U64(id)).unwrap().ready_ts, None);
+    // ...and the phone's approval only arrives three days later
+    w.advance(3 * DAY);
+    let sig = w.phone.sign(&i);
+    w.c.approve_p256(U64(id), 0, sig);
+    assert_eq!(w.c.get_proposal(U64(id)).unwrap().ready_ts, Some(w.t));
+    fails("Delay has not elapsed", || {
+        w.c.execute(U64(id));
+    });
+    w.advance(DAY);
+    w.c.execute(U64(id));
+}
+
+#[test]
+fn unapproved_proposals_can_be_cleaned_up_after_a_day() {
+    let mut w = Wallet::new();
+    let id = w.propose_by_phone(send_near(NEAR));
+    fails("not stale", || w.c.close_stale(U64(id)));
+    w.advance(tapvault_contract::UNAPPROVED_TTL + 1);
+    w.c.close_stale(U64(id));
+    assert!(w.c.get_proposal(U64(id)).is_none());
+}
+
+fn new_wallet_in_setup(phone: &Phone) -> Tapvault {
+    ctx(WALLET, T0, 1);
+    Tapvault::new(phone.key(), phone.sign(&domain::create_message::<S>(acct(), &key_hash(&phone.key()))))
+}
+
+#[test]
+fn only_the_wallet_account_can_initialise() {
+    let phone = Phone::new(7);
+    ctx(RELAYER, T0, 1);
+    fails("Only the wallet account", || {
+        Tapvault::new(phone.key(), phone.sign(&domain::create_message::<S>(acct(), &key_hash(&phone.key()))));
+    });
+}
+
+#[test]
+fn finalize_must_be_sent_by_the_wallet_account() {
+    let phone = Phone::new(7);
+    let mut card = Card::new();
+    let mut c = new_wallet_in_setup(&phone);
+    let ck = card.key();
+    let ch = domain::card_enroll_challenge::<S>(acct(), 1, &key_hash(&ck));
+    let auth = phone.sign(&domain::setup_add_message::<S>(acct(), 1, &key_hash(&ck)));
+    c.setup_add_signer(ck, 0, auth, Possession::Card(card.tap(&ch)));
+
+    let args = FinalizeArgs { threshold: 2, delays: DelaysCfg { transfer: DAY, config: DAY, recovery: 3 * DAY }, limits: vec![] };
+    let sig = phone.sign(&domain::finalize_message::<S>(acct(), &near_sdk::borsh::to_vec(&args).unwrap()));
+    ctx(RELAYER, T0, 1);
+    fails("must be sent by the wallet account", || c.setup_finalize(args, 0, sig));
+}
+
+#[test]
+fn freeze_is_refused_during_setup() {
+    let phone = Phone::new(7);
+    let mut c = new_wallet_in_setup(&phone);
+    let sig = phone.sign(&domain::freeze_message::<S>(acct(), 0));
+    fails("still in setup", || c.freeze(SignerProof::P256 { signer_index: 0, sig }));
+}
+
+#[test]
+fn passkeys_must_require_user_verification() {
+    let mut w = Wallet::new();
+    let SignerKey::P256 { pubkey, .. } = Phone::new(9).key() else { unreachable!() };
+    let lax = SignerKey::P256 { pubkey, webauthn: Some(WebAuthnConfig { rp_id_hash: b64(vec![1; 32]), require_uv: false }) };
+    fails("Invalid signer key", || {
+        w.propose_by_phone(Action::Config { ops: vec![ConfigOp::AddSigner(lax)] });
     });
 }

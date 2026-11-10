@@ -9,6 +9,8 @@
 use near_sdk::json_types::{Base64VecU8, U128};
 use near_workspaces::result::ExecutionFinalResult;
 use near_workspaces::types::NearToken;
+use near_workspaces::operations::Function;
+use near_workspaces::types::Gas as NearGas;
 use near_workspaces::AccountId;
 use p256::ecdsa::signature::Signer;
 use p256::ecdsa::{Signature, SigningKey};
@@ -86,8 +88,22 @@ async fn full_flow_and_gas() -> anyhow::Result<()> {
     let wallet = worker.dev_create_account().await?;
     let relayer = worker.dev_create_account().await?;
     let bob = worker.dev_create_account().await?;
-    let contract = wallet.deploy(&wasm).await?.into_result()?;
     let acct = wallet.id().as_str().as_bytes().to_vec();
+
+    // `new` is private: on a deployed but uninitialised wallet, an outsider
+    // can't race to initialise it with their own key.
+    let victim = worker.dev_create_account().await?;
+    victim.deploy(&wasm).await?.into_result()?;
+    let thief = SigningKey::from_slice(&[9; 32]).unwrap();
+    let tk = phone_key(&thief);
+    let vmsg = domain::create_message::<S>(victim.id().as_str().as_bytes(), &key_hash(&tk));
+    let r = relayer
+        .call(victim.id(), "new")
+        .args_json(json!({ "first_signer": tk, "sig": phone_sign(&thief, &vmsg) }))
+        .max_gas()
+        .transact()
+        .await?;
+    assert!(r.is_failure(), "outsider initialised someone else's wallet");
 
     let phone = SigningKey::from_slice(&[7; 32]).unwrap();
     let mut small = TestCard::default();
@@ -96,14 +112,20 @@ async fn full_flow_and_gas() -> anyhow::Result<()> {
     println!("\n  step                                  gas");
 
     // ---- setup (sent by the wallet account itself) ----
+    // Deploy and initialise in one transaction, as the app does.
     let pk = phone_key(&phone);
     let r = wallet
-        .call(contract.id(), "new")
-        .args_json(json!({ "first_signer": pk, "sig": phone_sign(&phone, &domain::create_message::<S>(&acct, &key_hash(&pk))) }))
-        .max_gas()
+        .batch(wallet.id())
+        .deploy(&wasm)
+        .call(
+            Function::new("new")
+                .args_json(json!({ "first_signer": pk, "sig": phone_sign(&phone, &domain::create_message::<S>(&acct, &key_hash(&pk))) }))
+                .gas(NearGas::from_tgas(100)),
+        )
         .transact()
         .await?;
-    worst = worst.max(report("new", &r, wallet.id()));
+    worst = worst.max(report("deploy + new", &r, wallet.id()));
+    let contract = near_workspaces::Contract::from_secret_key(wallet.id().clone(), wallet.secret_key().clone(), &worker);
 
     for (i, card) in [&mut small, &mut large].into_iter().enumerate() {
         let ck = card_key(card);
