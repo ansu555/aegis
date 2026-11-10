@@ -1,10 +1,15 @@
 //! Spending limits, delays and approval rules.
 //!
 //! The model: **limits don't block, they delay.** A transfer within the
-//! per-transaction and rolling-daily limits for its mint executes as soon as it
-//! has enough approvals. Anything above them waits `transfer_delay`, during
-//! which any signer can cancel it or freeze the wallet. That caps what a
-//! successful attacker can take instantly to one day's allowance.
+//! per-transaction limit and the daily allowance for its asset executes as
+//! soon as it has enough approvals. Anything above them waits
+//! `transfer_delay`, during which any signer can cancel it or freeze the
+//! wallet. The allowance refills continuously (`daily_max` per 24 hours), so
+//! at most one day's allowance can ever go out at once.
+//!
+//! Delays run from the moment a proposal becomes fully approved, not from
+//! when it was proposed, so the owner always gets the whole delay to react
+//! to an approved action.
 //!
 //! Approval rules:
 //! - Every action needs `threshold` distinct signer approvals.
@@ -49,48 +54,48 @@ impl Delays {
     }
 }
 
+/// A leaky-bucket allowance: `used` drains at `daily_max` per day.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LimitState {
     pub instant_max: u128,
     pub daily_max: u128,
-    pub window_start: i64,
-    pub spent: u128,
+    /// When `used` was last brought up to date.
+    pub updated_at: i64,
+    pub used: u128,
 }
 
 impl LimitState {
     pub fn new(instant_max: u128, daily_max: u128) -> Self {
-        Self { instant_max, daily_max, window_start: 0, spent: 0 }
+        Self { instant_max, daily_max, updated_at: 0, used: 0 }
     }
 
-    pub fn spent_at(&self, now: i64) -> u128 {
-        if now >= self.window_start.saturating_add(DAY) {
-            0
-        } else {
-            self.spent
+    /// Allowance in use at `now`, after refilling for the time elapsed.
+    pub fn used_at(&self, now: i64) -> u128 {
+        let elapsed = now.saturating_sub(self.updated_at).max(0) as u128;
+        if elapsed >= DAY as u128 {
+            return 0;
         }
+        // daily_max * elapsed / DAY without overflow: elapsed < DAY < 2^17
+        let refill = (self.daily_max / DAY as u128) * elapsed + (self.daily_max % DAY as u128) * elapsed / DAY as u128;
+        self.used.saturating_sub(refill)
     }
 
     /// Whether `amount` can go out without waiting.
     pub fn is_instant(&self, amount: u128, now: i64) -> bool {
-        amount <= self.instant_max
-            && self.spent_at(now).checked_add(amount).map_or(false, |t| t <= self.daily_max)
+        amount <= self.instant_max && self.used_at(now).checked_add(amount).is_some_and(|t| t <= self.daily_max)
     }
 
-    /// Record an executed transfer (instant or delayed — both count).
+    /// Record an executed transfer (instant or delayed: both count).
     pub fn record(&mut self, amount: u128, now: i64) {
-        if now >= self.window_start.saturating_add(DAY) {
-            self.window_start = now;
-            self.spent = 0;
-        }
-        self.spent = self.spent.saturating_add(amount);
+        self.used = self.used_at(now).saturating_add(amount);
+        self.updated_at = now;
     }
 
     /// Give back allowance for a transfer that was recorded but then failed
-    /// (NEAR transfers are asynchronous). Only within the same window.
-    pub fn unrecord(&mut self, amount: u128, recorded_at: i64) {
-        if recorded_at >= self.window_start && recorded_at < self.window_start.saturating_add(DAY) {
-            self.spent = self.spent.saturating_sub(amount);
-        }
+    /// (NEAR transfers are asynchronous).
+    pub fn unrecord(&mut self, amount: u128, now: i64) {
+        self.used = self.used_at(now).saturating_sub(amount);
+        self.updated_at = now;
     }
 }
 
@@ -108,14 +113,15 @@ pub enum Refusal {
     Expired,
 }
 
-/// Decide whether a proposal may execute now.
+/// Decide whether a proposal may execute now. `ready_ts` is when it
+/// became fully approved.
 pub fn check_execution(
     class: ActionClass,
     approvals: u8,
     user_verified_approvals: u8,
     threshold: u8,
     delays: &Delays,
-    created_ts: i64,
+    ready_ts: i64,
     now: i64,
 ) -> Result<(), Refusal> {
     if approvals < threshold {
@@ -140,7 +146,7 @@ pub fn check_execution(
             }
         }
     };
-    let ready = created_ts.saturating_add(delay);
+    let ready = ready_ts.saturating_add(delay);
     if now < ready {
         return Err(Refusal::TooEarly);
     }
@@ -176,29 +182,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn limits_window() {
-        let mut l = LimitState::new(100, 250);
+    fn allowance_refills_continuously() {
+        let mut l = LimitState::new(100, 240);
         let t0 = 1_000_000;
         assert!(l.is_instant(100, t0));
         assert!(!l.is_instant(101, t0));
         l.record(100, t0);
-        l.record(100, t0 + 10);
-        assert!(l.is_instant(50, t0 + 20));
-        assert!(!l.is_instant(51, t0 + 20));
-        // window rolls
-        assert!(l.is_instant(100, t0 + DAY));
-        l.record(10, t0 + DAY);
-        assert_eq!(l.spent_at(t0 + DAY + 1), 10);
+        l.record(100, t0);
+        assert!(l.is_instant(40, t0));
+        assert!(!l.is_instant(41, t0));
+        // a quarter day refills a quarter of daily_max
+        assert_eq!(l.used_at(t0 + DAY / 4), 140);
+        assert!(l.is_instant(100, t0 + DAY / 4));
+        // no "window edge" to exploit: draining right before and after an
+        // arbitrary instant can't exceed one allowance plus the refill
+        l.record(40, t0);
+        assert_eq!(l.used_at(t0 + 1), 240 - 240 / DAY as u128);
+        assert!(!l.is_instant(1, t0 + 1));
+        // fully refilled after a day
+        assert_eq!(l.used_at(t0 + DAY), 0);
         // a failed transfer gives its allowance back
-        l.unrecord(10, t0 + DAY);
-        assert_eq!(l.spent_at(t0 + DAY + 1), 0);
-        // ...but not across a window roll
-        l.record(10, t0 + 2 * DAY);
-        l.unrecord(10, t0 + DAY);
-        assert_eq!(l.spent_at(t0 + 2 * DAY), 10);
+        l.record(100, t0 + DAY);
+        l.unrecord(100, t0 + DAY);
+        assert_eq!(l.used_at(t0 + DAY), 0);
         // overflow-safe
-        let big = LimitState { instant_max: u128::MAX, daily_max: u128::MAX, window_start: t0, spent: u128::MAX };
+        let big = LimitState { instant_max: u128::MAX, daily_max: u128::MAX, updated_at: t0, used: u128::MAX };
         assert!(!big.is_instant(1, t0));
+        assert!(big.used_at(t0 + 1) < u128::MAX);
     }
 
     #[test]
