@@ -78,7 +78,7 @@ impl Tapvault {
         self.setup_mode = false;
 
         if env::signer_account_id() == env::current_account_id() {
-            Promise::new(env::current_account_id()).delete_key(env::signer_account_pk()).detach();
+            let _ = Promise::new(env::current_account_id()).delete_key(env::signer_account_pk());
         }
         events::emit("setup_finalized", near_sdk::serde_json::json!({ "threshold": self.threshold }));
     }

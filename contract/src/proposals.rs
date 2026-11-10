@@ -66,7 +66,8 @@ impl Tapvault {
             },
         );
 
-        Self::ext(env::current_account_id()).with_static_gas(SEAL_GAS).seal_challenge(U64(id)).detach();
+        // A dropped promise is still scheduled.
+        let _ = Self::ext(env::current_account_id()).with_static_gas(SEAL_GAS).seal_challenge(U64(id));
         events::emit("proposal_created", json!({ "id": U64(id), "intent_hash": hex(&intent) }));
         U64(id)
     }

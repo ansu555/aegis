@@ -3,7 +3,7 @@
 
 use near_sdk::json_types::U64;
 use near_sdk::serde_json::json;
-use near_sdk::{env, near, Gas, NearToken, Promise, PromiseError, PromiseOrValue};
+use near_sdk::{env, near, Gas, NearToken, Promise, PromiseOrValue, PromiseResult};
 use tapvault_core::policy::{self, ActionClass, Refusal};
 
 use crate::*;
@@ -62,8 +62,7 @@ impl Tapvault {
     /// give its allowance back too.
     #[private]
     pub fn on_transfer(&mut self, id: U64, asset: Asset, amount: U128, recorded_at: i64) -> bool {
-        // The result body doesn't matter (both return nothing); only failure does.
-        let ok = !matches!(env::promise_result_checked(0, 64), Err(PromiseError::Failed));
+        let ok = matches!(env::promise_result(0), PromiseResult::Successful(_));
         if !ok {
             if let Some(l) = self.limits.iter_mut().find(|l| l.asset == asset) {
                 let mut s = l.core();
