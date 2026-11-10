@@ -1,6 +1,7 @@
 //! The compiled contract on a local NEAR sandbox node: full flow with a
 //! software phone key and two simulated cards, printing the gas each step
-//! burns. Run with `cargo test -p tapvault-contract --test sandbox -- --nocapture`.
+//! burns. Opt-in, since it downloads a nearcore sandbox binary:
+//! `cargo test -p tapvault-contract --test sandbox -- --ignored --nocapture`.
 //!
 //! Signer 1 is a typical card (1024-bit, e = 3); signer 2 is the most
 //! expensive key EMV allows (1984-bit, e = 65537).
@@ -77,6 +78,7 @@ fn report(label: &str, r: &ExecutionFinalResult, wallet: &AccountId) -> f64 {
 }
 
 #[tokio::test]
+#[ignore = "downloads a nearcore sandbox binary; run with --ignored"]
 async fn full_flow_and_gas() -> anyhow::Result<()> {
     // Pinned: newer nodes changed an RPC field the 0.20 client still expects.
     let worker = near_workspaces::sandbox_with_version("2.6.5").await?;

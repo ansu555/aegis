@@ -252,7 +252,7 @@ terminal does). It must not store or transmit it.
 
 ## 8. Measured gas (sandbox, nearcore 2.6.5)
 
-From `cargo test -p tapvault-contract --test sandbox -- --nocapture`:
+From `cargo test -p tapvault-contract --test sandbox -- --ignored --nocapture`:
 
 | Step | Gas |
 |---|---|

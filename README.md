@@ -82,7 +82,7 @@ cd contract && cargo near build non-reproducible-wasm
 
 # run the wasm on a local NEAR node and print gas per step
 # (downloads a nearcore sandbox binary on first run)
-cargo test -p tapvault-contract --test sandbox -- --nocapture
+cargo test -p tapvault-contract --test sandbox -- --ignored --nocapture
 ```
 
 Measured on the sandbox (limit 300 Tgas per receipt):
