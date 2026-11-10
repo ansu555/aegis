@@ -59,7 +59,13 @@ contract/               NEAR contract (near-sdk)
   src/guard.rs          cancel, freeze, close_stale
   tests/flows.rs        end-to-end flows in the mocked runtime
   tests/sandbox.rs      the compiled wasm on a local NEAR node, with gas report
-tools/                  Test-vector and test-card generators
+android/core/           Kotlin client: NEAR transactions, contract calls,
+                        EMV card protocol (certificate recovery, DDA),
+                        simulated card. Runs on the JVM, tested against
+                        testnet.
+android/app/            Android app: Keystore phone key behind biometrics,
+                        NFC card taps, onboarding, send, approvals, freeze
+tools/                  Test-vector, test-card and CA-key generators
 docs/DESIGN.md          Security model
 ```
 
@@ -85,7 +91,34 @@ cd contract && cargo near build non-reproducible-wasm
 cargo test -p tapvault-contract --test sandbox -- --ignored --nocapture
 ```
 
-Measured on the sandbox (limit 300 Tgas per receipt):
+### Android app and the live testnet test
+
+Needs JDK 17 and the Android SDK (`platforms;android-35`, `build-tools;35.0.0`);
+put `sdk.dir=...` in `android/local.properties`. Build the contract wasm first
+(the app deploys each new wallet itself).
+
+```bash
+cd android
+./gradlew :core:test                      # vectors, EMV, P-256 (offline)
+TAPVAULT_TESTNET=1 ./gradlew :core:test --tests '*TestnetE2E*'   # live testnet
+./gradlew :app:assembleDebug              # -> app/build/outputs/apk/debug/app-debug.apk
+```
+
+The testnet test runs the app's own client code end to end: it creates fresh
+faucet accounts, deploys and initialises a wallet, enrols the (simulated)
+card through its certificate chain, locks the account, pays 0.5 NEAR with a
+phone signature and a card tap, checks that an over-limit payment waits,
+that a replayed card signature is refused, and that a card tap freezes the
+wallet.
+
+Install the APK on an Android phone with NFC (`adb install`, or open the APK
+file). Setting up a wallet takes about a minute: one fingerprint for the
+wallet, one card tap plus a fingerprint to add the card, and one fingerprint
+to lock it with your limits. No NFC? Pick "Demo card" on the first screen.
+
+### Measured gas
+
+On the sandbox (limit 300 Tgas per receipt):
 
 | Step | Gas |
 |---|---|
@@ -98,12 +131,19 @@ Measured on the sandbox (limit 300 Tgas per receipt):
 
 | Part | State |
 |---|---|
-| Core crate | Done, 26 tests |
-| NEAR contract | Done, 15 flow tests + sandbox test on the compiled wasm |
-| Android app (NFC card tap, Keystore key) | In progress |
-| Relayer | Not started |
-| Real-card testing | Not started |
-| Audit | Not started |
+| Core crate | Done, 27 tests |
+| NEAR contract | Done, 24 flow tests + sandbox test on the compiled wasm |
+| Security review | Independent review: 7 findings, all fixed and re-reviewed (see DESIGN.md §9). Not a professional audit |
+| Kotlin client | Done, vectors match the contract byte for byte, live testnet end-to-end test passes |
+| Android app | Done: onboarding, send, approvals, freeze, card check, demo card |
+| Real-card testing | Next: needs an Android phone with NFC and a DDA-capable card |
+| Relayer / merchant POS | Not needed for the phone flow (the app pays its own gas); POS not started |
+
+Contract build: `tapvault_contract.wasm`, SHA-256 (base58)
+`GniW1i9n8vAH6ers3jAZTnpCox3u5VwWvsmN9cY9Foow`. Every wallet's `code_hash` on
+chain should equal this; e.g. the end-to-end test wallet
+[`tv-e2e-cdbefdd9ff.testnet`](https://testnet.nearblocks.io/address/tv-e2e-cdbefdd9ff.testnet)
+runs it and has no access keys.
 
 ## Hackathon notes
 
