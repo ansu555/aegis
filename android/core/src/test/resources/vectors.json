@@ -1,0 +1,150 @@
+{
+  "account": "tv-demo.testnet",
+  "actions": [
+    {
+      "borsh": "0000000080716433b629a33d0100000000000b000000626f622e746573746e6574",
+      "intent": "ce1682fcf881137c22b244124d202106d00019abde32722574097011cc4367a8",
+      "intent_id": 5,
+      "json": {
+        "Transfer": {
+          "amount": "1500000000000000000000000",
+          "asset": "Near",
+          "receiver": "bob.testnet"
+        }
+      },
+      "name": "send_near"
+    },
+    {
+      "borsh": "000112000000757364632e66616b65732e746573746e657440787d010000000000000000000000000c00000073686f702e746573746e6574",
+      "intent": "d9457e7cf6c6c8078c064f46b44d7daddd9c00f7066a8ae431a763ff58f6258b",
+      "intent_id": 5,
+      "json": {
+        "Transfer": {
+          "amount": "25000000",
+          "asset": {
+            "Ft": {
+              "token": "usdc.fakes.testnet"
+            }
+          },
+          "receiver": "shop.testnet"
+        }
+      },
+      "name": "send_ft"
+    },
+    {
+      "borsh": "0104000000000180000000b4240d3bf0f41a2aa081123cbc2fd5aa5d2424af0a20dfd9fc23a092563f3e509cb0df2d328c134de6f60dd9a10cb26ceccfa19717e0aa0e2d741810cdef307cee1b297c145fb473ff58429795be626cf9a6939c9a1846a6291a8ab442d0f240d96cae324a32e43ada8e69196b79de3f080a3460585c158b4288b68423cf5587030000000004040120000000550b95518485d453a7186ad7d73668ea102b9f177cfdb48a4dbafd7a15427b980203030112000000757364632e66616b65732e746573746e65740a00000000000000000000000000000014000000000000000000000000000000",
+      "intent": "d316bb9c34ab58a48110ebc71c00a27b26f76039d8854cf85a1dc8c247bbb327",
+      "intent_id": 5,
+      "json": {
+        "Config": {
+          "ops": [
+            {
+              "AddSigner": {
+                "EmvCard": {
+                  "exponent": 3,
+                  "modulus": "tCQNO/D0GiqggRI8vC/Vql0kJK8KIN/Z/COgklY/PlCcsN8tMowTTeb2DdmhDLJs7M+hlxfgqg4tdBgQze8wfO4bKXwUX7Rz/1hCl5W+Ymz5ppOcmhhGpikairRC0PJA2WyuMkoy5DrajmkZa3nePwgKNGBYXBWLQoi2hCPPVYc=",
+                  "terminal_data_len": 4,
+                  "un_len": 4,
+                  "un_offset": 0
+                }
+              }
+            },
+            {
+              "RemoveSigner": {
+                "key_hash": "VQuVUYSF1FOnGGrX1zZo6hArnxd8/bSKTbr9ehVCe5g="
+              }
+            },
+            {
+              "SetThreshold": 3
+            },
+            {
+              "SetLimit": {
+                "asset": {
+                  "Ft": {
+                    "token": "usdc.fakes.testnet"
+                  }
+                },
+                "daily_max": "20",
+                "instant_max": "10"
+              }
+            }
+          ]
+        }
+      },
+      "name": "config_all_ops"
+    },
+    {
+      "borsh": "0104000000040005100e000000000000201c000000000000805101000000000006000021000000031e18532fd4754c02f3041d9c75ceb33b83ffd81ac7ce4fe882ccb1c98bc5896e00",
+      "intent": "c6d646a45b47e74d55524aa723354d6b3a8dce359ccb0bd7d2dd43d9292dd961",
+      "intent_id": 5,
+      "json": {
+        "Config": {
+          "ops": [
+            {
+              "RemoveLimit": {
+                "asset": "Near"
+              }
+            },
+            {
+              "SetDelays": {
+                "config": 7200,
+                "recovery": 86400,
+                "transfer": 3600
+              }
+            },
+            "Unfreeze",
+            {
+              "AddSigner": {
+                "P256": {
+                  "pubkey": "Ax4YUy/UdUwC8wQdnHXOszuD/9gax85P6ILMscmLxYlu",
+                  "webauthn": null
+                }
+              }
+            }
+          ]
+        }
+      },
+      "name": "config_more_ops"
+    }
+  ],
+  "card_key_borsh": "0180000000b4240d3bf0f41a2aa081123cbc2fd5aa5d2424af0a20dfd9fc23a092563f3e509cb0df2d328c134de6f60dd9a10cb26ceccfa19717e0aa0e2d741810cdef307cee1b297c145fb473ff58429795be626cf9a6939c9a1846a6291a8ab442d0f240d96cae324a32e43ada8e69196b79de3f080a3460585c158b4288b68423cf558703000000000404",
+  "card_key_hash": "2ff11a21b407e4bb6fd9db097106d459d110e71e589e397bab9003c7aeca778b",
+  "finalize_args": {
+    "delays": {
+      "config": 3600,
+      "recovery": 86400,
+      "transfer": 3600
+    },
+    "limits": [
+      {
+        "asset": "Near",
+        "daily_max": "2000000000000000000000000",
+        "instant_max": "1000000000000000000000000"
+      }
+    ],
+    "threshold": 2
+  },
+  "finalize_borsh": "02100e000000000000100e00000000000080510100000000000100000000000000a1edccce1bc2d300000000000000000042db999d3784a7010000000000",
+  "messages": {
+    "cancel": "ce06890c5fafcb2482912a078ab52304fade448e051b9d4fdf70ec34df64f1a5",
+    "card_approve": "3a15dcb1cadbfe551c5adfa5d745691fb4a76eddf486d1c707869df8723639e5",
+    "card_cancel": "0444d40d04c87d2ef70151dbe9f42f839029cc2074ce3f23bd9fa61821633df9",
+    "card_enroll_1": "114876d9faf58a11c49f10862032de1ebd6d4f30986742e0cf2828da04816c0d",
+    "card_freeze_3": "f7523166beca23bb266076c7c937a1f7fc5bf123a85ec3ca63ec128680390c0f",
+    "card_propose": "757c5ad6f93d620c26cef775cec6b6fbae6edd03ec45e83163252fa6e068627d",
+    "create": "7c5b71520e2bf4a0f521775d5eeff1d0c5c0d17c3b833328c5929cb955b76f2b",
+    "finalize": "5398ece448e8e68dcf564cb1cc90b14145e0aa5ffe420c207edbf6c5a1852489",
+    "freeze_3": "dbf3867127843b4a7d35025f087886a907b6995d2f837bbbda50d78d7576d25c",
+    "intent_input": "1111111111111111111111111111111111111111111111111111111111111111",
+    "seed_input": "2222222222222222222222222222222222222222222222222222222222222222",
+    "setup_add_1_card": "67db9f15a36af50eff0d36739aa7e8aa9d4d9ba3e23eea8b9de0c1f988650bce"
+  },
+  "phone_key": {
+    "P256": {
+      "pubkey": "Ax4YUy/UdUwC8wQdnHXOszuD/9gax85P6ILMscmLxYlu",
+      "webauthn": null
+    }
+  },
+  "phone_key_borsh": "0021000000031e18532fd4754c02f3041d9c75ceb33b83ffd81ac7ce4fe882ccb1c98bc5896e00",
+  "phone_key_hash": "550b95518485d453a7186ad7d73668ea102b9f177cfdb48a4dbafd7a15427b98"
+}
