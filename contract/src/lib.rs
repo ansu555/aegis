@@ -14,6 +14,7 @@ pub mod auth;
 pub mod error;
 pub mod events;
 pub mod execute;
+pub mod guard;
 pub mod proposals;
 pub mod setup;
 pub mod types;
