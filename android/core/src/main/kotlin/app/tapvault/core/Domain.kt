@@ -1,0 +1,57 @@
+package app.tapvault.core
+
+/**
+ * Every message a Tapvault signer signs. Mirrors crates/tapvault-core/src/domain.rs;
+ * pinned by vectors.json.
+ */
+object Domain {
+    private fun tag(s: String) = "tapvault/near/v1/$s".toByteArray()
+
+    private val D_INTENT = tag("intent")
+    private val D_CARD_APPROVE = tag("card-approve")
+    private val D_CARD_PROPOSE = tag("card-propose")
+    private val D_CANCEL = tag("cancel")
+    private val D_CARD_CANCEL = tag("card-cancel")
+    private val D_FREEZE = tag("freeze")
+    private val D_CARD_FREEZE = tag("card-freeze")
+    private val D_CREATE = tag("create")
+    private val D_SETUP_ADD = tag("setup-add")
+    private val D_CARD_ENROLL = tag("card-enroll")
+    private val D_FINALIZE = tag("finalize")
+    private val D_KEY_P256 = tag("key/p256")
+    private val D_KEY_EMV = tag("key/emv")
+
+    private fun acct(account: String): Array<ByteArray> {
+        val b = account.toByteArray()
+        return arrayOf(u32le(b.size), b)
+    }
+
+    fun keyHashP256(pubkey33: ByteArray) = sha256(D_KEY_P256, pubkey33)
+
+    fun keyHashEmv(modulus: ByteArray, exponent: Int) = sha256(D_KEY_EMV, u32le(exponent), modulus)
+
+    fun intentHash(account: String, proposalId: Long, action: ByteArray) =
+        sha256(D_INTENT, *acct(account), u64le(proposalId), action)
+
+    fun cardApproveChallenge(intent: ByteArray, seed: ByteArray) = sha256(D_CARD_APPROVE, intent, seed)
+
+    fun cardProposeChallenge(intent: ByteArray) = sha256(D_CARD_PROPOSE, intent)
+
+    fun cancelMessage(intent: ByteArray) = sha256(D_CANCEL, intent)
+
+    fun cardCancelChallenge(intent: ByteArray) = sha256(D_CARD_CANCEL, intent)
+
+    fun freezeMessage(account: String, nonce: Long) = sha256(D_FREEZE, *acct(account), u64le(nonce))
+
+    fun cardFreezeChallenge(account: String, nonce: Long) = sha256(D_CARD_FREEZE, *acct(account), u64le(nonce))
+
+    fun createMessage(account: String, firstKeyHash: ByteArray) = sha256(D_CREATE, *acct(account), firstKeyHash)
+
+    fun setupAddMessage(account: String, signerCount: Int, newKeyHash: ByteArray) =
+        sha256(D_SETUP_ADD, *acct(account), byteArrayOf(signerCount.toByte()), newKeyHash)
+
+    fun cardEnrollChallenge(account: String, signerCount: Int, newKeyHash: ByteArray) =
+        sha256(D_CARD_ENROLL, *acct(account), byteArrayOf(signerCount.toByte()), newKeyHash)
+
+    fun finalizeMessage(account: String, args: ByteArray) = sha256(D_FINALIZE, *acct(account), args)
+}
