@@ -15,6 +15,8 @@ pub mod error;
 pub mod policy;
 pub mod sha1;
 pub mod sha256;
+#[cfg(any(test, feature = "test-card"))]
+pub mod testcard;
 pub mod webauthn;
 
 pub use error::CoreError;

@@ -8,6 +8,10 @@ license = "MIT"
 [lib]
 name = "tapvault_core"
 
+[features]
+# Simulated EMV card with a public private key, for tests and demos.
+test-card = []
+
 [dependencies]
 # Intentionally none. Everything security-critical lives here so it can be
 # unit-tested natively and audited without the NEAR toolchain.
