@@ -2,12 +2,14 @@
 //!
 //! Modules:
 //! - [`bigint`]: minimal unsigned big integers for RSA public operations.
+//! - [`domain`]: every domain-separated message and challenge the protocol signs.
 //! - [`emv`]: EMV DDA / fDDA "Signed Dynamic Application Data" verification.
 //! - [`policy`]: spending limits, delays and threshold rules.
 //! - [`sha1`], [`sha256`]: software hashes (SHA-1 is required by EMV).
 //! - [`webauthn`]: WebAuthn assertion checks for FIDO2 / passkey signers.
 
 pub mod bigint;
+pub mod domain;
 pub mod emv;
 pub mod error;
 pub mod policy;
