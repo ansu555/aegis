@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -46,6 +47,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import app.tapvault.core.Near
 import app.tapvault.core.ProposalInfo
 import java.math.BigInteger
@@ -192,7 +194,10 @@ private fun Home(vm: AppViewModel) {
         Spacer(Modifier.height(6.dp))
         when {
             w?.frozen == true -> Badge("Frozen", Tv.Down, Tv.Down.copy(alpha = 0.15f))
-            w?.nearLimit != null -> Badge("${Near.format(w.nearLimit!!.availableNow(), 2)} NEAR instant now", Tv.Up)
+            w?.nearLimit != null -> {
+                val instant = w.nearLimit!!.availableNow().let { a -> vm.balance?.let { a.min(it) } ?: a }
+                Badge("${Near.format(instant, 2)} NEAR instant now", Tv.Up)
+            }
         }
     }
     Spacer(Modifier.height(26.dp))
@@ -301,8 +306,7 @@ private fun Send(vm: AppViewModel) {
     val spendable = vm.balance
 
     Header("Send", onBack = { vm.go(Screen.Home) })
-    Box {
-        Column {
+    Column {
             // amount card
             Column(Modifier.fillMaxWidth().gradientTile(30.dp, warm = true).padding(18.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -323,11 +327,21 @@ private fun Send(vm: AppViewModel) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     ChipButton("Half") { spendable?.let { amount = Near.format(it / BigInteger.TWO, 4) } }
                     GlassField("", amount, { v -> amount = v.filter { it.isDigit() || it == '.' } }, Modifier.weight(1f), number = true, big = true, placeholder = "0")
-                    ChipButton("Max") { limit?.let { amount = Near.format(it.availableNow().min(spendable ?: it.availableNow()), 4) } }
+                    ChipButton("Max") {
+                        // keep a little behind so the wallet can always pay for its own storage
+                        val buffer = Near.parse("0.01")
+                        val most = listOfNotNull(limit?.availableNow(), spendable?.minus(buffer)).minOrNull()
+                        most?.let { amount = Near.format(it.max(BigInteger.ZERO), 4) }
+                    }
                 }
                 Caption("Available: ${spendable?.let { Near.format(it, 4) } ?: "…"} NEAR", Modifier.fillMaxWidth().padding(top = 4.dp), Tv.Text.copy(alpha = 0.8f))
             }
-            Spacer(Modifier.height(10.dp))
+            // lime connector, drawn over the gap between the two cards
+            Box(Modifier.fillMaxWidth().height(10.dp).zIndex(1f), contentAlignment = Alignment.Center) {
+                Box(Modifier.requiredSize(56.dp).background(Tv.Lime, CircleShape).border(5.dp, Tv.Night, CircleShape), contentAlignment = Alignment.Center) {
+                    GlyphIcon(Glyph.Down, 22.dp, Tv.OnLime)
+                }
+            }
             // receiver card
             Column(Modifier.fillMaxWidth().gradientTile(30.dp).padding(18.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -340,10 +354,6 @@ private fun Send(vm: AppViewModel) {
                 Spacer(Modifier.height(12.dp))
                 GlassField("NEAR account", to, { to = it.trim().lowercase() }, placeholder = "friend.testnet")
             }
-        }
-        Box(Modifier.align(Alignment.Center).offset(y = (-32).dp).size(56.dp).background(Tv.Lime, CircleShape).border(5.dp, Tv.Night, CircleShape), contentAlignment = Alignment.Center) {
-            GlyphIcon(Glyph.Down, 22.dp, Tv.OnLime)
-        }
     }
     Spacer(Modifier.height(18.dp))
     PillButton("Approve & tap card", Modifier.fillMaxWidth(), enabled = vm.busy == null && to.isNotBlank() && parsed != null, glyph = Glyph.Card) { vm.send(to, amount) }
@@ -357,7 +367,7 @@ private fun Send(vm: AppViewModel) {
         }, if (parsed == null) Tv.Dim else if (instant) Tv.Up else Tv.Warn)
         limit?.let {
             InfoRow("Instant limit", "${Near.format(it.instantMax)} NEAR")
-            InfoRow("Available today", "${Near.format(it.availableNow(), 2)} NEAR")
+            InfoRow("Instant allowance left", "${Near.format(it.availableNow(), 2)} NEAR")
         }
         InfoRow("Network fee", "paid by your fee account")
         InfoRow("Approvals", "phone + card")

@@ -63,15 +63,19 @@ private fun Modifier.press(enabled: Boolean = true, onClick: () -> Unit): Modifi
 @Composable
 fun CircleButton(glyph: Glyph, label: String, size: Dp = 56.dp, lime: Boolean = false, enabled: Boolean = true, dot: Boolean = false, onClick: () -> Unit) {
     Box(contentAlignment = Alignment.Center) {
+        // Fade with colours rather than an alpha layer: toggling the layer
+        // when `enabled` changes dropped the background on some devices.
+        val fade = if (enabled) 1f else 0.4f
+        val bg = if (lime) Tv.Lime else Tv.GlassStrong
+        val fg = if (lime) Tv.OnLime else Tv.Text
         Box(
             Modifier.size(size).clip(CircleShape)
-                .background(if (lime) Tv.Lime else Tv.GlassStrong)
+                .background(bg.copy(alpha = bg.alpha * fade))
                 .border(1.dp, if (lime) Color.Transparent else Tv.Hairline, CircleShape)
-                .alpha(if (enabled) 1f else 0.4f)
                 .press(enabled, onClick)
                 .semantics { contentDescription = label; role = Role.Button },
             contentAlignment = Alignment.Center,
-        ) { GlyphIcon(glyph, size * 0.42f, if (lime) Tv.OnLime else Tv.Text) }
+        ) { GlyphIcon(glyph, size * 0.42f, fg.copy(alpha = fade)) }
         if (dot) Box(Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 6.dp).size(9.dp).background(Color(0xFFFF8A5B), CircleShape))
     }
 }
