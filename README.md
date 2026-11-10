@@ -131,8 +131,8 @@ On the sandbox (limit 300 Tgas per receipt):
 
 | Part | State |
 |---|---|
-| Core crate | Done, 27 tests |
-| NEAR contract | Done, 24 flow tests + sandbox test on the compiled wasm |
+| Core crate | Done, 26 tests |
+| NEAR contract | Done, 23 flow tests + reference vectors + sandbox test on the compiled wasm |
 | Security review | Independent review: 7 findings, all fixed and re-reviewed (see DESIGN.md §9). Not a professional audit |
 | Kotlin client | Done, vectors match the contract byte for byte, live testnet end-to-end test passes |
 | Android app | Done: onboarding, send, approvals, freeze, card check, demo card |
