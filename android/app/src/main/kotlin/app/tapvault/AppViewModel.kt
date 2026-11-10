@@ -60,6 +60,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var tap by mutableStateOf<TapRequest?>(null)
     var wallet by mutableStateOf<WalletState?>(null)
     var balance by mutableStateOf<BigInteger?>(null)
+    var storageLocked by mutableStateOf<BigInteger?>(null)
     var proposals by mutableStateOf<List<ProposalInfo>>(emptyList())
     var cardReport by mutableStateOf<CardReport?>(null)
     var setupStep by mutableStateOf(store.setupStep)
@@ -174,9 +175,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 withContext(Dispatchers.IO) {
                     val w = walletClient()
                     val s = w.state()
-                    val b = w.balance()
+                    val (b, locked) = near.spendable(w.account)
                     val ps = w.proposals()
-                    withContext(Dispatchers.Main) { wallet = s; balance = b; proposals = ps }
+                    withContext(Dispatchers.Main) { wallet = s; balance = b; storageLocked = locked; proposals = ps }
                 }
             } catch (e: Exception) {
                 note("refresh failed: ${e.message}")
@@ -244,7 +245,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             cardReport = enrol.report
             note("card ${enrol.report.network} ****${enrol.report.panLast4} enrolled (${enrol.report.iccKeyBits}-bit key)")
             progress("Approve adding card ****${enrol.report.panLast4}")
-            phone.reason = "Add ${enrol.report.network} card ****${enrol.report.panLast4} as a signer"
+            val cardName = enrol.report.network.let { if (it.endsWith("card")) it else "$it card" }
+            phone.reason = "Add $cardName ****${enrol.report.panLast4} as a signer"
             ob.addCard(accounts, phone, 1, enrol)
             setStep(3)
         }

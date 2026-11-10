@@ -97,6 +97,7 @@ class EmvSession(private val card: CardTransceiver, private val capks: CapkStore
     private val records = mutableListOf<Tlv>()
     private var staticData = ByteArray(0)
     private var ddol: List<DolEntry> = emptyList()
+    private var issuerBits: Int? = null
 
     val rid get() = aid.copyOfRange(0, minOf(5, aid.size)).hex().uppercase()
 
@@ -213,6 +214,7 @@ class EmvSession(private val card: CardTransceiver, private val capks: CapkStore
         val issuerKey = cas.firstNotNullOfOrNull { ca ->
             runCatching { issuerKeyFrom(ca, issuerCert, issuerRem, issuerExp, pan) }.getOrNull()
         } ?: throw EmvException("issuer certificate did not verify against CA %02X".format(caIndex))
+        issuerBits = issuerKey.size * 8
 
         val iccCert = find(0x9F46)?.value ?: throw EmvException("no card certificate (card doesn't do DDA)")
         val iccExp = find(0x9F47)?.value ?: throw EmvException("no card exponent")
@@ -282,7 +284,7 @@ class EmvSession(private val card: CardTransceiver, private val capks: CapkStore
         return CardSig(sdad, td)
     }
 
-    fun report(key: Pair<ByteArray, Int>?, issuerBits: Int? = null): CardReport {
+    fun report(key: Pair<ByteArray, Int>?): CardReport {
         val a0 = aip[0].toInt()
         val pan = find(0x5A)?.value?.hex()?.trimEnd('f', 'F')
         return CardReport(

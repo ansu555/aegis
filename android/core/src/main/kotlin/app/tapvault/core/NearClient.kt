@@ -109,6 +109,19 @@ class NearClient(
         return BigInteger(r["amount"]!!.jsonPrimitive.content)
     }
 
+    /**
+     * What the account can actually send: its balance minus the part locked
+     * to pay for its storage (contract code and state, 10^19 yocto per byte).
+     */
+    fun spendable(account: String): Pair<BigInteger, BigInteger> {
+        val r = rpc("query", buildJsonObject {
+            put("request_type", "view_account"); put("finality", "optimistic"); put("account_id", account)
+        }).jsonObject
+        val amount = BigInteger(r["amount"]!!.jsonPrimitive.content)
+        val locked = BigInteger(r["storage_usage"]!!.jsonPrimitive.content) * BigInteger.TEN.pow(19)
+        return (amount - locked).max(BigInteger.ZERO) to locked
+    }
+
     fun accountExists(account: String) = runCatching { balance(account) }.isSuccess
 
     fun accessKeys(account: String): List<String> {

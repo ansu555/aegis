@@ -275,8 +275,9 @@ private fun Home(vm: AppViewModel) {
         }
     }
     Panel {
-        Label("Balance")
+        Label("Available")
         Text(vm.balance?.let { "${Near.format(it, 3)} NEAR" } ?: "…", fontSize = 38.sp, fontWeight = FontWeight.Bold)
+        vm.storageLocked?.let { Text("+ ${Near.format(it, 2)} NEAR held for the wallet contract's storage", color = Dim, fontSize = 12.sp) }
         Text(
             vm.store.walletAccount ?: "", color = Dim, fontSize = 13.sp, fontFamily = FontFamily.Monospace,
             modifier = Modifier.clickable { vm.store.walletAccount?.let { clip.setText(AnnotatedString(it)) } },
