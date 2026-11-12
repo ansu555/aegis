@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Generate SimKeys.kt: the keys behind the Android app's simulated EMV card.
+"""Generate SimKeys.kt: the keys behind the simulated EMV card used by the
+Kotlin tests (it is not part of the app).
 
 The card's own (ICC) key is the same 1024-bit test key as the Rust
-TestCard. On top of it sits a demo certificate chain, a made-up CA and
-issuer, so the app's real card-reading code (certificate recovery, static
-data hash, INTERNAL AUTHENTICATE) runs against it. All private keys here
-are public on purpose.
+TestCard. On top of it sits a test certificate chain, a made-up CA and
+issuer, so the real card-reading code (certificate recovery, static data
+hash, DDA / fDDA / CDA signing) runs against it in tests. All private keys
+here are public on purpose.
 
-    python3 tools/gen_sim_card_keys.py > android/core/src/main/kotlin/app/tapvault/core/SimKeys.kt
+    python3 tools/gen_sim_card_keys.py > android/core/src/test/kotlin/app/tapvault/core/SimKeys.kt
 """
 
 import os

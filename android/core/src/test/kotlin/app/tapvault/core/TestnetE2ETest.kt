@@ -9,8 +9,10 @@ import kotlin.test.fail
 
 /**
  * The whole flow against the live NEAR testnet, using the same client code
- * as the app, a software P-256 key in place of the phone's Keystore key, and
- * the simulated card speaking real APDUs. Creates fresh faucet accounts.
+ * as the app and the real deployed contract code. Test stand-ins: a software
+ * P-256 key in place of the phone's Keystore key, and a simulated card speaking
+ * real APDUs in place of the NFC card (TAPVAULT_CARD_PROFILE picks how it signs:
+ * DDA, VISA_FDDA or MASTERCARD_CDA). Creates fresh testnet accounts.
  *
  *   TAPVAULT_TESTNET=1 ./gradlew :core:test --tests '*TestnetE2E*'
  */
@@ -26,8 +28,8 @@ class TestnetE2ETest {
         val wasm = File(System.getenv("TAPVAULT_WASM") ?: fail("TAPVAULT_WASM not set")).readBytes()
         val near = NearClient()
         val phone = SoftP256Signer()
-        val card = SimCard()
-        val cards = CardService(CapkStore.load().plus(SimCard.DEMO_CA))
+        val card = SimCard(SimCard.Profile.valueOf(System.getenv("TAPVAULT_CARD_PROFILE") ?: "DDA"))
+        val cards = CardService(CapkStore.load().plus(SimCard.TEST_CA))
         val ob = Onboarding(near)
 
         step("creating faucet accounts")
@@ -41,6 +43,8 @@ class TestnetE2ETest {
         step("enrol the card: read its certificate chain and sign the enrolment challenge in one tap")
         val enrol = cards.enrol(card) { k -> Domain.cardEnrollChallenge(a.wallet, 1, k.keyHash()) }
         enrol.report.text().lines().filter { it.isNotBlank() }.forEach { step("  $it") }
+        val recipe = enrol.recipe
+        step("card signs with ${recipe.method}; terminal data ${enrol.key.terminalDataLen} bytes, UN at ${enrol.key.unOffset}")
         ob.addCard(a, phone, 1, enrol)
 
         step("finalize: threshold 2, limits 1 NEAR instant / 2 NEAR per day, shortest delays")
@@ -62,7 +66,7 @@ class TestnetE2ETest {
         val amount = Near.parse("0.5")
         val id = w.proposeByPhone(Action.Transfer(Asset.Near, amount, receiver), phone, phoneIdx)
         val ch = w.awaitCardChallenge(id)
-        val tap = cards.sign(card, cardKey, ch)
+        val tap = cards.sign(card, cardKey, ch, recipe)
         assertTrue(st.nearLimit!!.isInstant(amount))
         val r = w.approveCardAndExecute(id, cardIdx, tap)
         step("executed: ${near.explorerTx(r.hash)}")
@@ -71,7 +75,7 @@ class TestnetE2ETest {
 
         step("over the limit: 1.5 NEAR is approved but must wait the delay")
         val big = w.proposeByPhone(Action.Transfer(Asset.Near, Near.parse("1.5"), receiver), phone, phoneIdx)
-        w.approveCard(big, cardIdx, cards.sign(card, cardKey, w.awaitCardChallenge(big)))
+        w.approveCard(big, cardIdx, cards.sign(card, cardKey, w.awaitCardChallenge(big), recipe))
         val p = w.proposal(big)!!
         assertTrue(p.readyTs != null)
         val early = runCatching { w.execute(big) }
@@ -83,7 +87,7 @@ class TestnetE2ETest {
 
         step("a skimmed signature for one proposal can't approve the next")
         val p1 = w.proposeByPhone(Action.Transfer(Asset.Near, Near.parse("0.1"), receiver), phone, phoneIdx)
-        val skimmed = cards.sign(card, cardKey, w.awaitCardChallenge(p1))
+        val skimmed = cards.sign(card, cardKey, w.awaitCardChallenge(p1), recipe)
         val p2 = w.proposeByPhone(Action.Transfer(Asset.Near, Near.parse("0.1"), receiver), phone, phoneIdx)
         w.awaitCardChallenge(p2)
         val replay = runCatching { w.approveCard(p2, cardIdx, skimmed) }
@@ -91,7 +95,7 @@ class TestnetE2ETest {
         step("refused: ${replay.exceptionOrNull()?.message}")
 
         step("freeze with a card tap")
-        w.freezeByCard(cardIdx) { c -> cards.sign(card, cardKey, c) }
+        w.freezeByCard(cardIdx) { c -> cards.sign(card, cardKey, c, recipe) }
         assertTrue(w.state().frozen)
         val frozen = runCatching { w.proposeByPhone(Action.Transfer(Asset.Near, Near.parse("0.1"), receiver), phone, phoneIdx) }
         assertTrue(frozen.exceptionOrNull()?.message?.contains("frozen") == true)

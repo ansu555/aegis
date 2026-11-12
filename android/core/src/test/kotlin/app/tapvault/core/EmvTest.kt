@@ -7,7 +7,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class EmvTest {
-    private val capks = CapkStore.load().plus(SimCard.DEMO_CA)
+    private val capks = CapkStore.load().plus(SimCard.TEST_CA)
 
     @Test
     fun capkFileLoadsWithChecksummedKeys() {
@@ -41,11 +41,12 @@ class EmvTest {
         // the report never carries the PAN
         assertEquals("1234", e.report.panLast4)
         assertTrue(!e.report.text().contains("5999990000001234"))
-        assertEquals("Tapvault demo card", e.report.network)
+        assertEquals("unknown", e.report.network)
+        assertEquals(SignMethod.DDA, e.recipe.method)
     }
 
     @Test
-    fun withoutTheDemoCaTheChainIsRejected() {
+    fun withoutTheTestCaTheChainIsRejected() {
         val err = assertFailsWith<CardCheckFailed> {
             CardService(CapkStore.load()).enrol(SimCard()) { ByteArray(32) }
         }
@@ -70,6 +71,79 @@ class EmvTest {
         val r = CardService(capks).inspect(SimCard())
         assertTrue(r.ddaSupported)
         assertTrue(r.notes.any { it.contains("can be a Tapvault signer") }, r.text())
+    }
+
+    @Test
+    fun enrolsAndSignsWithEveryCardFamily() {
+        for (profile in SimCard.Profile.values()) {
+            val svc = CardService(capks)
+            val card = SimCard(profile)
+            val challengeFor = { k: SignerKey.EmvCard -> Domain.cardEnrollChallenge("w.testnet", 1, k.keyHash()) }
+            val e = svc.enrol(card, challengeFor)
+            val expected = mapOf(
+                SimCard.Profile.DDA to SignMethod.DDA,
+                SimCard.Profile.VISA_FDDA to SignMethod.FDDA,
+                SimCard.Profile.MASTERCARD_CDA to SignMethod.CDA,
+            )
+            assertEquals(expected[profile], e.recipe.method, "$profile")
+            assertContentEquals(TestCards.SMALL.modulus, e.key.modulus)
+            assertTrue(e.report.canSign, e.report.text())
+            // What the contract checks: terminal data length, the UN at its offset, and the SDAD.
+            assertTrue(e.key.terminalDataLen <= 64 && e.key.unLen in 4..8)
+            assertEquals(e.key.terminalDataLen, e.proof.terminalData.size)
+            assertContentEquals(challengeFor(e.key).copyOf(e.key.unLen), e.proof.terminalData.copyOfRange(e.key.unOffset, e.key.unOffset + e.key.unLen))
+            assertTrue(Rsa.verifySdad(e.key.modulus, e.key.exponent, e.proof.sdad, e.proof.terminalData))
+
+            // Later taps, with the saved recipe and without it.
+            for (recipe in listOf(e.recipe, null)) {
+                val ch = sha256("challenge $profile $recipe".toByteArray())
+                val sig = svc.sign(card, e.key, ch, recipe)
+                assertEquals(e.key.terminalDataLen, sig.terminalData.size, "$profile $recipe")
+                assertContentEquals(ch.copyOf(e.key.unLen), sig.terminalData.copyOfRange(e.key.unOffset, e.key.unOffset + e.key.unLen))
+                assertTrue(Rsa.verifySdad(e.key.modulus, e.key.exponent, sig.sdad, sig.terminalData))
+            }
+        }
+    }
+
+    @Test
+    fun visaStyleCardSignsFullFddaTerminalData() {
+        val e = CardService(capks).enrol(SimCard(SimCard.Profile.VISA_FDDA)) { ByteArray(32) }
+        assertEquals(CardRecipe.FDDA_FULL, e.recipe.variant)
+        // UN 4 + amount 6 + currency 2 + card authentication data (9F69) 7
+        assertEquals(19, e.key.terminalDataLen)
+        assertEquals(0, e.key.unOffset)
+    }
+
+    @Test
+    fun mastercardStyleCardFallsBackToANonZeroAmount() {
+        val e = CardService(capks).enrol(SimCard(SimCard.Profile.MASTERCARD_CDA)) { ByteArray(32) }
+        assertEquals(SignMethod.CDA, e.recipe.method)
+        assertEquals(100L, e.recipe.amount)
+        assertEquals(4, e.key.terminalDataLen)
+        assertTrue(e.report.attempts.any { it.contains("AAC") }, e.report.text())
+    }
+
+    @Test
+    fun recipesRoundTrip() {
+        val r = CardRecipe("A0000000041010", SignMethod.CDA, 100, CardRecipe.CDA_TC)
+        assertEquals(r, CardRecipe.decode(r.encode()))
+        assertEquals(null, CardRecipe.decode("garbage"))
+        assertEquals(null, CardRecipe.decode(null))
+    }
+
+    @Test
+    fun reportsAndTracesNeverCarryTheCardNumber() {
+        for (profile in SimCard.Profile.values()) {
+            val r = CardService(capks).inspect(SimCard(profile))
+            val all = r.diagnostics()
+            assertTrue(r.trace.isNotEmpty())
+            assertTrue(!all.contains("5999990000001234") && !all.contains("59999900000012"), all)
+            assertTrue(r.trace.none { it.contains("5A=") || it.contains("9F46=") || it.contains("90=") }, all)
+        }
+        // A card without the CA key still gets a useful report.
+        val r = CardService(CapkStore.load()).inspect(SimCard())
+        assertTrue(!r.canSign)
+        assertTrue(r.notes.any { it.startsWith("can't be a Tapvault signer") }, r.text())
     }
 
     @Test
