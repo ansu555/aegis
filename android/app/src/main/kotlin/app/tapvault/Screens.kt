@@ -59,7 +59,7 @@ fun TapvaultApp(vm: AppViewModel) {
     TapvaultTheme {
         NightBackground {
             LaunchedEffect(Unit) { vm.refresh(); vm.startAutoRefresh() }
-            BackHandler(enabled = vm.screen !in setOf(Screen.Home, Screen.Welcome, Screen.Setup)) { vm.go(Screen.Home) }
+            BackHandler(enabled = vm.screen !in setOf(Screen.Home, Screen.Welcome, Screen.Setup)) { vm.go(if (vm.store.setupStep >= 4) Screen.Home else Screen.Welcome) }
             val uri = LocalUriHandler.current
             Box(Modifier.fillMaxSize().safeDrawingPadding()) {
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(horizontal = 20.dp)) {
@@ -78,7 +78,7 @@ fun TapvaultApp(vm: AppViewModel) {
                 if (vm.screen in tabScreens && vm.store.setupStep >= 4) {
                     BottomBar(vm.screen, vm.proposals.size, { vm.go(it) }, Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp))
                 }
-                vm.tap?.let { TapSheet(it, { vm.demoTapNow() }, { vm.cancelTap() }) }
+                vm.tap?.let { TapSheet(it) { vm.cancelTap() } }
                 if (vm.tap == null) vm.busy?.let { BusyOverlay(it) }
             }
         }
@@ -89,7 +89,6 @@ fun TapvaultApp(vm: AppViewModel) {
 
 @Composable
 private fun Welcome(vm: AppViewModel) {
-    var demo by remember { mutableStateOf(!vm.hasNfc) }
     var instant by remember { mutableStateOf(vm.store.instantNear) }
     var daily by remember { mutableStateOf(vm.store.dailyNear) }
     Spacer(Modifier.height(28.dp))
@@ -100,10 +99,11 @@ private fun Welcome(vm: AppViewModel) {
     Caption("Every payment needs your fingerprint and a tap of the card you already carry. No seed phrase, no new device.")
     Spacer(Modifier.height(26.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        ChoiceTile("My bank card", "Visa · Mastercard · RuPay", "NFC", Glyph.Card, !demo, warm = true, enabled = vm.hasNfc, modifier = Modifier.weight(1f)) { demo = false }
-        ChoiceTile("Demo card", "Try it without NFC", "SIM", Glyph.Shield, demo, warm = false, modifier = Modifier.weight(1f)) { demo = true }
+        ChoiceTile("My bank card", "Visa · Mastercard · RuPay", "NFC", Glyph.Card, vm.hasNfc, warm = true, enabled = vm.hasNfc, modifier = Modifier.weight(1f)) { }
+        ChoiceTile("Check it first", "See if your card can sign", "TEST", Glyph.Shield, false, warm = false, enabled = vm.hasNfc, modifier = Modifier.weight(1f)) { vm.go(Screen.CardCheck) }
     }
-    if (!vm.hasNfc) Caption("This phone has no NFC, so only the demo card works.", Modifier.padding(top = 10.dp), Tv.Warn)
+    if (!vm.hasNfc) Caption("This phone has no NFC, so it can't read a bank card. Use an Android phone with NFC.", Modifier.padding(top = 10.dp), Tv.Warn)
+    else if (!vm.nfcEnabled) Caption("NFC is off. Turn it on in Android settings (Connected devices → NFC).", Modifier.padding(top = 10.dp), Tv.Warn)
     Spacer(Modifier.height(16.dp))
     GlassCard {
         Text("Spending limits", fontSize = 16.sp)
@@ -115,7 +115,7 @@ private fun Welcome(vm: AppViewModel) {
         }
     }
     Spacer(Modifier.height(20.dp))
-    PillButton("Create my wallet", Modifier.fillMaxWidth(), glyph = Glyph.Plus) { vm.beginSetup(demo, instant, daily) }
+    PillButton("Create my wallet", Modifier.fillMaxWidth(), enabled = vm.hasNfc, glyph = Glyph.Plus) { vm.beginSetup(instant, daily) }
     Caption("NEAR testnet · accounts and test NEAR come from the faucet", Modifier.fillMaxWidth().padding(top = 12.dp), Tv.Faint)
 }
 
@@ -430,7 +430,7 @@ private fun ActivityScreen(vm: AppViewModel) {
 @Composable
 private fun CardCheck(vm: AppViewModel) {
     val ctx = LocalContext.current
-    Header("Card check")
+    Header("Card check", onBack = if (vm.store.setupStep < 4) ({ vm.go(Screen.Welcome) }) else null)
     Box(Modifier.fillMaxWidth().padding(vertical = 10.dp), contentAlignment = Alignment.Center) { CardArt(label = vm.cardReport?.let { "•••• ${it.panLast4}" } ?: "TAPVAULT") }
     Caption(
         "Reads a card's payment chip and tells you whether it can sign for Tapvault. Your card number never leaves this phone.",
@@ -440,14 +440,14 @@ private fun CardCheck(vm: AppViewModel) {
     vm.cardReport?.let { r ->
         CardReportCard(r)
         GhostButton("Share report", Modifier.fillMaxWidth()) {
-            ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, r.text()), "Share card report"))
+            ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, r.diagnostics()), "Share card report"))
         }
     }
 }
 
 @Composable
 private fun CardReportCard(r: app.tapvault.core.CardReport) {
-    val ok = r.notes.any { it.contains("can be a Tapvault signer") } || r.iccKeyBits != null && r.ddaSupported
+    val ok = r.canSign
     Spacer(Modifier.height(12.dp))
     GlassCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -462,6 +462,7 @@ private fun CardReportCard(r: app.tapvault.core.CardReport) {
         InfoRow("CA key index", r.caIndex ?: "–")
         InfoRow("Issuer key", r.issuerKeyBits?.let { "$it bit" } ?: "–")
         InfoRow("Card key", r.iccKeyBits?.let { "$it bit, e=${r.iccExponent}" } ?: "–")
+        InfoRow("Signs with", r.signsWith ?: "–")
         InfoRow("Challenge format", r.ddol ?: "–")
         r.notes.forEach { Caption("· $it", Modifier.padding(top = 4.dp)) }
     }
@@ -477,7 +478,7 @@ private fun SettingsScreen(vm: AppViewModel) {
     vm.store.walletAccount?.let { a -> ListRow(Glyph.Shield, "Wallet account", a, "↗", onClick = { uri.openUri(vm.near.explorerAccount(a)) }) }
     vm.store.gasAccount?.let { a -> ListRow(Glyph.Send, "Fee account", "pays gas, can't move funds", "↗", onClick = { uri.openUri(vm.near.explorerAccount(a)) }) }
     ListRow(Glyph.Phone, "Phone key", if (KeystoreSigner.exists()) vm.phone.hardwareLabel else "none", "P-256")
-    ListRow(Glyph.Card, "Card", if (vm.store.demoCard) "Demo card (simulated)" else "Contactless bank card over NFC", if (vm.store.demoCard) "SIM" else "NFC")
+    ListRow(Glyph.Card, "Card", app.tapvault.core.CardRecipe.decode(vm.store.cardRecipe)?.let { "Bank card over NFC · ${it.method.label}" } ?: "Contactless bank card over NFC", "NFC")
     vm.wallet?.let { w ->
         ListRow(Glyph.History, "Delays", "transfers ${w.delays.transfer / 3600} h · changes ${w.delays.config / 3600} h · recovery ${w.delays.recovery / 3600} h")
     }

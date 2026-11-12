@@ -31,9 +31,14 @@ class Store(context: Context) {
         get() = p.getInt("step", 0)
         set(v) = p.edit().putInt("step", v).apply()
 
-    var demoCard: Boolean
-        get() = p.getBoolean("demo_card", false)
-        set(v) = p.edit().putBoolean("demo_card", v).apply()
+    /** Set by builds that had a simulated demo card; such a wallet can't be used with a real card. */
+    val legacyDemoWallet: Boolean
+        get() = p.getBoolean("demo_card", false) && setupStep > 0
+
+    /** How the enrolled card signs ([app.tapvault.core.CardRecipe], encoded). */
+    var cardRecipe: String?
+        get() = p.getString("card_recipe", null)
+        set(v) = p.edit().putString("card_recipe", v).apply()
 
     var instantNear: String
         get() = p.getString("instant", "1") ?: "1"

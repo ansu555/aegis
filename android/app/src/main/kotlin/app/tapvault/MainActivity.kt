@@ -3,7 +3,11 @@ package app.tapvault
 import android.nfc.NfcAdapter
 import android.nfc.Tag
 import android.nfc.tech.IsoDep
+import android.os.Build
 import android.os.Bundle
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.fragment.app.FragmentActivity
@@ -66,6 +70,13 @@ class MainActivity : FragmentActivity() {
 
     fun cancelTag() {
         pendingTag?.cancel(true)
+    }
+
+    /** A short buzz: the card has been read and can be taken away. */
+    fun vibrate() {
+        val v = if (Build.VERSION.SDK_INT >= 31) getSystemService(VibratorManager::class.java)?.defaultVibrator
+        else @Suppress("DEPRECATION") getSystemService(Vibrator::class.java)
+        runCatching { v?.vibrate(VibrationEffect.createOneShot(90, VibrationEffect.DEFAULT_AMPLITUDE)) }
     }
 }
 

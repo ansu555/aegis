@@ -10,7 +10,7 @@ import androidx.lifecycle.viewModelScope
 import app.tapvault.core.Action
 import app.tapvault.core.Asset
 import app.tapvault.core.CapkStore
-import app.tapvault.core.CardCheckFailed
+import app.tapvault.core.CardRecipe
 import app.tapvault.core.CardReport
 import app.tapvault.core.CardService
 import app.tapvault.core.CardTransceiver
@@ -24,7 +24,6 @@ import app.tapvault.core.NearClient
 import app.tapvault.core.NearKey
 import app.tapvault.core.Onboarding
 import app.tapvault.core.ProposalInfo
-import app.tapvault.core.SimCard
 import app.tapvault.core.TapvaultWallet
 import app.tapvault.core.WalletState
 import kotlinx.coroutines.Dispatchers
@@ -43,7 +42,8 @@ import java.util.concurrent.TimeUnit
 enum class Screen { Welcome, Setup, Home, Send, Activity, CardCheck, Settings }
 
 /** What the "tap your card" sheet shows. */
-data class TapRequest(val title: String, val demo: Boolean)
+/** A card tap the UI is waiting for; [reading] once a card is in the field. */
+data class TapRequest(val title: String, val reading: Boolean = false, val hint: String? = null)
 
 /** A finished operation, shown as a result card. */
 data class Outcome(val ok: Boolean, val title: String, val detail: String = "", val link: String? = null)
@@ -66,8 +66,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var setupStep by mutableStateOf(store.setupStep)
     val log = mutableStateListOf<String>()
 
-    private var demoTap: CompletableFuture<Unit>? = null
-    private val simCard by lazy { SimCard() }
 
     fun attach(a: MainActivity) {
         activityRef = WeakReference(a)
@@ -78,7 +76,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val hasNfc get() = activity?.hasNfc == true
     val nfcEnabled get() = activity?.nfcEnabled == true
 
-    private fun capks() = CapkStore.load().let { if (store.demoCard) it.plus(SimCard.DEMO_CA) else it }
+    private fun capks() = CapkStore.load()
+
+    private fun recipe() = CardRecipe.decode(store.cardRecipe)
     private fun cards() = CardService(capks())
 
     fun note(s: String) {
@@ -119,45 +119,42 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // ---- card taps ----
 
     /**
-     * Wait for a card tap and run [block] against it while it is held. The
-     * demo card answers the same commands without hardware.
+     * Wait for a real card tap over NFC and run [block] against it while it is
+     * held. A card pulled away too early is retried with a fresh tap.
      */
     private fun <T> withCard(title: String, block: (CardTransceiver) -> T): T {
+        if (store.legacyDemoWallet) {
+            throw IllegalStateException("This wallet was set up with the old simulated demo card. Forget it in Settings and set up again with your bank card.")
+        }
+        var hint: String? = null
         repeat(3) { attempt ->
-            tap = TapRequest(title, store.demoCard)
+            val act = activity ?: throw IllegalStateException("app is not in the foreground")
+            if (!act.hasNfc) throw IllegalStateException("This phone has no NFC, so it can't read a bank card.")
+            if (!act.nfcEnabled) throw IllegalStateException("Turn on NFC in Android settings (Connected devices → NFC), then try again.")
+            tap = TapRequest(title, hint = hint)
             try {
-                return if (store.demoCard) {
-                    val f = CompletableFuture<Unit>().also { demoTap = it }
-                    f.get(2, TimeUnit.MINUTES)
-                    block(simCard)
-                } else {
-                    val act = activity ?: throw IllegalStateException("app is not in the foreground")
-                    if (!act.hasNfc) throw IllegalStateException("This phone has no NFC. Use the demo card (Settings).")
-                    if (!act.nfcEnabled) throw IllegalStateException("Turn on NFC in Android settings, then try again.")
-                    try {
-                        val tag = act.awaitTag().get(2, TimeUnit.MINUTES)
-                        IsoDepTransceiver(tag).use { block(it) }
-                    } finally {
-                        act.stopReader()
-                    }
-                }
+                val tag = act.awaitTag().get(2, TimeUnit.MINUTES)
+                tap = TapRequest(title, reading = true)
+                return IsoDepTransceiver(tag).use { block(it) }.also { act.vibrate() }
+            } catch (e: java.util.concurrent.TimeoutException) {
+                throw IllegalStateException("No card was tapped. Try again and hold the card flat against the back of the phone.")
+            } catch (e: java.util.concurrent.CancellationException) {
+                throw IllegalStateException("Card tap cancelled")
             } catch (e: android.nfc.TagLostException) {
                 note("card moved away (attempt ${attempt + 1}); hold it still")
+                hint = "The card moved away too soon. Tap again and keep it still until the phone vibrates."
             } catch (e: java.io.IOException) {
                 note("card link error: ${e.message}; tap again")
+                hint = "The card connection dropped. Tap again and keep it still until the phone vibrates."
             } finally {
+                act.stopReader()
                 tap = null
             }
         }
-        throw IllegalStateException("Couldn't read the card. Hold it flat against the back of the phone for two seconds.")
-    }
-
-    fun demoTapNow() {
-        demoTap?.complete(Unit)
+        throw IllegalStateException("Couldn't read the card. Hold it flat against the back of the phone, near the camera, for 3 seconds.")
     }
 
     fun cancelTap() {
-        demoTap?.completeExceptionally(IllegalStateException("Tap cancelled"))
         activity?.cancelTag()
     }
 
@@ -196,8 +193,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- setup ----
 
-    fun beginSetup(demo: Boolean, instant: String, daily: String) {
-        store.demoCard = demo
+    fun beginSetup(instant: String, daily: String) {
         store.instantNear = instant
         store.dailyNear = daily
         go(Screen.Setup)
@@ -229,41 +225,58 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val accounts = Onboarding.Accounts(
             store.walletAccount!!, NearKey.fromSecret(store.walletKey!!), store.gasAccount!!, NearKey.fromSecret(store.gasKey!!),
         )
+        // Each step checks the chain first, so a retry after a crash or a lost
+        // connection continues instead of repeating a step that already landed.
+        val onChain = runCatching { TapvaultWallet(near, accounts.wallet, accounts.gas, accounts.gasKey).state() }.getOrNull()
         if (store.setupStep < 2) {
-            progress("Approve with your fingerprint to create the wallet")
-            phone.reason = "Create your Tapvault wallet"
-            val wasm = getApplication<Application>().assets.open("tapvault_contract.wasm").use { it.readBytes() }
-            val r = ob.deployAndInit(accounts, wasm, phone)
+            if (onChain != null) {
+                note("wallet contract already deployed")
+            } else {
+                progress("Approve with your fingerprint to create the wallet")
+                phone.reason = "Create your Tapvault wallet"
+                val wasm = getApplication<Application>().assets.open("tapvault_contract.wasm").use { it.readBytes() }
+                val r = ob.deployAndInit(accounts, wasm, phone)
+                note("wallet contract deployed: ${near.explorerTx(r.hash)}")
+            }
             setStep(2)
-            note("wallet contract deployed: ${near.explorerTx(r.hash)}")
         }
         if (store.setupStep < 3) {
-            progress("Add your card")
-            val svc = cards()
-            val enrol = withCard("Hold your bank card to the back of the phone to add it") { t ->
-                svc.enrol(t) { k -> Domain.cardEnrollChallenge(accounts.wallet, 1, k.keyHash()) }
+            if (onChain?.card() != null && store.cardRecipe != null) {
+                note("card already added")
+            } else {
+                progress("Add your card")
+                val svc = cards()
+                val enrol = withCard("Hold your bank card to the back of the phone to add it") { t ->
+                    svc.enrol(t) { k -> Domain.cardEnrollChallenge(accounts.wallet, 1, k.keyHash()) }
+                }
+                cardReport = enrol.report
+                store.cardRecipe = enrol.recipe.encode()
+                note("card ${enrol.report.network} ****${enrol.report.panLast4} enrolled (${enrol.report.iccKeyBits}-bit key, ${enrol.recipe.method.label})")
+                progress("Approve adding card ****${enrol.report.panLast4}")
+                val cardName = enrol.report.network.let { if (it.endsWith("card")) it else "$it card" }
+                phone.reason = "Add $cardName ****${enrol.report.panLast4} as a signer"
+                ob.addCard(accounts, phone, 1, enrol)
             }
-            cardReport = enrol.report
-            note("card ${enrol.report.network} ****${enrol.report.panLast4} enrolled (${enrol.report.iccKeyBits}-bit key)")
-            progress("Approve adding card ****${enrol.report.panLast4}")
-            val cardName = enrol.report.network.let { if (it.endsWith("card")) it else "$it card" }
-            phone.reason = "Add $cardName ****${enrol.report.panLast4} as a signer"
-            ob.addCard(accounts, phone, 1, enrol)
             setStep(3)
         }
         if (store.setupStep < 4) {
-            progress("Approve your limits to lock the wallet")
-            val args = FinalizeArgs(
-                threshold = 2,
-                delays = Delays.SHORTEST,
-                limits = listOf(LimitInit(Asset.Near, Near.parse(store.instantNear), Near.parse(store.dailyNear))),
-            )
-            phone.reason = "Lock the wallet: up to ${store.instantNear} NEAR at once, ${store.dailyNear} NEAR a day"
-            ob.finalize(accounts, phone, args)
+            val locked = onChain?.setupMode == false
+            if (locked) {
+                note("wallet already locked")
+            } else {
+                progress("Approve your limits to lock the wallet")
+                val args = FinalizeArgs(
+                    threshold = 2,
+                    delays = Delays.SHORTEST,
+                    limits = listOf(LimitInit(Asset.Near, Near.parse(store.instantNear), Near.parse(store.dailyNear))),
+                )
+                phone.reason = "Lock the wallet: up to ${store.instantNear} NEAR at once, ${store.dailyNear} NEAR a day"
+                ob.finalize(accounts, phone, args)
+            }
             val keys = near.accessKeys(accounts.wallet)
             note(if (keys.isEmpty()) "wallet account locked: no keys left" else "WARNING: wallet still has keys: $keys")
-            store.walletKey = null
             setStep(4)
+            store.walletKey = null
         }
         withContext(Dispatchers.Main) { screen = Screen.Home }
         refresh()
@@ -296,7 +309,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         progress("Waiting for the card challenge")
         val ch = w.awaitCardChallenge(id)
         val svc = cards()
-        val sig = withCard("Tap your card to approve sending ${Near.format(amount)} NEAR") { t -> svc.sign(t, card.cardKey()!!, ch) }
+        val sig = withCard("Tap your card to approve sending ${Near.format(amount)} NEAR") { t -> svc.sign(t, card.cardKey()!!, ch, recipe()) }
         progress("Submitting")
         val instant = st.nearLimit?.isInstant(amount) == true
         if (instant) {
@@ -324,7 +337,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val card = st.card()!!
         val ch = p.cardChallenge ?: w.awaitCardChallenge(p.id)
         val svc = cards()
-        val sig = withCard("Tap your card to approve: ${p.describe()}") { t -> svc.sign(t, card.cardKey()!!, ch) }
+        val sig = withCard("Tap your card to approve: ${p.describe()}") { t -> svc.sign(t, card.cardKey()!!, ch, recipe()) }
         val r = w.approveCard(p.id, card.index, sig)
         outcome = Outcome(true, "Approved", p.describe(), near.explorerTx(r.hash))
         refresh()
@@ -374,7 +387,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val w = walletClient()
         val card = w.state().card()!!
         val svc = cards()
-        val r = w.freezeByCard(card.index) { ch -> withCard("Tap your card to FREEZE the wallet") { t -> svc.sign(t, card.cardKey()!!, ch) } }
+        val r = w.freezeByCard(card.index) { ch -> withCard("Tap your card to FREEZE the wallet") { t -> svc.sign(t, card.cardKey()!!, ch, recipe()) } }
         outcome = Outcome(true, "Wallet frozen", "Frozen with a card tap. Unfreezing needs your phone and card, plus a delay.", near.explorerTx(r.hash))
         refresh()
     }
@@ -388,7 +401,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val id = w.proposeByPhone(Action.Config(listOf(ConfigOp.Unfreeze)), phone, idx)
         val ch = w.awaitCardChallenge(id)
         val svc = cards()
-        val sig = withCard("Tap your card to approve unfreezing") { t -> svc.sign(t, card.cardKey()!!, ch) }
+        val sig = withCard("Tap your card to approve unfreezing") { t -> svc.sign(t, card.cardKey()!!, ch, recipe()) }
         val r = w.approveCard(id, card.index, sig)
         outcome = Outcome(true, "Unfreeze approved", "It can execute in ${st.delays.config / 3600} h (Activity tab).", near.explorerTx(r.hash))
         refresh()
@@ -399,11 +412,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun checkCard() = run("Checking card") {
         cardReport = null
         val svc = cards()
-        val report = withCard("Hold the card you want to check") { t ->
-            try { svc.inspect(t) } catch (e: CardCheckFailed) { e.report }
-        }
+        val report = withCard("Hold the card you want to check") { t -> svc.inspect(t) }
         cardReport = report
-        note("card check: ${report.network} DDA=${report.ddaSupported}")
+        note("card check: ${report.network} ${report.signsWith ?: "can't sign"}")
     }
 
     fun resetApp() {

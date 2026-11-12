@@ -267,7 +267,7 @@ fun CardArt(modifier: Modifier = Modifier, label: String = "Tapvault") {
 }
 
 @Composable
-fun TapSheet(t: TapRequest, onDemoTap: () -> Unit, onCancel: () -> Unit) {
+fun TapSheet(t: TapRequest, onCancel: () -> Unit) {
     val pulse = rememberInfiniteTransition(label = "pulse")
     val s by pulse.animateFloat(0.92f, 1.12f, infiniteRepeatable(tween(1000), RepeatMode.Reverse), label = "s")
     val a by pulse.animateFloat(0.15f, 0.55f, infiniteRepeatable(tween(1000), RepeatMode.Reverse), label = "a")
@@ -279,16 +279,18 @@ fun TapSheet(t: TapRequest, onDemoTap: () -> Unit, onCancel: () -> Unit) {
                 CardArt()
             }
             Spacer(Modifier.height(36.dp))
-            Text(t.title, fontSize = 22.sp, textAlign = TextAlign.Center, lineHeight = 28.sp)
+            Text(if (t.reading) "Keep holding the card…" else t.title, fontSize = 22.sp, textAlign = TextAlign.Center, lineHeight = 28.sp)
             Spacer(Modifier.height(10.dp))
             Caption(
-                if (t.demo) "Demo mode: a simulated card answers exactly like a real one." else "Hold it flat against the back of the phone until it vibrates.",
+                when {
+                    t.reading -> "Reading the chip and asking it to sign. Don't move the card until the phone vibrates."
+                    t.hint != null -> t.hint
+                    else -> "Hold it flat against the back of the phone, near the camera, until it vibrates (2–3 seconds)."
+                },
                 Modifier.padding(horizontal = 12.dp),
             )
             Spacer(Modifier.height(28.dp))
-            if (t.demo) PillButton("Tap demo card", Modifier.fillMaxWidth(), glyph = Glyph.Card) { onDemoTap() }
-            Spacer(Modifier.height(10.dp))
-            GhostButton("Cancel", Modifier.fillMaxWidth(), Tv.Dim) { onCancel() }
+            if (!t.reading) GhostButton("Cancel", Modifier.fillMaxWidth(), Tv.Dim) { onCancel() }
         }
     }
 }
