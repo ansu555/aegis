@@ -111,6 +111,8 @@ class NearClient(
             val code = c.responseCode
             val stream = if (code in 200..299) c.inputStream else c.errorStream
             val text = stream?.bufferedReader()?.readText() ?: ""
+            // A 408 from a NEAR RPC carries a JSON-RPC error body (TIMEOUT_ERROR); rpc() reads it.
+            if (code == 408 && text.trimStart().startsWith("{")) return text
             if (code == 408 || code == 429 || code in 500..599) throw Transient("HTTP $code from $url: ${text.take(200)}")
             if (code !in 200..299) throw NearRpcException("HTTP $code from $url: ${text.take(300)}")
             return text
@@ -186,7 +188,10 @@ class NearClient(
             put("method_name", method)
             put("args_base64", args.toString().toByteArray().b64())
         }).jsonObject
-        val bytes = r["result"]!!.jsonArray.map { it.jsonPrimitive.content.toInt().toByte() }.toByteArray()
+        // A failed view (no contract, a panic) comes back as result.error, not as an RPC error.
+        r["error"]?.let { throw NearRpcException("$method on $contract: ${it.jsonPrimitive.content}", rpcCause = "VIEW_ERROR") }
+        val bytes = r["result"]?.jsonArray?.map { it.jsonPrimitive.content.toInt().toByte() }?.toByteArray()
+            ?: throw NearRpcException("$method on $contract: no result")
         return json.parseToJsonElement(bytes.decodeToString())
     }
 
@@ -268,11 +273,13 @@ class NearClient(
                         // Accepted (or maybe accepted) but not finished in time: never send a second one.
                         return awaitOutcome(hash58, signer)
                     e.message?.contains("InvalidNonce") == true -> {
-                        txStatus(hash58, signer)?.let { return parseOutcome(hash58, it) }
+                        runCatching { txStatus(hash58, signer) }.getOrNull()?.let { return parseOutcome(hash58, it) }
                         Regex("\"ak_nonce\":(\\d+)").find(e.message!!)?.groupValues?.get(1)?.toLong()?.let { lastNonce[nonceKey] = it }
                         lastError = e
                         null
                     }
+                    e.rpcCause == "INVALID_TRANSACTION" ->
+                        throw NearRpcException("The network refused the transaction: ${readableError(e.data ?: kotlinx.serialization.json.JsonNull)}", e.data, e.rpcCause)
                     else -> throw e
                 }
             } ?: return@repeat
@@ -290,13 +297,18 @@ class NearClient(
         return rpc("send_tx", params, timeoutMs = 90_000, retry = true, retryTimeouts = false).jsonObject
     }
 
-    /** The outcome of a transaction we already sent, or null if no RPC knows it (yet). */
+    /**
+     * The outcome of a transaction we already sent once it has executed, or
+     * null if no RPC knows it yet or it is still running. Doesn't wait.
+     */
     private fun txStatus(hash58: String, signer: String): JsonObject? = try {
-        rpc("tx", buildJsonObject {
-            put("tx_hash", hash58); put("sender_account_id", signer); put("wait_until", "EXECUTED_OPTIMISTIC")
-        }, timeoutMs = 30_000, retryTimeouts = false).jsonObject
+        val r = rpc("tx", buildJsonObject {
+            put("tx_hash", hash58); put("sender_account_id", signer); put("wait_until", "NONE")
+        }, timeoutMs = 20_000, retryTimeouts = false).jsonObject
+        val status = r["final_execution_status"]?.jsonPrimitive?.content
+        r.takeIf { status in setOf("EXECUTED_OPTIMISTIC", "EXECUTED", "FINAL") && it["receipts_outcome"] != null }
     } catch (e: NearRpcException) {
-        if (e.rpcCause == "UNKNOWN_TRANSACTION" || e.rpcCause == "TIMEOUT_ERROR") null else throw e
+        if (e.rpcCause == "UNKNOWN_TRANSACTION" || e.rpcCause == "TIMEOUT_ERROR" || e.maybeDelivered) null else throw e
     }
 
     /** Poll for a sent transaction's outcome for up to about two minutes. */
@@ -304,7 +316,7 @@ class NearClient(
         val until = System.currentTimeMillis() + 120_000
         while (System.currentTimeMillis() < until) {
             val r = runCatching { txStatus(hash58, signer) }.getOrNull()
-            if (r != null && r["receipts_outcome"] != null) return parseOutcome(hash58, r)
+            if (r != null) return parseOutcome(hash58, r)
             Thread.sleep(2_000)
         }
         throw NearRpcException(
@@ -332,7 +344,14 @@ class NearClient(
         Regex("\"ExecutionError\":\"(.*?)\"").find(s)?.let { m ->
             return m.groupValues[1].replace("Smart contract panicked: ", "")
         }
-        return s.take(300)
+        return when {
+            "LackBalanceForState" in s -> "Not enough NEAR: the account must keep enough to pay for its storage"
+            "NotEnoughBalance" in s || "BalanceExceeded" in s -> "Not enough NEAR in the account"
+            "AccountDoesNotExist" in s -> "That account doesn't exist on NEAR testnet"
+            "AccountAlreadyExists" in s -> "That account already exists"
+            "AccessKeyNotFound" in s || "InvalidAccessKeyError" in s -> "This key can't sign for the account any more"
+            else -> s.take(300)
+        }
     }
 
     /** Create `<name>.testnet` with [key] via the testnet faucet (10 NEAR). */

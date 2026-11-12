@@ -265,18 +265,43 @@ class Onboarding(private val near: NearClient) {
     }
 
     /**
-     * Two fresh accounts from the testnet faucet. The faucet is rate-limited
-     * per IP; if it refuses and a [sponsor] is configured, the accounts are
-     * created as sub-accounts of the sponsor and funded by it instead.
+     * The names and keys of a new wallet, picked (and saved by the caller)
+     * before anything is created, so a retry after a crash reuses accounts
+     * that were already made instead of funding new ones.
      */
-    fun createAccounts(prefix: String = "tv", sponsor: Sponsor? = null, onFallback: (String) -> Unit = {}): Accounts {
-        val tag = ByteArray(5).also { java.security.SecureRandom().nextBytes(it) }.hex()
-        val wk = NearKey.random()
-        val gk = NearKey.random()
+    class Plan(val tag: String, val walletKey: NearKey, val gasKey: NearKey) {
+        fun encode() = "$tag|${walletKey.secretString()}|${gasKey.secretString()}"
+
+        companion object {
+            fun random() = Plan(ByteArray(5).also { java.security.SecureRandom().nextBytes(it) }.hex(), NearKey.random(), NearKey.random())
+
+            fun decode(s: String?): Plan? = s?.split("|")?.takeIf { it.size == 3 }?.let {
+                runCatching { Plan(it[0], NearKey.fromSecret(it[1]), NearKey.fromSecret(it[2])) }.getOrNull()
+            }
+        }
+    }
+
+    /**
+     * Two accounts (the wallet and its fee account) from the testnet faucet.
+     * The faucet is rate-limited per IP; if it refuses and a [sponsor] is
+     * configured, accounts are created as sub-accounts of the sponsor and
+     * funded by it instead. Accounts from an earlier try of the same [plan]
+     * are reused.
+     */
+    fun createAccounts(
+        prefix: String = "tv",
+        sponsor: Sponsor? = null,
+        plan: Plan = Plan.random(),
+        onFallback: (String) -> Unit = {},
+    ): Accounts {
         var faucetError: String? = if (sponsor != null && System.getenv("TAPVAULT_FORCE_SPONSOR") == "1") "skipped" else null
+
+        fun ours(account: String, key: NearKey) =
+            runCatching { near.accessKeys(account).contains(key.publicKeyString) }.getOrDefault(false)
 
         // Each account comes from the faucet while it cooperates, otherwise from the sponsor.
         fun create(name: String, key: NearKey, funding: BigInteger): String {
+            listOfNotNull("$name.testnet", sponsor?.let { "$name.${it.account}" }).firstOrNull { ours(it, key) }?.let { return it }
             if (faucetError == null) {
                 try {
                     near.createTestnetAccount("$name.testnet", key)
@@ -292,9 +317,9 @@ class Onboarding(private val near: NearClient) {
             return account
         }
 
-        val wallet = create("$prefix-$tag", wk, Sponsor.WALLET_FUNDING)
-        val gas = create("$prefix-$tag-gas", gk, Sponsor.GAS_FUNDING)
-        return Accounts(wallet, wk, gas, gk)
+        val wallet = create("$prefix-${plan.tag}", plan.walletKey, Sponsor.WALLET_FUNDING)
+        val gas = create("$prefix-${plan.tag}-gas", plan.gasKey, Sponsor.GAS_FUNDING)
+        return Accounts(wallet, plan.walletKey, gas, plan.gasKey)
     }
 
     fun deployAndInit(a: Accounts, wasm: ByteArray, phone: P256Signer): TxResult {
