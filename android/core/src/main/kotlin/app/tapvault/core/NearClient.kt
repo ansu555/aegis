@@ -215,7 +215,13 @@ class NearClient(
         return (amount - locked).max(BigInteger.ZERO) to locked
     }
 
-    fun accountExists(account: String) = runCatching { balance(account) }.isSuccess
+    /** True if [account] exists; false only when the RPC says it doesn't (network errors are thrown). */
+    fun accountExists(account: String): Boolean = try {
+        balance(account)
+        true
+    } catch (e: NearRpcException) {
+        if (e.rpcCause == "UNKNOWN_ACCOUNT" || e.message?.contains("does not exist") == true) false else throw e
+    }
 
     fun accessKeys(account: String): List<String> {
         val r = rpc("query", buildJsonObject {
@@ -229,7 +235,9 @@ class NearClient(
             put("request_type", "view_access_key"); put("finality", "optimistic")
             put("account_id", account); put("public_key", key.publicKeyString)
         }).jsonObject
-        return r["nonce"]!!.jsonPrimitive.long
+        // A missing key comes back as result.error on some RPCs.
+        r["error"]?.let { throw NearRpcException("$account has no access key ${key.publicKeyString}: ${it.jsonPrimitive.content}", rpcCause = "UNKNOWN_ACCESS_KEY") }
+        return r["nonce"]?.jsonPrimitive?.long ?: throw NearRpcException("no nonce for $account")
     }
 
     private fun latestBlockHash(): ByteArray {
@@ -359,7 +367,7 @@ class NearClient(
         val body = buildJsonObject { put("newAccountId", account); put("newAccountPublicKey", key.publicKeyString) }
         post(faucetUrl, body.toString(), 120_000)
         repeat(20) {
-            if (accountExists(account)) return
+            if (runCatching { accountExists(account) }.getOrDefault(false)) return
             Thread.sleep(1500)
         }
         throw NearRpcException("faucet did not create $account")
