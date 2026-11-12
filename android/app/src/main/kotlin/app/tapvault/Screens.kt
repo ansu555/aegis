@@ -398,7 +398,7 @@ private fun Send(vm: AppViewModel) {
             }
     }
     Spacer(Modifier.height(18.dp))
-    PillButton("Approve & tap card", Modifier.fillMaxWidth(), enabled = vm.busy == null && to.isNotBlank() && parsed != null, glyph = Glyph.Card) { vm.send(to, amount) }
+    PillButton("Approve, then tap card", Modifier.fillMaxWidth(), enabled = vm.busy == null && to.isNotBlank() && parsed != null, glyph = Glyph.Card) { vm.send(to, amount) }
     Spacer(Modifier.height(14.dp))
     GlassCard(padding = 18.dp) {
         val instant = parsed != null && limit?.isInstant(parsed) == true
@@ -537,7 +537,7 @@ private fun SettingsScreen(vm: AppViewModel) {
             confirmButton = { TextButton(onClick = { confirmReset = false; vm.resetApp() }) { Text("Forget", color = Tv.Down) } },
             dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("Keep", color = Tv.Text) } },
             title = { Text("Forget this wallet?") },
-            text = { Text("This deletes the phone key. Recovering the wallet would then need your cards and the recovery delay.", textAlign = TextAlign.Start) },
+            text = { Text("This deletes the phone key. With a single card the wallet can't approve anything without it, so its NEAR stays locked in the wallet for good (on testnet that is only test NEAR).", textAlign = TextAlign.Start) },
         )
     }
 }

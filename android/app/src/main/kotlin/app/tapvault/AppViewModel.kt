@@ -169,14 +169,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 throw IllegalStateException("Card tap cancelled")
             } catch (e: android.nfc.TagLostException) {
                 note("card moved away (attempt ${attempt + 1}); hold it still")
-                hint = "The card moved away too soon. Tap again and keep it still until the phone vibrates."
+                hint = "The card moved away too soon. Tap again and keep it still until this screen closes."
             } catch (e: java.io.IOException) {
                 note("card link error: ${e.message}; tap again")
-                hint = "The card connection dropped. Tap again and keep it still until the phone vibrates."
+                hint = "The card connection dropped. Tap again and keep it still until this screen closes."
             } catch (e: SecurityException) {
                 // The tag object went stale (the reader was re-armed in between).
                 note("stale card connection: ${e.message}; tap again")
-                hint = "Tap the card again and keep it still until the phone vibrates."
+                hint = "Tap the card again and keep it still until this screen closes."
             } catch (e: WrongCardException) {
                 note("a different card was tapped")
                 hint = "That's not the card in this wallet. Tap the card you added."

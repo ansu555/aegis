@@ -283,9 +283,9 @@ fun TapSheet(t: TapRequest, onCancel: () -> Unit) {
             Spacer(Modifier.height(10.dp))
             Caption(
                 when {
-                    t.reading -> "Reading the chip and asking it to sign. Don't move the card until the phone vibrates."
+                    t.reading -> "Reading the chip and asking it to sign. Don't move the card until this screen closes."
                     t.hint != null -> t.hint
-                    else -> "Hold it flat against the back of the phone, near the camera, until it vibrates (2–3 seconds)."
+                    else -> "Hold it flat against the back of the phone, near the camera, until this screen closes (2–3 seconds)."
                 },
                 Modifier.padding(horizontal = 12.dp),
             )
