@@ -60,45 +60,116 @@ sealed interface NearAction {
     }
 }
 
-class NearRpcException(message: String, val data: JsonElement? = null) : Exception(message)
+/**
+ * An RPC or chain error. [rpcCause] is the RPC's error cause name (e.g.
+ * TIMEOUT_ERROR) when it gave one; [maybeDelivered] means no RPC gave a
+ * definite answer but at least one may have received the request.
+ */
+class NearRpcException(
+    message: String,
+    val data: JsonElement? = null,
+    val rpcCause: String? = null,
+    val maybeDelivered: Boolean = false,
+) : Exception(message)
 
 /** Outcome of a transaction: success flag, the return value, and logs. */
 class TxResult(val hash: String, val ok: Boolean, val error: String?, val returnValue: String?, val logs: List<String>)
 
-/** Minimal NEAR JSON-RPC client (testnet by default). */
+/**
+ * Minimal NEAR JSON-RPC client (testnet by default). Requests go to the first
+ * RPC in [rpcUrls]; when one is down or rate-limits us, the next one is used.
+ */
 class NearClient(
-    val rpcUrl: String = "https://rpc.testnet.fastnear.com",
+    val rpcUrls: List<String> = TESTNET_RPCS,
     val faucetUrl: String = "https://helper.nearprotocol.com/account",
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
+    /** Index of the RPC that answered last; later calls start there. */
+    @Volatile private var preferred = 0
+
+    /** Last nonce used per access key, so back-to-back transactions never reuse one. */
+    private val lastNonce = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /** HTTP failure that is worth retrying on another RPC (or later). */
+    private class Transient(message: String) : Exception(message)
+
     private fun post(url: String, body: String, timeoutMs: Int = 60_000): String {
         val c = URI(url).toURL().openConnection() as HttpURLConnection
-        c.requestMethod = "POST"
-        c.connectTimeout = 20_000
-        c.readTimeout = timeoutMs
-        c.doOutput = true
-        c.setRequestProperty("Content-Type", "application/json")
-        c.outputStream.use { it.write(body.toByteArray()) }
-        val stream = if (c.responseCode in 200..299) c.inputStream else c.errorStream
-        val text = stream?.bufferedReader()?.readText() ?: ""
-        if (c.responseCode !in 200..299) throw NearRpcException("HTTP ${c.responseCode} from $url: ${text.take(300)}")
-        return text
+        try {
+            c.requestMethod = "POST"
+            c.connectTimeout = 15_000
+            c.readTimeout = timeoutMs
+            c.doOutput = true
+            c.setRequestProperty("Content-Type", "application/json")
+            c.outputStream.use { it.write(body.toByteArray()) }
+            val code = c.responseCode
+            val stream = if (code in 200..299) c.inputStream else c.errorStream
+            val text = stream?.bufferedReader()?.readText() ?: ""
+            if (code == 408 || code == 429 || code in 500..599) throw Transient("HTTP $code from $url: ${text.take(200)}")
+            if (code !in 200..299) throw NearRpcException("HTTP $code from $url: ${text.take(300)}")
+            return text
+        } finally {
+            c.disconnect()
+        }
     }
 
-    fun rpc(method: String, params: JsonElement, timeoutMs: Int = 60_000): JsonElement {
+    /**
+     * One JSON-RPC call. Network errors, HTTP 408/429/5xx and transient RPC
+     * errors move on to the next RPC (RPC-side timeouts only when
+     * [retryTimeouts]); a real error from the chain (bad transaction, unknown
+     * account, contract panic) is thrown at once.
+     */
+    fun rpc(
+        method: String,
+        params: JsonElement,
+        timeoutMs: Int = 60_000,
+        retry: Boolean = true,
+        retryTimeouts: Boolean = true,
+    ): JsonElement {
         val body = buildJsonObject {
             put("jsonrpc", "2.0"); put("id", "tv"); put("method", method); put("params", params)
+        }.toString()
+        var lastError: NearRpcException? = null
+        var maybeDelivered = false
+        val attempts = if (retry) rpcUrls.size * 2 else 1
+        for (attempt in 0 until attempts) {
+            val i = (preferred + attempt) % rpcUrls.size
+            val text = try {
+                post(rpcUrls[i], body, timeoutMs)
+            } catch (e: Transient) {
+                maybeDelivered = true
+                lastError = NearRpcException(e.message ?: "RPC unavailable", maybeDelivered = true)
+                backoff(attempt); continue
+            } catch (e: java.io.IOException) {
+                val neverConnected = e is java.net.ConnectException || e is java.net.UnknownHostException ||
+                    e is java.net.NoRouteToHostException
+                if (!neverConnected) maybeDelivered = true
+                lastError = NearRpcException("can't reach ${URI(rpcUrls[i]).host}: ${e.message}", maybeDelivered = maybeDelivered)
+                backoff(attempt); continue
+            }
+            val r = json.parseToJsonElement(text).jsonObject
+            val e = r["error"]
+            if (e != null) {
+                val o = e.jsonObject
+                val cause = o["cause"]?.jsonObject?.get("name")?.jsonPrimitive?.content
+                val msg = o["data"]?.toString() ?: o["message"]?.jsonPrimitive?.content ?: e.toString()
+                val err = NearRpcException("$method: ${cause ?: ""} $msg".trim(), e, cause)
+                val transient = cause in RETRYABLE_CAUSES && (retryTimeouts || cause != "TIMEOUT_ERROR")
+                if (retry && transient) {
+                    maybeDelivered = true
+                    lastError = err; backoff(attempt); continue
+                }
+                throw err
+            }
+            preferred = i
+            return r["result"]!!
         }
-        val r = json.parseToJsonElement(post(rpcUrl, body.toString(), timeoutMs)).jsonObject
-        r["error"]?.let { e ->
-            val o = e.jsonObject
-            val cause = o["cause"]?.jsonObject?.get("name")?.jsonPrimitive?.content
-            val msg = o["data"]?.toString() ?: o["message"]?.jsonPrimitive?.content ?: e.toString()
-            throw NearRpcException("$method: ${cause ?: ""} $msg".trim(), e)
-        }
-        return r["result"]!!
+        val e = lastError ?: NearRpcException("$method: no RPC answered")
+        throw NearRpcException(e.message ?: "", e.data, e.rpcCause, maybeDelivered)
     }
+
+    private fun backoff(attempt: Int) = Thread.sleep(minOf(400L shl attempt, 3_000L))
 
     // ---- views ----
 
@@ -158,23 +229,83 @@ class NearClient(
 
     // ---- transactions ----
 
-    /** Sign and send, waiting until every receipt has executed. */
+    /**
+     * Sign and send, waiting until every receipt has executed.
+     *
+     * A signed transaction is only ever re-sent byte for byte (NEAR runs it at
+     * most once), and it is re-signed with a fresh nonce only when the chain
+     * rejected it before running it (InvalidNonce, and our hash is unknown).
+     * If the RPC times out, we look the transaction up by hash instead of
+     * sending a second one.
+     */
     fun send(signer: String, key: NearKey, receiver: String, actions: List<NearAction>): TxResult {
-        val tx = Borsh.of {
-            string(signer)
-            u8(0).fixed(key.publicKey)
-            u64(nonce(signer, key) + 1)
-            string(receiver)
-            fixed(latestBlockHash())
-            vec(actions) { it.borsh(this) }
+        val nonceKey = "$signer/${key.publicKeyString}"
+        var lastError: NearRpcException? = null
+        repeat(3) {
+            val nonce = maxOf(nonce(signer, key), lastNonce[nonceKey] ?: 0L) + 1
+            val tx = Borsh.of {
+                string(signer)
+                u8(0).fixed(key.publicKey)
+                u64(nonce)
+                string(receiver)
+                fixed(latestBlockHash())
+                vec(actions) { it.borsh(this) }
+            }
+            val hash = sha256(tx)
+            val hash58 = Base58.encode(hash)
+            val signed = tx + Borsh.of { u8(0).fixed(key.sign(hash)) }
+            lastNonce[nonceKey] = nonce
+            val r = try {
+                sendSigned(signed)
+            } catch (e: NearRpcException) {
+                when {
+                    e.rpcCause == "TIMEOUT_ERROR" || e.maybeDelivered ->
+                        // Accepted (or maybe accepted) but not finished in time: never send a second one.
+                        return awaitOutcome(hash58, signer)
+                    e.message?.contains("InvalidNonce") == true -> {
+                        txStatus(hash58, signer)?.let { return parseOutcome(hash58, it) }
+                        Regex("\"ak_nonce\":(\\d+)").find(e.message!!)?.groupValues?.get(1)?.toLong()?.let { lastNonce[nonceKey] = it }
+                        lastError = e
+                        null
+                    }
+                    else -> throw e
+                }
+            } ?: return@repeat
+            return parseOutcome(hash58, r)
         }
-        val hash = sha256(tx)
-        val signed = tx + Borsh.of { u8(0).fixed(key.sign(hash)) }
-        val r = rpc("send_tx", buildJsonObject {
+        throw lastError ?: NearRpcException("transaction could not be sent")
+    }
+
+    /** send_tx with the same signed bytes on each RPC in turn (safe: a transaction runs at most once). */
+    private fun sendSigned(signed: ByteArray): JsonObject {
+        val params = buildJsonObject {
             put("signed_tx_base64", signed.b64())
             put("wait_until", "EXECUTED_OPTIMISTIC")
-        }, timeoutMs = 120_000).jsonObject
-        return parseOutcome(Base58.encode(hash), r)
+        }
+        return rpc("send_tx", params, timeoutMs = 90_000, retry = true, retryTimeouts = false).jsonObject
+    }
+
+    /** The outcome of a transaction we already sent, or null if no RPC knows it (yet). */
+    private fun txStatus(hash58: String, signer: String): JsonObject? = try {
+        rpc("tx", buildJsonObject {
+            put("tx_hash", hash58); put("sender_account_id", signer); put("wait_until", "EXECUTED_OPTIMISTIC")
+        }, timeoutMs = 30_000, retryTimeouts = false).jsonObject
+    } catch (e: NearRpcException) {
+        if (e.rpcCause == "UNKNOWN_TRANSACTION" || e.rpcCause == "TIMEOUT_ERROR") null else throw e
+    }
+
+    /** Poll for a sent transaction's outcome for up to about two minutes. */
+    private fun awaitOutcome(hash58: String, signer: String): TxResult {
+        val until = System.currentTimeMillis() + 120_000
+        while (System.currentTimeMillis() < until) {
+            val r = runCatching { txStatus(hash58, signer) }.getOrNull()
+            if (r != null && r["receipts_outcome"] != null) return parseOutcome(hash58, r)
+            Thread.sleep(2_000)
+        }
+        throw NearRpcException(
+            "The network didn't confirm transaction $hash58 in time. It may still go through: " +
+                "check Activity (or ${explorerTx(hash58)}) before trying again.",
+        )
     }
 
     private fun parseOutcome(hash: String, r: JsonObject): TxResult {
@@ -220,6 +351,20 @@ class NearClient(
 
     fun explorerTx(hash: String) = "https://testnet.nearblocks.io/txns/$hash"
     fun explorerAccount(account: String) = "https://testnet.nearblocks.io/address/$account"
+
+    companion object {
+        /** Public testnet RPCs, tried in this order. */
+        val TESTNET_RPCS = listOf(
+            "https://rpc.testnet.fastnear.com",
+            "https://test.rpc.fastnear.com",
+            "https://rpc.testnet.near.org",
+        )
+
+        /** RPC error causes that say "try again", not "this is wrong". */
+        private val RETRYABLE_CAUSES = setOf(
+            "TIMEOUT_ERROR", "NO_SYNCED_BLOCKS", "NOT_SYNCED_YET", "INTERNAL_ERROR", "UNKNOWN_BLOCK", "UNAVAILABLE_SHARD",
+        )
+    }
 }
 
 fun jsonArgs(build: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit) = buildJsonObject(build)
