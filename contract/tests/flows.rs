@@ -69,11 +69,17 @@ impl Phone {
     }
 }
 
-struct Card(TestCard);
+/// A test card that signs like a DDA / CDA card (UN only, format 05), or like
+/// a Visa card on an online transaction (fDDA, 19 bytes of terminal data,
+/// format 95).
+struct Card(TestCard, bool);
 
 impl Card {
     fn new() -> Self {
-        Card(TestCard::default())
+        Card(TestCard::default(), false)
+    }
+    fn visa_online() -> Self {
+        Card(TestCard::default(), true)
     }
     fn key(&self) -> SignerKey {
         SignerKey::EmvCard {
@@ -81,11 +87,11 @@ impl Card {
             exponent: self.0.exponent,
             un_offset: TestCard::UN_OFFSET,
             un_len: TestCard::UN_LEN,
-            terminal_data_len: TestCard::TERMINAL_DATA_LEN,
+            terminal_data_len: if self.1 { TestCard::FDDA_TERMINAL_DATA_LEN } else { TestCard::TERMINAL_DATA_LEN },
         }
     }
     fn tap(&mut self, challenge: &[u8; 32]) -> CardSig {
-        let (sdad, td) = self.0.sign_challenge(challenge);
+        let (sdad, td) = if self.1 { self.0.sign_online_fdda(challenge) } else { self.0.sign_challenge(challenge) };
         CardSig { sdad: b64(sdad), terminal_data: b64(td) }
     }
 }
@@ -117,8 +123,11 @@ struct Wallet {
 
 impl Wallet {
     fn new() -> Self {
+        Self::with_card(Card::new())
+    }
+
+    fn with_card(mut card: Card) -> Self {
         let phone = Phone::new(7);
-        let mut card = Card::new();
         ctx(WALLET, T0, 1);
         let mut c = Tapvault::new(phone.key(), phone.sign(&domain::create_message::<S>(acct(), &key_hash(&phone.key()))));
 
@@ -231,6 +240,21 @@ fn phone_plus_card_sends_instantly_within_limits() {
     assert!(matches!(w.c.execute(U64(id)), PromiseOrValue::Promise(_)));
     assert_eq!(spent_near(&w.c), 3 * NEAR);
     assert!(w.c.get_proposal(U64(id)).is_none());
+}
+
+#[test]
+fn a_visa_card_signing_online_fdda_works_end_to_end() {
+    let mut w = Wallet::with_card(Card::visa_online());
+    let id = w.propose_by_phone(send_near(3 * NEAR));
+    w.card_approves(id);
+    assert!(matches!(w.c.execute(U64(id)), PromiseOrValue::Promise(_)));
+    assert_eq!(spent_near(&w.c), 3 * NEAR);
+
+    // A UN-only (DDA-style) signature doesn't fit this card's layout.
+    let id = w.propose_by_phone(send_near(NEAR));
+    let ch = w.seal(id);
+    let (sdad, td) = w.card.0.sign_challenge(&ch);
+    fails("Card signature", || w.c.approve_card(U64(id), 1, CardSig { sdad: b64(sdad), terminal_data: b64(td) }));
 }
 
 #[test]

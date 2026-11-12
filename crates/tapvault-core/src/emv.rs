@@ -1,13 +1,17 @@
-//! EMV dynamic data authentication (DDA / fDDA) verification.
+//! EMV dynamic data authentication (DDA / fDDA / CDA) verification.
 //!
 //! A contactless EMV card holds an ICC RSA key pair. On INTERNAL AUTHENTICATE
-//! (DDA) — or inside the GPO response for Visa fDDA — it returns *Signed
-//! Dynamic Application Data* (SDAD). Recovering the SDAD with the ICC public
-//! key yields (EMV Book 2, §6.5.2, Table 17):
+//! (DDA), inside the GPO response (Visa fDDA) or with its GENERATE AC
+//! cryptogram (CDA) it returns *Signed Dynamic Application Data* (SDAD).
+//! Recovering the SDAD with the ICC public key yields (EMV Book 2, §6.5.2,
+//! Table 17):
 //!
 //! ```text
-//! 6A | 05 | 01 | Ldd | ICC dynamic data (Ldd) | BB..BB pad | SHA-1 (20) | BC
+//! 6A | 05 or 95 | 01 | Ldd | ICC dynamic data (Ldd) | BB..BB pad | SHA-1 (20) | BC
 //! ```
+//!
+//! The Signed Data Format is `05`, except for Visa fDDA on an online (ARQC)
+//! transaction, which uses `95`. Both are hashed the same way.
 //!
 //! where the SHA-1 covers bytes `05 .. pad` followed by the *terminal dynamic
 //! data* the reader sent (the DDOL-concatenated values; for the default DDOL
@@ -16,8 +20,9 @@
 //! Tapvault puts its challenge into the Unpredictable Number (tag 9F37). The
 //! enrolled signer records where the UN sits inside the terminal dynamic data
 //! (`un_offset`, `un_len`) and the expected total length, so DDA cards with a
-//! non-default DDOL and Visa fDDA (UN || amount || currency || CTTA data) are
-//! handled by the same check. fDDA support is untested on real cards.
+//! non-default DDOL, Visa fDDA (UN || amount || currency || card
+//! authentication data 9F69) and CDA (UN only) are handled by the same check.
+//! None of this has been run against a real card yet.
 //!
 //! What we deliberately do NOT do on-chain: verify the issuer / ICC
 //! certificate chain. The certificates expose the PAN to anyone who can recover
@@ -101,7 +106,8 @@ pub fn verify_sdad(
     if rec[nic - 1] != 0xBC {
         return Err(CoreError::EmvBadTrailer);
     }
-    if rec[1] != 0x05 {
+    // 05: DDA, CDA and offline fDDA; 95: Visa fDDA on an online (ARQC) transaction.
+    if rec[1] != 0x05 && rec[1] != 0x95 {
         return Err(CoreError::EmvBadFormat);
     }
     if rec[2] != 0x01 {

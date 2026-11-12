@@ -52,15 +52,43 @@ impl TestCard {
     /// `(sdad, terminal_data)`.
     pub fn sign_challenge(&mut self, challenge: &[u8; 32]) -> (Vec<u8>, Vec<u8>) {
         let td = challenge[..Self::UN_LEN as usize].to_vec();
+        let icc_dyn = self.next_dynamic_data();
+        (self.sdad(0x05, &icc_dyn, &td), td)
+    }
+
+    /// Terminal data length of a Visa online fDDA signature:
+    /// UN (4) || amount (6) || currency (2) || card authentication data (7).
+    pub const FDDA_TERMINAL_DATA_LEN: u8 = 19;
+
+    /// Visa fDDA on an online (ARQC) transaction: the card signs
+    /// `UN || amount || currency || 9F69` with Signed Data Format `95`.
+    /// Returns `(sdad, terminal_data)`; the UN sits at offset 0.
+    pub fn sign_online_fdda(&mut self, challenge: &[u8; 32]) -> (Vec<u8>, Vec<u8>) {
+        let icc_dyn = self.next_dynamic_data();
+        let mut td = challenge[..4].to_vec();
+        td.extend_from_slice(&[0, 0, 0, 0, 0, 0]); // amount authorised
+        td.extend_from_slice(&[0x03, 0x56]); // currency (INR)
+        td.extend_from_slice(&[0x01, 0xA5, 0x5A, icc_dyn[1], icc_dyn[2], 0x80, 0x00]); // 9F69: version, card UN, CTQ
+        (self.sdad(0x95, &icc_dyn, &td), td)
+    }
+
+    /// An SDAD with an arbitrary Signed Data Format byte (tests of the format check).
+    pub fn sign_with_format(&mut self, format: u8, challenge: &[u8; 32]) -> (Vec<u8>, Vec<u8>) {
+        let td = challenge[..Self::UN_LEN as usize].to_vec();
+        let icc_dyn = self.next_dynamic_data();
+        (self.sdad(format, &icc_dyn, &td), td)
+    }
+
+    fn next_dynamic_data(&mut self) -> Vec<u8> {
         self.atc = self.atc.wrapping_add(1);
         let mut icc_dyn = vec![2];
         icc_dyn.extend_from_slice(&self.atc.to_be_bytes());
-        (self.sdad(&icc_dyn, &td), td)
+        icc_dyn
     }
 
-    fn sdad(&self, icc_dyn: &[u8], terminal_data: &[u8]) -> Vec<u8> {
+    fn sdad(&self, format: u8, icc_dyn: &[u8], terminal_data: &[u8]) -> Vec<u8> {
         let n = self.modulus.len();
-        let mut body = vec![0x05, 0x01, icc_dyn.len() as u8];
+        let mut body = vec![format, 0x01, icc_dyn.len() as u8];
         body.extend_from_slice(icc_dyn);
         body.resize(n - 22, 0xBB);
         let h = sha1::sha1(&[&body, terminal_data]);
@@ -118,5 +146,36 @@ mod tests {
         let mut other = ch;
         other[0] ^= 1;
         assert!(verify_card_challenge(&layout, &sdad, &td, &other).is_err());
+
+        // Visa online fDDA: format 95 over UN || amount || currency || 9F69.
+        let fdda = EmvKeyLayout { terminal_data_len: TestCard::FDDA_TERMINAL_DATA_LEN, ..layout.clone() };
+        let (sdad, td) = card.sign_online_fdda(&ch);
+        assert_eq!(td.len(), 19);
+        assert_eq!(verify_card_challenge(&fdda, &sdad, &td, &ch), Ok(()));
+        assert!(verify_card_challenge(&fdda, &sdad, &td, &other).is_err());
+        // ...and it can't pose as a UN-only signature.
+        assert!(verify_card_challenge(&layout, &sdad, &td[..4], &ch).is_err());
+    }
+
+    #[test]
+    fn only_formats_05_and_95_are_accepted() {
+        let mut card = TestCard::default();
+        let layout = EmvKeyLayout {
+            modulus: &card.modulus.clone(),
+            exponent: card.exponent,
+            un_offset: 0,
+            un_len: 4,
+            terminal_data_len: 4,
+        };
+        let ch = [0x33u8; 32];
+        for (format, ok) in [(0x05u8, true), (0x95, true), (0x03, false), (0x04, false), (0x06, false), (0x15, false), (0x85, false)] {
+            let (sdad, td) = card.sign_with_format(format, &ch);
+            let r = verify_card_challenge(&layout, &sdad, &td, &ch);
+            if ok {
+                assert_eq!(r, Ok(()), "format {format:02X}");
+            } else {
+                assert_eq!(r, Err(crate::CoreError::EmvBadFormat), "format {format:02X}");
+            }
+        }
     }
 }
