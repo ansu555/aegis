@@ -154,6 +154,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             throw IllegalStateException("This wallet was set up with the old simulated demo card. Forget it in Settings and set up again with your bank card.")
         }
         var hint: String? = null
+        var wrongCard = false
         repeat(3) { attempt ->
             val act = activity ?: throw IllegalStateException("app is not in the foreground")
             if (!act.hasNfc) throw IllegalStateException("This phone has no NFC, so it can't read a bank card.")
@@ -180,11 +181,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: WrongCardException) {
                 note("a different card was tapped")
                 hint = "That's not the card in this wallet. Tap the card you added."
+                wrongCard = true
             } finally {
                 pendingTag = null
                 tap = null
             }
         }
+        if (wrongCard) throw IllegalStateException("That's not the card in this wallet. Use the card you added during setup.")
         throw IllegalStateException("Couldn't read the card. Hold it flat against the back of the phone, near the camera, for 3 seconds.")
     }
 
@@ -240,7 +243,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun sponsor(): Onboarding.Sponsor? =
         BuildConfig.SPONSOR_ACCOUNT.takeIf { it.isNotBlank() && BuildConfig.SPONSOR_KEY.isNotBlank() }
-            ?.let { Onboarding.Sponsor(it, NearKey.fromSecret(BuildConfig.SPONSOR_KEY)) }
+            ?.let { acct ->
+                runCatching { Onboarding.Sponsor(acct, NearKey.fromSecret(BuildConfig.SPONSOR_KEY)) }
+                    .onFailure { note("sponsor key in this build is unreadable; using the faucet only") }
+                    .getOrNull()
+            }
+
+    /** Whether this build carries a readable sponsor account (no side effects: used by the UI). */
+    val hasSponsor get() = BuildConfig.SPONSOR_ACCOUNT.isNotBlank() && runCatching { NearKey.fromSecret(BuildConfig.SPONSOR_KEY) }.isSuccess
 
     /** Throws a readable error unless this phone can read a card right now. */
     private fun requireNfc() {
@@ -263,14 +273,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             outcome = Outcome(false, "Can't start yet", problem)
             return
         }
-        store.instantNear = Near.format(i!!)
-        store.dailyNear = Near.format(d!!)
+        store.instantNear = instant.trim().replace(',', '.')
+        store.dailyNear = daily.trim().replace(',', '.')
+        cardReport = null
         go(Screen.Setup)
         continueSetup()
     }
 
     fun continueSetup() = run("Setting up") {
-        requireNfc()
+        if (PendingCard.decode(store.pendingCard) == null && store.setupStep < 3) requireNfc()
         val ob = Onboarding(near)
         if (!KeystoreSigner.exists()) {
             progress("Creating your phone key in secure hardware")
@@ -383,23 +394,32 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun startOver() = run("Starting over") {
         val sp = sponsor()
+        val done = mutableListOf<String>()
         if (sp != null) {
             val wallet = store.walletAccount
             val wk = store.walletKey
             if (store.setupStep <= 1 && wallet != null && wk != null) {
                 runCatching { near.deleteAccount(wallet, NearKey.fromSecret(wk), sp.account) }
-                    .onSuccess { note("deleted $wallet; its NEAR went back to ${sp.account}") }
-                    .onFailure { note("couldn't delete $wallet: ${it.message}") }
+                    .onSuccess { done += "deleted $wallet" }
+                    .onFailure { done += "couldn't delete $wallet (${it.message?.take(80)})" }
             }
             val gas = store.gasAccount
             val gk = store.gasKey
             if (gas != null && gk != null) {
                 runCatching { near.deleteAccount(gas, NearKey.fromSecret(gk), sp.account) }
-                    .onFailure { note("couldn't delete $gas: ${it.message}") }
+                    .onSuccess { done += "deleted $gas" }
+                    .onFailure { done += "couldn't delete $gas (${it.message?.take(80)})" }
             }
         }
-        withContext(Dispatchers.Main) { resetApp() }
+        withContext(Dispatchers.Main) {
+            resetApp()
+            if (done.isNotEmpty()) outcome = Outcome(true, "Started over", done.joinToString("; ") + ". Their NEAR went back to ${sp?.account}.")
+        }
     }
+
+    /** This phone's signer index in the wallet, or a readable error. */
+    private fun phoneIndex(st: WalletState): Int =
+        st.phoneIndexOf(phone.publicKey) ?: throw IllegalStateException("This phone's key isn't a signer of this wallet. Forget the wallet in Settings and set up again.")
 
     private fun setStep(n: Int) {
         store.setupStep = n
@@ -452,10 +472,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         progress("Submitting")
         val instant = st.nearLimit?.isInstant(amount) == true
-        if (instant) {
-            val r = w.approveCardAndExecute(id, card.index, sig)
-            note("sent: ${near.explorerTx(r.hash)}")
-            outcome = Outcome(true, "Sent ${Near.format(amount)} NEAR", "to $to", near.explorerTx(r.hash))
+        val sent = if (instant) approveAndMaybeExecute(w, id, card.index, sig) else null
+        if (sent != null) {
+            note("sent: ${near.explorerTx(sent.hash)}")
+            outcome = Outcome(true, "Sent ${Near.format(amount)} NEAR", "to $to", near.explorerTx(sent.hash))
+        } else if (instant) {
+            note("approved #$id; the contract didn't count it as instant, so it waits")
+            outcome = Outcome(true, "Approved, waiting", "The wallet didn't treat this as within your limits (the phone's clock may be off). Execute it from Activity when it's ready.")
         } else {
             val r = w.approveCard(id, card.index, sig)
             val hours = st.delays.transfer / 3600
@@ -477,19 +500,38 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val card = st.card()!!
         val ch = p.cardChallenge ?: w.awaitCardChallenge(p.id)
         val svc = cards()
-        val sig = withCard("Tap your card to approve: ${p.describe()}") { t -> svc.sign(t, card.cardKey()!!, ch, recipe()) }
         // A NEAR payment the phone already approved can go out in the same transaction if it's within the limits.
-        val phoneIdx = st.phoneIndexOf(phone.publicKey)
-        val canRunNow = !st.frozen && p.isNearTransfer && phoneIdx != null && p.approvedBy(phoneIdx) &&
+        val phoneIdx = phoneIndex(st)
+        val canRunNow = !st.frozen && p.isNearTransfer && p.approvedBy(phoneIdx) &&
             st.nearLimit?.isInstant(p.transferAmount()!!) == true
-        val r = if (canRunNow) w.approveCardAndExecute(p.id, card.index, sig) else w.approveCard(p.id, card.index, sig)
-        outcome = Outcome(true, if (canRunNow) "Approved and sent" else "Approved", p.describe(), near.explorerTx(r.hash))
+        val sig = withCard("Tap your card to approve: ${p.describe()}") { t -> svc.sign(t, card.cardKey()!!, ch, recipe()) }
+        val sent = if (canRunNow) approveAndMaybeExecute(w, p.id, card.index, sig) else null
+        val r = sent ?: w.approveCard(p.id, card.index, sig)
+        outcome = Outcome(true, if (sent != null) "Approved and sent" else "Approved", p.describe(), near.explorerTx(r.hash))
         refresh()
+    }
+
+    /**
+     * approve_card + execute in one transaction. If the contract refuses the
+     * execute part (it decides "instant" with its own clock and allowance),
+     * the whole transaction is undone; the same card signature is then sent
+     * as a plain approval and null is returned.
+     */
+    private fun approveAndMaybeExecute(w: TapvaultWallet, id: Long, cardIndex: Int, sig: app.tapvault.core.CardSig) = try {
+        w.approveCardAndExecute(id, cardIndex, sig)
+    } catch (e: app.tapvault.core.TapvaultException) {
+        val m = e.message ?: ""
+        if ("Delay has not elapsed" in m || "Not enough approvals" in m || "frozen" in m) {
+            w.approveCard(id, cardIndex, sig)
+            null
+        } else {
+            throw e
+        }
     }
 
     fun approveWithPhone(p: ProposalInfo) = run("Approving") {
         val w = walletClient()
-        val idx = w.state().phoneIndexOf(phone.publicKey)!!
+        val idx = phoneIndex(w.state())
         phone.reason = "Approve: ${p.describe()}"
         val r = w.approvePhone(p.id, phone, idx)
         outcome = Outcome(true, "Approved", p.describe(), near.explorerTx(r.hash))
@@ -504,7 +546,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun cancel(p: ProposalInfo) = run("Cancelling") {
         val w = walletClient()
-        val idx = w.state().phoneIndexOf(phone.publicKey)!!
+        val idx = phoneIndex(w.state())
         phone.reason = "Cancel: ${p.describe()}"
         val r = w.cancelByPhone(p.id, phone, idx)
         outcome = Outcome(true, "Cancelled", p.describe(), near.explorerTx(r.hash))
@@ -520,7 +562,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun freezeWithPhone() = run("Freezing") {
         val w = walletClient()
-        val idx = w.state().phoneIndexOf(phone.publicKey)!!
+        val idx = phoneIndex(w.state())
         phone.reason = "FREEZE the wallet (blocks all transfers)"
         val r = w.freezeByPhone(phone, idx)
         outcome = Outcome(true, "Wallet frozen", "No transfers can go out until you unfreeze (a delayed change).", near.explorerTx(r.hash))
@@ -539,10 +581,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun requestUnfreeze() = run("Requesting unfreeze") {
         val w = walletClient()
         val st = w.state()
-        val idx = st.phoneIndexOf(phone.publicKey)!!
+        val idx = phoneIndex(st)
         val card = st.card()!!
-        phone.reason = "Unfreeze the wallet (takes effect after ${st.delays.config / 3600} h)"
-        val id = w.proposeByPhone(Action.Config(listOf(ConfigOp.Unfreeze)), phone, idx)
+        requireNfc()
+        val now = System.currentTimeMillis() / 1000
+        val open = w.proposals().firstOrNull { p ->
+            !p.isTransfer && p.describe().contains("Unfreeze") && p.approvedBy(idx) && !p.approvedBy(card.index) && !p.stale &&
+                (p.cardDeadlineTs ?: Long.MAX_VALUE) > now + 30
+        }
+        val id = open?.id ?: run {
+            phone.reason = "Unfreeze the wallet (takes effect after ${st.delays.config / 3600} h)"
+            w.proposeByPhone(Action.Config(listOf(ConfigOp.Unfreeze)), phone, idx)
+        }
         val ch = w.awaitCardChallenge(id)
         val svc = cards()
         val sig = withCard("Tap your card to approve unfreezing") { t -> svc.sign(t, card.cardKey()!!, ch, recipe()) }

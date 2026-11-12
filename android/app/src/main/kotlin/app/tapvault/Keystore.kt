@@ -34,7 +34,8 @@ class KeystoreSigner(private val activity: () -> FragmentActivity?) : P256Signer
     private val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
 
     override val publicKey: ByteArray
-        get() = P256.compress(ks.getCertificate(ALIAS).publicKey as ECPublicKey)
+        get() = ks.getCertificate(ALIAS)?.let { P256.compress(it.publicKey as ECPublicKey) }
+            ?: throw IllegalStateException("This phone's Tapvault key is missing. On testnet, forget the wallet in Settings and create a new one.")
 
     val hardwareLabel: String
         get() = runCatching {
@@ -53,7 +54,7 @@ class KeystoreSigner(private val activity: () -> FragmentActivity?) : P256Signer
         val sig = try {
             Signature.getInstance("SHA256withECDSA").apply { initSign(ks.getKey(ALIAS, null) as PrivateKey) }
         } catch (e: android.security.keystore.KeyPermanentlyInvalidatedException) {
-            throw IllegalStateException("This phone's Tapvault key no longer works (the screen lock was removed or changed). The wallet needs its recovery path; on testnet, forget it in Settings and create a new one.")
+            throw IllegalStateException("This phone's Tapvault key no longer works (the screen lock was removed). The wallet needs its recovery path; on testnet, forget it in Settings and create a new one.")
         } catch (e: NullPointerException) {
             throw IllegalStateException("This phone's Tapvault key is missing. On testnet, forget the wallet in Settings and create a new one.")
         }

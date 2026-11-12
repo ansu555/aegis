@@ -168,7 +168,14 @@ private fun SetupProgress(vm: AppViewModel) {
             ) { if (done) GlyphIcon(Glyph.Check, 16.dp, Tv.OnLime) }
         }
     }
-    vm.cardReport?.let { CardReportCard(it) }
+    vm.store.walletAccount?.let { Caption("Wallet account: $it", Modifier.padding(top = 10.dp)) }
+    vm.cardReport?.let { r ->
+        CardReportCard(r)
+        val ctx = LocalContext.current
+        GhostButton("Share card report", Modifier.fillMaxWidth()) {
+            ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, r.diagnostics()), "Share card report"))
+        }
+    }
     if (vm.busy == null && vm.setupStep < 4) {
         Spacer(Modifier.height(12.dp))
         PillButton("Continue setup", Modifier.fillMaxWidth()) { vm.continueSetup() }
@@ -184,8 +191,9 @@ private fun SetupProgress(vm: AppViewModel) {
             title = { Text("Start over?") },
             text = {
                 Text(
-                    if (vm.setupStep <= 1) "The accounts made for this setup are deleted and the phone key is removed."
-                    else "The half-built wallet is left on testnet with its test NEAR, and the phone key is removed.",
+                    if (!vm.hasSponsor) "The phone key and this setup's saved state are removed. The accounts made so far stay on testnet with their test NEAR."
+                    else if (vm.setupStep <= 1) "The accounts made for this setup are deleted (their NEAR goes back to the sponsor) and the phone key is removed."
+                    else "The half-built wallet is left on testnet with its test NEAR. The fee account is deleted and the phone key removed.",
                     textAlign = TextAlign.Start,
                 )
             },
@@ -317,18 +325,42 @@ private fun secondsToExecute(vm: AppViewModel, p: ProposalInfo): Long? {
     val ready = p.readyTs ?: return null
     if (p.stale) return null
     val now = System.currentTimeMillis() / 1000
-    val phoneIdx = runCatching { w.phoneIndexOf(vm.phone.publicKey) }.getOrNull()
-    val delay = if (p.isTransfer) {
-        if (w.nearLimit?.isInstant(p.transferAmount() ?: BigInteger.ZERO) == true) 0 else w.delays.transfer
-    } else if (phoneIdx != null && p.approvedBy(phoneIdx)) w.delays.config else w.delays.recovery
-    return (ready + delay - now).coerceAtLeast(0)
+    return (ready + delayFor(vm, p) - now).coerceAtLeast(0)
 }
+
+/** The delay the contract applies to [p] (transfers within the NEAR limit run at once). */
+private fun delayFor(vm: AppViewModel, p: ProposalInfo): Long {
+    val w = vm.wallet ?: return 0
+    val phoneIdx = runCatching { w.phoneIndexOf(vm.phone.publicKey) }.getOrNull()
+    return if (p.isTransfer) {
+        if (p.isNearTransfer && w.nearLimit?.isInstant(p.transferAmount() ?: BigInteger.ZERO) == true) 0 else w.delays.transfer
+    } else if (phoneIdx != null && p.approvedBy(phoneIdx)) w.delays.config else w.delays.recovery
+}
+
+/** Past the contract's execution window (7 days after it became executable): only Cancel or Clean up remain. */
+private fun expired(vm: AppViewModel, p: ProposalInfo): Boolean {
+    val left = secondsToExecute(vm, p) ?: return false
+    val ready = p.readyTs ?: return false
+    val now = System.currentTimeMillis() / 1000
+    return left == 0L && now > ready + EXECUTION_WINDOW_SECS + delayFor(vm, p)
+}
+
+/** close_stale's rule: void proposals, unapproved ones after a day, approved ones after the longest delay plus 7 days. */
+private fun closable(vm: AppViewModel, p: ProposalInfo): Boolean {
+    val now = System.currentTimeMillis() / 1000
+    val d = vm.wallet?.delays ?: return p.stale
+    val maxDelay = maxOf(d.transfer, d.config, d.recovery)
+    return p.stale || p.readyTs?.let { now > it + maxDelay + EXECUTION_WINDOW_SECS } ?: (now > p.createdTs + 86_400)
+}
+
+private const val EXECUTION_WINDOW_SECS = 7L * 86_400
 
 private fun proposalStatus(vm: AppViewModel, p: ProposalInfo): String {
     val left = secondsToExecute(vm, p)
     return when {
         p.stale -> "Void: signers changed"
         p.readyTs == null -> "Waiting for approvals"
+        expired(vm, p) -> "Expired: it can no longer execute; cancel it"
         left == null -> ""
         left > 0 -> "Approved · can execute in ${left / 3600} h ${(left % 3600) / 60} min"
         vm.wallet?.frozen == true && p.isTransfer -> "Approved · wallet is frozen"
@@ -453,9 +485,9 @@ private fun ActivityScreen(vm: AppViewModel) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (canCard) GhostButton("Approve · card", Modifier.weight(1f), Tv.Lime, vm.busy == null) { vm.approveWithCard(p) }
                 if (canPhone) GhostButton("Approve · phone", Modifier.weight(1f), Tv.Lime, vm.busy == null) { vm.approveWithPhone(p) }
-                if (secondsToExecute(vm, p) == 0L && !(w?.frozen == true && p.isTransfer)) GhostButton("Execute", Modifier.weight(1f), Tv.Lime, vm.busy == null) { vm.execute(p) }
+                if (secondsToExecute(vm, p) == 0L && !expired(vm, p) && !(w?.frozen == true && p.isTransfer)) GhostButton("Execute", Modifier.weight(1f), Tv.Lime, vm.busy == null) { vm.execute(p) }
                 if (!p.stale) GhostButton("Cancel", Modifier.weight(1f), Tv.Down, vm.busy == null) { vm.cancel(p) }
-                if (p.stale || (p.readyTs == null && now > p.createdTs + 86_400)) GhostButton("Clean up", Modifier.weight(1f), Tv.Dim, vm.busy == null) { vm.closeStale(p) }
+                if (closable(vm, p)) GhostButton("Clean up", Modifier.weight(1f), Tv.Dim, vm.busy == null) { vm.closeStale(p) }
             }
         }
     }
@@ -473,7 +505,7 @@ private fun ActivityScreen(vm: AppViewModel) {
 private fun CardCheck(vm: AppViewModel) {
     val ctx = LocalContext.current
     Header("Card check", onBack = if (vm.store.setupStep < 4) ({ vm.go(Screen.Welcome) }) else null)
-    Box(Modifier.fillMaxWidth().padding(vertical = 10.dp), contentAlignment = Alignment.Center) { CardArt(label = vm.cardReport?.let { "•••• ${it.panLast4}" } ?: "TAPVAULT") }
+    Box(Modifier.fillMaxWidth().padding(vertical = 10.dp), contentAlignment = Alignment.Center) { CardArt(label = vm.cardReport?.panLast4?.let { "•••• $it" } ?: "TAPVAULT") }
     Caption(
         "Reads a card's payment chip and tells you whether it can sign for Tapvault. Your card number never leaves this phone.",
         Modifier.fillMaxWidth().padding(vertical = 8.dp),
