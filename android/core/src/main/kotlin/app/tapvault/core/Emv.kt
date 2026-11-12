@@ -364,7 +364,7 @@ class EmvSession(private val card: CardTransceiver, private val capks: CapkStore
         val pan = find(0x5A)?.value ?: throw EmvException("no PAN record")
 
         val cas = capks.find(rid, caIndex)
-        if (cas.isEmpty()) throw EmvException("no CA key for $rid index %02X".format(caIndex))
+        if (cas.isEmpty()) throw EmvException("no CA key for $rid index %02X: this app doesn't know that network key yet; share the card report so it can be added".format(caIndex))
         val issuerKey = cas.firstNotNullOfOrNull { ca ->
             runCatching { issuerKeyFrom(ca, issuerCert, issuerRem, issuerExp, pan) }.getOrNull()
         } ?: throw EmvException("issuer certificate did not verify against CA %02X".format(caIndex))
