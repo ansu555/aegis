@@ -92,6 +92,12 @@ data class ProposalInfo(
 
     val isTransfer get() = action.jsonObject.containsKey("Transfer")
 
+    /** A transfer of NEAR (not a token). */
+    val isNearTransfer get() = action.jsonObject["Transfer"]?.jsonObject?.get("asset") == Asset.Near.json()
+
+    fun transferReceiver(): String? =
+        action.jsonObject["Transfer"]?.jsonObject?.get("receiver")?.jsonPrimitive?.content
+
     fun transferAmount(): BigInteger? =
         action.jsonObject["Transfer"]?.jsonObject?.get("amount")?.jsonPrimitive?.content?.let { BigInteger(it) }
 }
@@ -303,14 +309,18 @@ class Onboarding(private val near: NearClient) {
     }
 
     /** Signer count before adding is 1 (just the phone). */
-    fun addCard(a: Accounts, phone: P256Signer, signerCount: Int, enrolment: CardService.Enrolment): TxResult {
-        val auth = phone.sign(Domain.setupAddMessage(a.wallet, signerCount, enrolment.key.keyHash()))
+    fun addCard(a: Accounts, phone: P256Signer, signerCount: Int, enrolment: CardService.Enrolment): TxResult =
+        addCard(a, phone, signerCount, enrolment.key, enrolment.proof)
+
+    /** Add a card from a saved enrolment: its key and the proof it signed for this wallet. */
+    fun addCard(a: Accounts, phone: P256Signer, signerCount: Int, key: SignerKey.EmvCard, proof: CardSig): TxResult {
+        val auth = phone.sign(Domain.setupAddMessage(a.wallet, signerCount, key.keyHash()))
         val r = near.send(a.wallet, a.walletKey, a.wallet, listOf(
             NearAction.FunctionCall("setup_add_signer", jsonArgs {
-                put("new_signer", enrolment.key.json())
+                put("new_signer", key.json())
                 put("authorizer_index", 0)
                 put("authorizer_sig", auth.json())
-                put("possession", jsonArgs { put("Card", enrolment.proof.json()) })
+                put("possession", jsonArgs { put("Card", proof.json()) })
             }),
         ))
         if (!r.ok) throw TapvaultException("adding the card failed: ${r.error}")

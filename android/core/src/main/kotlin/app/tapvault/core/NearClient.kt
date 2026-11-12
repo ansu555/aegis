@@ -53,6 +53,11 @@ sealed interface NearAction {
         override fun borsh(b: Borsh) { b.u8(1).bytes(code) }
     }
 
+    /** Delete the signer's account and send everything it holds to [beneficiary]. */
+    class DeleteAccount(val beneficiary: String) : NearAction {
+        override fun borsh(b: Borsh) { b.u8(7).string(beneficiary) }
+    }
+
     class FunctionCall(val method: String, val args: JsonElement, val gasTgas: Long = 100, val deposit: BigInteger = BigInteger.ZERO) : NearAction {
         override fun borsh(b: Borsh) {
             b.u8(2).string(method).bytes(args.toString().toByteArray()).u64(gasTgas * 1_000_000_000_000L).u128(deposit)
@@ -346,6 +351,13 @@ class NearClient(
         require(account.endsWith(".$sponsor")) { "$account isn't a sub-account of $sponsor" }
         val r = send(sponsor, sponsorKey, account, listOf(NearAction.CreateAccount, NearAction.Transfer(amount), NearAction.AddFullAccessKey(key.publicKey)))
         if (!r.ok) throw NearRpcException("creating $account failed: ${r.error}")
+        return r
+    }
+
+    /** Delete [account] (signed with its own full-access [key]); its NEAR goes to [beneficiary]. */
+    fun deleteAccount(account: String, key: NearKey, beneficiary: String): TxResult {
+        val r = send(account, key, account, listOf(NearAction.DeleteAccount(beneficiary)))
+        if (!r.ok) throw NearRpcException("deleting $account failed: ${r.error}")
         return r
     }
 
