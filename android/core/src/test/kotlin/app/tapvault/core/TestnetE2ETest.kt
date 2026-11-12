@@ -33,7 +33,9 @@ class TestnetE2ETest {
         val ob = Onboarding(near)
 
         step("creating faucet accounts")
-        val sponsor = System.getenv("TAPVAULT_SPONSOR_ACCOUNT")?.let { Onboarding.Sponsor(it, NearKey.fromSecret(System.getenv("TAPVAULT_SPONSOR_KEY")!!)) }
+        val sponsor = System.getenv("TAPVAULT_SPONSOR_ACCOUNT")?.let { acct ->
+            System.getenv("TAPVAULT_SPONSOR_KEY")?.let { Onboarding.Sponsor(acct, NearKey.fromSecret(it)) }
+        }
         val a = ob.createAccounts("tv-e2e", sponsor) { step(it) }
         step("wallet ${a.wallet}, gas ${a.gas}")
 
