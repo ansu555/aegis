@@ -30,7 +30,12 @@ class SimCard(val profile: Profile = Profile.DDA) : CardTransceiver {
         /** Classic DDA: signs on INTERNAL AUTHENTICATE. */
         DDA,
 
-        /** Like Visa payWave: fDDA (version 01) signature in the GPO answer; no INTERNAL AUTHENTICATE or GENERATE AC. */
+        /**
+         * Like Visa payWave: fDDA (version 01) signature in the GPO answer, the
+         * fresh Card Authentication Related Data (9F69) in the last AFL record,
+         * format 95 when the reader asks for an online cryptogram (else an
+         * offline TC with format 05); no INTERNAL AUTHENTICATE or GENERATE AC.
+         */
         VISA_FDDA,
 
         /** Like Mastercard contactless: CDA signature from GENERATE AC, declines (AAC) a zero amount; no INTERNAL AUTHENTICATE. */
@@ -42,6 +47,8 @@ class SimCard(val profile: Profile = Profile.DDA) : CardTransceiver {
     private val icc = TestCards.SMALL
     private var gpoDone = false
     private var acDone = false
+    /** 9F69 of the current transaction, served from the last AFL record (Visa profile). */
+    private var cardData = ByteArray(0)
     private var atc = 0
     var taps = 0
         private set
@@ -119,6 +126,8 @@ class SimCard(val profile: Profile = Profile.DDA) : CardTransceiver {
             0xA4 -> select(data)
             0xA8 -> gpo(data)
             0xB2 -> when {
+                p2 == 0x1C && p1 == 1 && profile == Profile.VISA_FDDA ->
+                    if (gpoDone) ok(Tlv.encode(0x70, Tlv.encode(0x9F69, cardData))) else sw(0x6985)
                 p2 != 0x0C -> sw(0x6A82)
                 p1 == 1 -> ok(record1)
                 p1 == 2 -> ok(record2)
@@ -153,23 +162,24 @@ class SimCard(val profile: Profile = Profile.DDA) : CardTransceiver {
         acDone = false
         if (profile != Profile.VISA_FDDA) return ok(Tlv.encode(0x77, Tlv.encode(0x82, aip), Tlv.encode(0x94, AFL)))
 
-        // Visa-style: the card signs right here (fDDA version 01).
+        // Visa-style: the card signs right here (fDDA version 01), online
+        // (ARQC, format 95) when the TTQ requires an online cryptogram.
         atc++
         val v = dolValues(pdol, data.copyOfRange(2, data.size))
-        val cardData = byteArrayOf(0x01) + sha1(v.getValue(0x9F37), atcBytes()).copyOf(4) + "8000".unhex() // 9F69: version, card UN, CTQ
+        val online = v.getValue(0x9F66)[1].toInt() and 0x80 != 0
+        cardData = byteArrayOf(0x01) + sha1(v.getValue(0x9F37), atcBytes()).copyOf(4) + "8000".unhex() // version, card UN, CTQ
         val signed = v.getValue(0x9F37) + v.getValue(0x9F02) + v.getValue(0x5F2A) + cardData
         return ok(
             Tlv.encode(
                 0x77,
                 Tlv.encode(0x82, aip),
-                Tlv.encode(0x94, AFL),
+                Tlv.encode(0x94, VISA_AFL),
                 Tlv.encode(0x9F36, atcBytes()),
-                Tlv.encode(0x9F27, byteArrayOf(0x80.toByte())),
+                Tlv.encode(0x9F27, byteArrayOf(if (online) 0x80.toByte() else 0x40)),
                 Tlv.encode(0x9F26, sha1(signed).copyOf(8)),
                 Tlv.encode(0x9F10, IAD),
-                Tlv.encode(0x9F4B, sdad(iccDynamic(), signed)),
-                Tlv.encode(0x9F69, cardData),
                 Tlv.encode(0x9F6C, "0000".unhex()),
+                Tlv.encode(0x9F4B, sdad(byteArrayOf(2) + atcBytes(), signed, if (online) 0x95 else 0x05)),
             ),
         )
     }
@@ -207,9 +217,9 @@ class SimCard(val profile: Profile = Profile.DDA) : CardTransceiver {
     /** ICC dynamic data: an 8-byte dynamic number with its length. */
     private fun iccDynamic() = byteArrayOf(8) + sha1(atcBytes(), byteArrayOf(0x11)).copyOf(8)
 
-    private fun sdad(iccDyn: ByteArray, terminalData: ByteArray): ByteArray {
+    private fun sdad(iccDyn: ByteArray, terminalData: ByteArray, format: Int = 0x05): ByteArray {
         val n = icc.modulus.size
-        val body = byteArrayOf(0x05, 0x01, iccDyn.size.toByte()) + iccDyn
+        val body = byteArrayOf(format.toByte(), 0x01, iccDyn.size.toByte()) + iccDyn
         val padded = body + ByteArray(n - 22 - body.size) { 0xBB.toByte() }
         val rec = byteArrayOf(0x6A) + padded + sha1(padded, terminalData) + byteArrayOf(0xBC.toByte())
         return icc.sign(rec)
@@ -239,6 +249,8 @@ class SimCard(val profile: Profile = Profile.DDA) : CardTransceiver {
         val ISSUER_ID = "599999FF".unhex()
         val EXPIRY = "1230".unhex()
         val AFL = "08010201".unhex() // SFI 1, records 1-2, record 1 used for offline auth
+        /** Visa: the same, plus SFI 3 record 1 with this transaction's 9F69 (not part of the static data). */
+        val VISA_AFL = "0801020118010100".unhex()
         val IAD = "06010A03A00000".unhex()
 
         /** A typical Mastercard CDOL1. */

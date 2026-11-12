@@ -15,6 +15,8 @@ class EmvTest {
         assertTrue(all.find("A000000003", 0x09).isNotEmpty(), "Visa 09")
         assertTrue(all.find("A000000004", 0xEF).isNotEmpty(), "Mastercard EF")
         assertTrue(all.find("A000000524", 0x6B).isNotEmpty(), "RuPay 6B")
+        assertTrue(all.find("A000000524", 0x05).isNotEmpty(), "RuPay 05")
+        assertTrue(all.find("A000000003", 0x10).isNotEmpty(), "Visa 10")
     }
 
     @Test
@@ -63,7 +65,7 @@ class EmvTest {
         assertContentEquals(ch.copyOf(4), sig.terminalData)
 
         val other = SignerKey.EmvCard(TestRsaKey.of(SimKeys.ISSUER_N, SimKeys.ISSUER_D).modulus, 3, 0, 4, 4)
-        assertFailsWith<EmvException> { svc.sign(card, other, ch) }
+        assertFailsWith<WrongCardException> { svc.sign(card, other, ch) }
     }
 
     @Test
@@ -109,9 +111,32 @@ class EmvTest {
     fun visaStyleCardSignsFullFddaTerminalData() {
         val e = CardService(capks).enrol(SimCard(SimCard.Profile.VISA_FDDA)) { ByteArray(32) }
         assertEquals(CardRecipe.FDDA_FULL, e.recipe.variant)
-        // UN 4 + amount 6 + currency 2 + card authentication data (9F69) 7
+        assertEquals(CardRecipe.TTQ_ONLINE, e.recipe.ttq)
+        // UN 4 + amount 6 + currency 2 + card authentication data (9F69, read fresh from the last record) 7
         assertEquals(19, e.key.terminalDataLen)
         assertEquals(0, e.key.unOffset)
+        // An online (ARQC) fDDA signature uses Signed Data Format 95.
+        assertEquals(0x95, Rsa.sdadFormat(e.key.modulus, e.key.exponent, e.proof.sdad))
+        assertTrue(e.report.attempts.any { it.contains("format 95") }, e.report.text())
+        // The offline-allowed TTQ gives an offline approval signed with format 05, same layout.
+        val card = SimCard(SimCard.Profile.VISA_FDDA)
+        val ch = sha256("offline".toByteArray())
+        val sig = CardService(capks).sign(card, e.key, ch, e.recipe.copy(ttq = CardRecipe.TTQ_OFFLINE_OK))
+        assertEquals(0x05, Rsa.sdadFormat(e.key.modulus, e.key.exponent, sig.sdad))
+        assertEquals(19, sig.terminalData.size)
+    }
+
+    @Test
+    fun formatBytesOtherThan05And95AreRejected() {
+        val n = TestCards.SMALL.modulus.size
+        for ((format, ok) in listOf(0x05 to true, 0x95 to true, 0x03 to false, 0x04 to false, 0x15 to false)) {
+            val body = byteArrayOf(format.toByte(), 0x01, 3, 2, 0, 1)
+            val padded = body + ByteArray(n - 22 - body.size) { 0xBB.toByte() }
+            val td = "01020304".unhex()
+            val rec = byteArrayOf(0x6A) + padded + sha1(padded, td) + byteArrayOf(0xBC.toByte())
+            val sdad = TestCards.SMALL.sign(rec)
+            assertEquals(ok, Rsa.verifySdad(TestCards.SMALL.modulus, 3, sdad, td), "format %02X".format(format))
+        }
     }
 
     @Test
@@ -127,6 +152,8 @@ class EmvTest {
     fun recipesRoundTrip() {
         val r = CardRecipe("A0000000041010", SignMethod.CDA, 100, CardRecipe.CDA_TC)
         assertEquals(r, CardRecipe.decode(r.encode()))
+        val v = CardRecipe("A0000000031010", SignMethod.FDDA, 0, CardRecipe.FDDA_FULL, CardRecipe.TTQ_OFFLINE_OK)
+        assertEquals(v, CardRecipe.decode(v.encode()))
         assertEquals(null, CardRecipe.decode("garbage"))
         assertEquals(null, CardRecipe.decode(null))
     }

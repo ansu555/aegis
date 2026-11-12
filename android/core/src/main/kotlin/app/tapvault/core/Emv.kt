@@ -62,16 +62,27 @@ object Rsa {
         return s.modPow(exponent, n).toFixed(modulus.size)
     }
 
-    /** Port of tapvault_core::emv::verify_sdad. */
+    /**
+     * Port of tapvault_core::emv::verify_sdad. Signed Data Format 05 (DDA,
+     * CDA, offline fDDA) or 95 (Visa fDDA on an online transaction).
+     */
     fun verifySdad(modulus: ByteArray, exponent: Int, sdad: ByteArray, terminalData: ByteArray): Boolean {
         val rec = try { recover(modulus, BigInteger.valueOf(exponent.toLong()), sdad) } catch (e: EmvException) { return false }
         val n = modulus.size
-        if (n < 26 || rec[0] != 0x6A.toByte() || rec[n - 1] != 0xBC.toByte() || rec[1] != 0x05.toByte() || rec[2] != 0x01.toByte()) return false
+        val format = rec[1].toInt() and 0xff
+        if (n < 26 || rec[0] != 0x6A.toByte() || rec[n - 1] != 0xBC.toByte() || (format != 0x05 && format != 0x95) || rec[2] != 0x01.toByte()) return false
         val ldd = rec[3].toInt() and 0xff
         if (ldd + 25 > n) return false
         val hashStart = n - 21
         if ((4 + ldd until hashStart).any { rec[it] != 0xBB.toByte() }) return false
         return sha1(rec.copyOfRange(1, hashStart), terminalData).contentEquals(rec.copyOfRange(hashStart, n - 1))
+    }
+
+    /** The Signed Data Format byte of an SDAD (for reports), or null if it doesn't recover. */
+    fun sdadFormat(modulus: ByteArray, exponent: Int, sdad: ByteArray): Int? = try {
+        recover(modulus, BigInteger.valueOf(exponent.toLong()), sdad).takeIf { it[0] == 0x6A.toByte() }?.get(1)?.toInt()?.and(0xff)
+    } catch (e: EmvException) {
+        null
     }
 }
 
@@ -98,8 +109,8 @@ enum class SignMethod(val label: String) {
  * cryptogram requested for CDA). Later taps reuse it so every signature has the
  * terminal-data layout the contract stored. Kept on the phone only.
  */
-data class CardRecipe(val aid: String, val method: SignMethod, val amount: Long = 0, val variant: Int = 0) {
-    fun encode() = "$aid:${method.name}:$amount:$variant"
+data class CardRecipe(val aid: String, val method: SignMethod, val amount: Long = 0, val variant: Int = 0, val ttq: Int = TTQ_ONLINE) {
+    fun encode() = "$aid:${method.name}:$amount:$variant:$ttq"
 
     companion object {
         /** fDDA terminal data: UN, amount, currency and the card's 9F69 data (fDDA version 01). */
@@ -113,8 +124,14 @@ data class CardRecipe(val aid: String, val method: SignMethod, val amount: Long 
         const val CDA_ARQC = 0
         const val CDA_TC = 1
 
-        fun decode(s: String?): CardRecipe? = s?.split(":")?.takeIf { it.size == 4 }?.let {
-            runCatching { CardRecipe(it[0], SignMethod.valueOf(it[1]), it[2].toLong(), it[3].toInt()) }.getOrNull()
+        /** TTQ choices: online cryptogram required (every tap an ARQC, no offline counters used), or offline allowed. */
+        const val TTQ_ONLINE = 0
+        const val TTQ_OFFLINE_OK = 1
+
+        fun decode(s: String?): CardRecipe? = s?.split(":")?.takeIf { it.size in 4..5 }?.let {
+            runCatching {
+                CardRecipe(it[0], SignMethod.valueOf(it[1]), it[2].toLong(), it[3].toInt(), it.getOrNull(4)?.toInt() ?: TTQ_OFFLINE_OK)
+            }.getOrNull()
         }
     }
 }
@@ -289,10 +306,10 @@ class EmvSession(private val card: CardTransceiver, private val capks: CapkStore
         gpoSent.clear()
     }
 
-    /** GET PROCESSING OPTIONS with [un] as the Unpredictable Number and [amount] (minor units). */
-    fun gpo(un: ByteArray, amount: Long) {
+    /** GET PROCESSING OPTIONS with [un] as the Unpredictable Number, [amount] (minor units) and a TTQ choice. */
+    fun gpo(un: ByteArray, amount: Long, ttq: Int = CardRecipe.TTQ_ONLINE) {
         gpoSent.clear()
-        val data = pdol.fold(ByteArray(0)) { acc, e -> acc + terminalValue(e, un, amount).also { gpoSent[e.tag] = it } }
+        val data = pdol.fold(ByteArray(0)) { acc, e -> acc + terminalValue(e, un, amount, ttq).also { gpoSent[e.tag] = it } }
         val r = Tlv.parse(send(apdu(0x80, 0xA8, 0x00, 0x00, Tlv.encode(0x83, data)), "GPO"))
         val fmt1 = r.firstOrNull { it.tag == 0x80 }
         if (fmt1 != null) {
@@ -306,8 +323,8 @@ class EmvSession(private val card: CardTransceiver, private val capks: CapkStore
         gpoResponse = r
     }
 
-    /** Did the last GPO answer carry a signature (Visa fDDA)? */
-    fun gpoSigned() = Tlv.find(gpoResponse, 0x9F4B) != null
+    /** Did the last GPO produce a signature (Visa fDDA), in its answer or in a record read since? */
+    fun gpoSigned() = Tlv.find(gpoResponse, 0x9F4B) != null || find(0x9F4B) != null
 
     /** Read the records named in the AFL (once per application) and collect the static data for offline authentication. */
     fun readRecords() {
@@ -413,7 +430,7 @@ class EmvSession(private val card: CardTransceiver, private val capks: CapkStore
      */
     fun attempt(r: CardRecipe, challenge: ByteArray): List<Signed> {
         select(r.aid.unhex())
-        gpo(challenge, r.amount)
+        gpo(challenge, r.amount, r.ttq)
         return when (r.method) {
             SignMethod.FDDA -> fdda(r)
             SignMethod.DDA -> listOf(dda(r, challenge))
@@ -422,18 +439,36 @@ class EmvSession(private val card: CardTransceiver, private val capks: CapkStore
     }
 
     private fun fdda(r: CardRecipe): List<Signed> {
-        val sdad = Tlv.find(gpoResponse, 0x9F4B)?.value
+        // Visa returns the signature in the GPO answer but the Card Authentication
+        // Related Data (9F69, fresh for every transaction) in the last AFL record,
+        // so that record is read again now rather than taken from the cache.
+        val needRecord = Tlv.find(gpoResponse, 0x9F69) == null || Tlv.find(gpoResponse, 0x9F4B) == null
+        val fresh = if (needRecord) lastRecord() else emptyList()
+        val sdad = Tlv.find(gpoResponse, 0x9F4B)?.value ?: Tlv.find(fresh, 0x9F4B)?.value
             ?: throw EmvException("no signature in the GPO answer (${cryptogram(gpoResponse, gpo = true)})")
         val un = gpoSent[0x9F37] ?: throw EmvException("the card's PDOL has no Unpredictable Number")
         val amount = gpoSent[0x9F02]
         val currency = gpoSent[0x5F2A]
-        val cardData = Tlv.find(gpoResponse, 0x9F69)?.value ?: if (recordsRead) find(0x9F69)?.value else null
+        val cardData = Tlv.find(gpoResponse, 0x9F69)?.value ?: Tlv.find(fresh, 0x9F69)?.value
         val forms = buildList {
             if (amount != null && currency != null && cardData != null) add(CardRecipe.FDDA_FULL to un + amount + currency + cardData)
             if (amount != null && currency != null) add(CardRecipe.FDDA_AMOUNT to un + amount + currency)
             add(CardRecipe.FDDA_UN to un)
         }
         return forms.map { (form, td) -> Signed(r.copy(variant = form), CardSig(sdad, td), 0, un.size) }
+    }
+
+    /** READ RECORD of the last record the current AFL names, bypassing the cache. */
+    private fun lastRecord(): List<Tlv> {
+        if (afl.size < 4) return emptyList()
+        val n = afl.size - afl.size % 4
+        val sfi = (afl[n - 4].toInt() and 0xff) ushr 3
+        val rec = afl[n - 2].toInt() and 0xff
+        return try {
+            Tlv.parse(send(apdu(0x00, 0xB2, rec, (sfi shl 3) or 4, null), "READ RECORD $sfi.$rec (fresh)"))
+        } catch (e: EmvException) {
+            emptyList()
+        }
     }
 
     private fun dda(r: CardRecipe, challenge: ByteArray): Signed {
@@ -493,25 +528,30 @@ class EmvSession(private val card: CardTransceiver, private val capks: CapkStore
         val pdolUn = pdol.any { it.tag == 0x9F37 }
         val list = mutableListOf<CardRecipe>()
         if (gpoSigned) list += CardRecipe(a, SignMethod.FDDA)
+        if (pdolUn && pdol.any { it.tag == 0x9F66 }) list += CardRecipe(a, SignMethod.FDDA, ttq = CardRecipe.TTQ_OFFLINE_OK)
         if (ddaFlag) list += CardRecipe(a, SignMethod.DDA)
         if (cdol && cdaFlag) {
             list += CardRecipe(a, SignMethod.CDA, 0, CardRecipe.CDA_ARQC)
             list += CardRecipe(a, SignMethod.CDA, 100, CardRecipe.CDA_ARQC)
             list += CardRecipe(a, SignMethod.CDA, 0, CardRecipe.CDA_TC)
         }
-        if (!gpoSigned && pdolUn) list += CardRecipe(a, SignMethod.FDDA, 100)
+        if (!gpoSigned && pdolUn) {
+            list += CardRecipe(a, SignMethod.FDDA)
+            list += CardRecipe(a, SignMethod.FDDA, 100)
+        }
         if (!ddaFlag) list += CardRecipe(a, SignMethod.DDA)
         if (cdol && !cdaFlag) list += CardRecipe(a, SignMethod.CDA, 0, CardRecipe.CDA_ARQC)
-        return list
+        return list.distinct()
     }
 
     fun tried(r: CardRecipe, result: String) {
         attempts += "${r.method} ${r.aid}" + (if (r.amount != 0L) " amount ${r.amount}" else "") +
-            (if (r.method == SignMethod.CDA && r.variant == CardRecipe.CDA_TC) " TC" else "") + ": $result"
+            (if (r.method == SignMethod.CDA && r.variant == CardRecipe.CDA_TC) " TC" else "") +
+            (if (r.ttq == CardRecipe.TTQ_OFFLINE_OK && pdol.any { it.tag == 0x9F66 }) " offline-ok" else "") + ": $result"
     }
 
-    fun succeeded(r: CardRecipe) {
-        tried(r, "signature OK")
+    fun succeeded(r: CardRecipe, detail: String = "") {
+        tried(r, "signature OK$detail")
         signsWith = r.method.label
         notes += "signs with ${r.method.label}: this card can be a Tapvault signer"
     }
@@ -552,9 +592,12 @@ class EmvSession(private val card: CardTransceiver, private val capks: CapkStore
          * Terminal Transaction Qualifiers: qVSDC, contact chip, online PIN and
          * signature supported, offline data authentication for online
          * authorisations supported (so online-only Visa cards still sign), and
-         * consumer-device CVM.
+         * consumer-device CVM. The first also sets "online cryptogram
+         * required", so every tap is an ARQC that uses up none of the card's
+         * offline counters; the second lets the card approve offline.
          */
-        val TTQ = "37004000".unhex()
+        val TTQ_ONLINE = "37804000".unhex()
+        val TTQ_OFFLINE_OK = "37004000".unhex()
 
         /** Tags whose values can go in a trace: none of them identify the card or its holder. */
         private val TRACE_VALUES = setOf(
@@ -568,10 +611,10 @@ class EmvSession(private val card: CardTransceiver, private val capks: CapkStore
         private fun bcd(value: Long, bytes: Int) = "%0${bytes * 2}d".format(value).unhex()
 
         /** Terminal values for DOL entries; the UN comes from [un], the amount (minor units) from [amount]. */
-        fun terminalValue(e: DolEntry, un: ByteArray, amount: Long = 0): ByteArray {
+        fun terminalValue(e: DolEntry, un: ByteArray, amount: Long = 0, ttq: Int = CardRecipe.TTQ_ONLINE): ByteArray {
             val v: ByteArray = when (e.tag) {
                 0x9F37 -> un.copyOf(e.len)
-                0x9F66 -> TTQ
+                0x9F66 -> if (ttq == CardRecipe.TTQ_OFFLINE_OK) TTQ_OFFLINE_OK else TTQ_ONLINE
                 0x9F02 -> bcd(amount, 6)
                 0x9F03 -> ByteArray(6)
                 0x9F1A, 0x5F2A -> "0356".unhex() // India
@@ -622,8 +665,8 @@ class CardService(private val capks: CapkStore) {
     private fun enrolWith(s: EmvSession, aid: ByteArray, challengeFor: (SignerKey.EmvCard) -> ByteArray): Enrolment {
         s.select(aid)
         s.gpo(EmvSession.randomUn(), 0)
-        val gpoSigned = s.gpoSigned()
         s.readRecords()
+        val gpoSigned = s.gpoSigned()
         val icc = try {
             s.recoverCardKey()
         } catch (e: EmvException) {
@@ -651,7 +694,8 @@ class CardService(private val capks: CapkStore) {
             val key = SignerKey.EmvCard(modulus, exponent, good.unOffset, good.unLen, good.sig.terminalData.size)
             // The challenge was made for the probe key; the key hash (all it may depend on) ignores the layout.
             check(key.keyHash().contentEquals(probe.keyHash()))
-            s.succeeded(good.recipe)
+            val format = Rsa.sdadFormat(modulus, exponent, good.sig.sdad)
+            s.succeeded(good.recipe, " (format %02X, %d bytes of terminal data)".format(format ?: 0, good.sig.terminalData.size))
             return Enrolment(key, good.sig, s.report(icc), good.recipe)
         }
         throw CardCheckFailed("this card won't sign a challenge over NFC", s.report(icc, "it wouldn't sign a challenge with any method"))
@@ -666,7 +710,7 @@ class CardService(private val capks: CapkStore) {
         val s = EmvSession(card, capks)
         val aid = recipe?.aid ?: s.applications().first().first.hex().uppercase()
         val plans = (listOfNotNull(recipe) + fallbacks(key, aid))
-            .distinctBy { Triple(it.method, it.amount, if (it.method == SignMethod.CDA) it.variant else 0) }
+            .distinctBy { listOf(it.method, it.amount, if (it.method == SignMethod.CDA) it.variant else 0, it.ttq) }
         var signed = false
         var lastProblem = "no answer"
         for (plan in plans) {
@@ -685,7 +729,8 @@ class CardService(private val capks: CapkStore) {
                 if (Rsa.verifySdad(key.modulus, key.exponent, r.sig.sdad, td)) return r.sig
             }
         }
-        throw EmvException(if (signed) "this isn't the card enrolled in the wallet" else "the card didn't sign ($lastProblem)")
+        if (signed) throw WrongCardException()
+        throw EmvException("the card didn't sign ($lastProblem)")
     }
 
     /** Methods that can produce the enrolled layout: UN-only data, or fDDA's longer terminal data. */
@@ -697,6 +742,7 @@ class CardService(private val capks: CapkStore) {
             CardRecipe(aid, SignMethod.FDDA),
         ) else listOf(
             CardRecipe(aid, SignMethod.FDDA),
+            CardRecipe(aid, SignMethod.FDDA, ttq = CardRecipe.TTQ_OFFLINE_OK),
             CardRecipe(aid, SignMethod.FDDA, 100),
             CardRecipe(aid, SignMethod.DDA),
         )
@@ -710,3 +756,6 @@ class CardService(private val capks: CapkStore) {
 }
 
 class CardCheckFailed(message: String, val report: CardReport) : Exception(message)
+
+/** The card signed, but not with the key enrolled in the wallet: probably a different card. */
+class WrongCardException : EmvException("this isn't the card enrolled in the wallet")
