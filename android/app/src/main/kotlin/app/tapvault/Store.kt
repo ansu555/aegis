@@ -36,6 +36,11 @@ class Store(context: Context) {
     val legacyDemoWallet: Boolean
         get() = p.getBoolean("demo_card", false) && setupStep > 0
 
+    /** Names and keys picked for the accounts of a setup in progress ([app.tapvault.core.Onboarding.Plan], encoded). */
+    var setupPlan: String?
+        get() = p.getString("setup_plan", null)
+        set(v) { p.edit().putString("setup_plan", v).commit() }
+
     /** A card read and signed during setup but not yet added on-chain ([PendingCard], encoded). */
     var pendingCard: String?
         get() = p.getString("pending_card", null)

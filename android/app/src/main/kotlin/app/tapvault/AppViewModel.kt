@@ -1,6 +1,7 @@
 package app.tapvault
 
 import android.app.Application
+import android.nfc.Tag
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -12,6 +13,7 @@ import app.tapvault.core.Asset
 import app.tapvault.core.CapkStore
 import app.tapvault.core.CardCheckFailed
 import app.tapvault.core.CardRecipe
+import app.tapvault.core.WrongCardException
 import app.tapvault.core.CardReport
 import app.tapvault.core.CardService
 import app.tapvault.core.CardTransceiver
@@ -23,6 +25,7 @@ import app.tapvault.core.LimitInit
 import app.tapvault.core.Near
 import app.tapvault.core.NearClient
 import app.tapvault.core.NearKey
+import app.tapvault.core.NearRpcException
 import app.tapvault.core.Onboarding
 import app.tapvault.core.ProposalInfo
 import app.tapvault.core.TapvaultWallet
@@ -122,6 +125,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- card taps ----
 
+    /** The tap being waited for; the activity's reader hands every card here. */
+    @Volatile private var pendingTag: CompletableFuture<Tag>? = null
+
+    /** A card that arrived while nothing was waiting (put down early, or left on the phone). */
+    @Volatile private var earlyTag: Pair<Tag, Long>? = null
+
+    fun onTag(tag: Tag) {
+        val p = pendingTag
+        if (p != null && !p.isDone) p.complete(tag) else earlyTag = tag to System.currentTimeMillis()
+    }
+
+    private fun awaitTag(): CompletableFuture<Tag> {
+        val f = CompletableFuture<Tag>()
+        val early = earlyTag
+        earlyTag = null
+        // A card already lying on the phone is used straight away; if it has gone, connecting fails and we wait for a tap.
+        if (early != null && System.currentTimeMillis() - early.second < 30_000) f.complete(early.first) else pendingTag = f
+        return f
+    }
+
     /**
      * Wait for a real card tap over NFC and run [block] against it while it is
      * held. A card pulled away too early is retried with a fresh tap.
@@ -137,9 +160,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (!act.nfcEnabled) throw IllegalStateException("Turn on NFC in Android settings (Connected devices → NFC), then try again.")
             tap = TapRequest(title, hint = hint)
             try {
-                val tag = act.awaitTag().get(2, TimeUnit.MINUTES)
+                val tag = awaitTag().get(2, TimeUnit.MINUTES)
                 tap = TapRequest(title, reading = true)
-                return IsoDepTransceiver(tag).use { block(it) }.also { act.vibrate() }
+                return IsoDepTransceiver(tag).use { block(it) }.also { activity?.vibrate() }
             } catch (e: java.util.concurrent.TimeoutException) {
                 throw IllegalStateException("No card was tapped. Try again and hold the card flat against the back of the phone.")
             } catch (e: java.util.concurrent.CancellationException) {
@@ -154,8 +177,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // The tag object went stale (the reader was re-armed in between).
                 note("stale card connection: ${e.message}; tap again")
                 hint = "Tap the card again and keep it still until the phone vibrates."
+            } catch (e: WrongCardException) {
+                note("a different card was tapped")
+                hint = "That's not the card in this wallet. Tap the card you added."
             } finally {
-                act.stopReader()
+                pendingTag = null
                 tap = null
             }
         }
@@ -163,7 +189,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun cancelTap() {
-        activity?.cancelTag()
+        pendingTag?.cancel(true)
     }
 
     // ---- wallet ----
@@ -173,8 +199,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return TapvaultWallet(near, acct, store.gasAccount!!, NearKey.fromSecret(store.gasKey!!))
     }
 
+    private val refreshing = java.util.concurrent.atomic.AtomicBoolean(false)
+    private var autoRefresh: kotlinx.coroutines.Job? = null
+
+    /** Reload wallet state; skipped while another refresh is still running. */
     fun refresh() {
         if (store.setupStep < 4) return
+        if (!refreshing.compareAndSet(false, true)) return
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) {
@@ -187,14 +218,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 note("refresh failed: ${e.message}")
                 offline = "Can't reach NEAR testnet right now. Showing the last known state; retrying."
+            } finally {
+                refreshing.set(false)
             }
         }
     }
 
+    /** One polling loop for the app's lifetime; it only polls while the app is on screen. */
     fun startAutoRefresh() {
-        viewModelScope.launch {
+        if (autoRefresh?.isActive == true) return
+        autoRefresh = viewModelScope.launch {
             while (isActive) {
-                if (screen == Screen.Home || screen == Screen.Activity) refresh()
+                val visible = activity?.lifecycle?.currentState?.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) == true
+                if (visible && (screen == Screen.Home || screen == Screen.Activity)) refresh()
                 delay(8_000)
             }
         }
@@ -249,10 +285,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (store.setupStep < 1) {
             progress("Creating your wallet account on NEAR testnet")
-            val a = ob.createAccounts(sponsor = sponsor()) { note(it) }
+            // Keys are saved before any account exists, so a retry reuses what was already created.
+            val plan = Onboarding.Plan.decode(store.setupPlan) ?: Onboarding.Plan.random().also { store.setupPlan = it.encode() }
+            val a = ob.createAccounts(sponsor = sponsor(), plan = plan) { note(it) }
             store.walletAccount = a.wallet; store.walletKey = a.walletKey.secretString()
             store.gasAccount = a.gas; store.gasKey = a.gasKey.secretString()
             setStep(1)
+            store.setupPlan = null
             note("wallet ${a.wallet}, fee account ${a.gas}")
         }
         val accounts = Onboarding.Accounts(
@@ -260,7 +299,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         )
         // Each step checks the chain first, so a retry after a crash or a lost
         // connection continues instead of repeating a step that already landed.
-        val onChain = runCatching { TapvaultWallet(near, accounts.wallet, accounts.gas, accounts.gasKey).state() }.getOrNull()
+        val onChain = try {
+            TapvaultWallet(near, accounts.wallet, accounts.gas, accounts.gasKey).state()
+        } catch (e: NearRpcException) {
+            // No contract yet is expected; anything else (no connection) must not re-send a step that landed.
+            if (e.message?.contains("CodeDoesNotExist") == true || e.message?.contains("MethodNotFound") == true ||
+                e.message?.contains("UNKNOWN_ACCOUNT") == true || e.message?.contains("does not exist") == true
+            ) null else throw IllegalStateException("Can't reach NEAR testnet right now (${e.message?.take(120)}). Try Continue setup again.")
+        }
 
         // Read the card before deploying anything: a card that can't sign
         // stops setup while undoing it is still cheap (Start over).
