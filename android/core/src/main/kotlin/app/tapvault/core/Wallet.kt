@@ -252,9 +252,9 @@ class Onboarding(private val near: NearClient) {
     /** A funded testnet account that can create wallets when the faucet refuses. */
     class Sponsor(val account: String, val key: NearKey) {
         companion object {
-            /** Enough for the contract's storage (~3.4 NEAR) plus some to send. */
-            val WALLET_FUNDING: BigInteger = Near.parse("4.2")
-            val GAS_FUNDING: BigInteger = Near.parse("0.3")
+            /** The contract's storage (~3.4 NEAR) plus about 2 NEAR to send. */
+            val WALLET_FUNDING: BigInteger = Near.parse("5.5")
+            val GAS_FUNDING: BigInteger = Near.parse("0.5")
         }
     }
 
@@ -267,21 +267,27 @@ class Onboarding(private val near: NearClient) {
         val tag = ByteArray(5).also { java.security.SecureRandom().nextBytes(it) }.hex()
         val wk = NearKey.random()
         val gk = NearKey.random()
-        val faucetError = if (sponsor != null && System.getenv("TAPVAULT_FORCE_SPONSOR") == "1") "skipped" else try {
-            val wallet = "$prefix-$tag.testnet"
-            val gas = "$prefix-$tag-gas.testnet"
-            near.createTestnetAccount(wallet, wk)
-            near.createTestnetAccount(gas, gk)
-            return Accounts(wallet, wk, gas, gk)
-        } catch (e: Exception) {
-            e.message ?: "faucet failed"
+        var faucetError: String? = if (sponsor != null && System.getenv("TAPVAULT_FORCE_SPONSOR") == "1") "skipped" else null
+
+        // Each account comes from the faucet while it cooperates, otherwise from the sponsor.
+        fun create(name: String, key: NearKey, funding: BigInteger): String {
+            if (faucetError == null) {
+                try {
+                    near.createTestnetAccount("$name.testnet", key)
+                    return "$name.testnet"
+                } catch (e: Exception) {
+                    faucetError = e.message ?: "faucet failed"
+                }
+            }
+            if (sponsor == null) throw TapvaultException("The testnet faucet refused ($faucetError). Try again later or from another network.")
+            onFallback("faucet unavailable ($faucetError); funding $name from ${sponsor.account}")
+            val account = "$name.${sponsor.account}"
+            near.createSubAccount(sponsor.account, sponsor.key, account, key, funding)
+            return account
         }
-        if (sponsor == null) throw TapvaultException("The testnet faucet refused ($faucetError). Try again later or from another network.")
-        onFallback("faucet unavailable ($faucetError); funding from ${sponsor.account}")
-        val wallet = "$prefix-$tag.${sponsor.account}"
-        val gas = "$prefix-$tag-gas.${sponsor.account}"
-        near.createSubAccount(sponsor.account, sponsor.key, wallet, wk, Sponsor.WALLET_FUNDING)
-        near.createSubAccount(sponsor.account, sponsor.key, gas, gk, Sponsor.GAS_FUNDING)
+
+        val wallet = create("$prefix-$tag", wk, Sponsor.WALLET_FUNDING)
+        val gas = create("$prefix-$tag-gas", gk, Sponsor.GAS_FUNDING)
         return Accounts(wallet, wk, gas, gk)
     }
 
