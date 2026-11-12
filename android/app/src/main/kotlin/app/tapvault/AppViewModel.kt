@@ -10,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import app.tapvault.core.Action
 import app.tapvault.core.Asset
 import app.tapvault.core.CapkStore
+import app.tapvault.core.CardCheckFailed
 import app.tapvault.core.CardRecipe
 import app.tapvault.core.CardReport
 import app.tapvault.core.CardService
@@ -63,6 +64,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var storageLocked by mutableStateOf<BigInteger?>(null)
     var proposals by mutableStateOf<List<ProposalInfo>>(emptyList())
     var cardReport by mutableStateOf<CardReport?>(null)
+
+    /** Why the last refresh failed (e.g. no connection), or null when it worked. */
+    var offline by mutableStateOf<String?>(null)
     var setupStep by mutableStateOf(store.setupStep)
     val log = mutableStateListOf<String>()
 
@@ -146,6 +150,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: java.io.IOException) {
                 note("card link error: ${e.message}; tap again")
                 hint = "The card connection dropped. Tap again and keep it still until the phone vibrates."
+            } catch (e: SecurityException) {
+                // The tag object went stale (the reader was re-armed in between).
+                note("stale card connection: ${e.message}; tap again")
+                hint = "Tap the card again and keep it still until the phone vibrates."
             } finally {
                 act.stopReader()
                 tap = null
@@ -174,10 +182,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     val s = w.state()
                     val (b, locked) = near.spendable(w.account)
                     val ps = w.proposals()
-                    withContext(Dispatchers.Main) { wallet = s; balance = b; storageLocked = locked; proposals = ps }
+                    withContext(Dispatchers.Main) { wallet = s; balance = b; storageLocked = locked; proposals = ps; offline = null }
                 }
             } catch (e: Exception) {
                 note("refresh failed: ${e.message}")
+                offline = "Can't reach NEAR testnet right now. Showing the last known state; retrying."
             }
         }
     }
@@ -193,30 +202,54 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- setup ----
 
+    private fun sponsor(): Onboarding.Sponsor? =
+        BuildConfig.SPONSOR_ACCOUNT.takeIf { it.isNotBlank() && BuildConfig.SPONSOR_KEY.isNotBlank() }
+            ?.let { Onboarding.Sponsor(it, NearKey.fromSecret(BuildConfig.SPONSOR_KEY)) }
+
+    /** Throws a readable error unless this phone can read a card right now. */
+    private fun requireNfc() {
+        val act = activity ?: throw IllegalStateException("app is not in the foreground")
+        if (!act.hasNfc) throw IllegalStateException("This phone has no NFC, so it can't read a bank card.")
+        if (!act.nfcEnabled) throw IllegalStateException("Turn on NFC in Android settings (Connected devices → NFC), then try again.")
+    }
+
     fun beginSetup(instant: String, daily: String) {
-        store.instantNear = instant
-        store.dailyNear = daily
+        val i = runCatching { Near.parse(instant.trim().replace(',', '.')) }.getOrNull()
+        val d = runCatching { Near.parse(daily.trim().replace(',', '.')) }.getOrNull()
+        val problem = when {
+            i == null || d == null || i.signum() <= 0 || d.signum() <= 0 -> "Enter both limits as amounts like 1 or 0.5."
+            i > d -> "The per-day limit must be at least the at-once limit."
+            !hasNfc -> "This phone has no NFC, so it can't read a bank card."
+            !nfcEnabled -> "Turn on NFC in Android settings (Connected devices → NFC) first."
+            else -> null
+        }
+        if (problem != null) {
+            outcome = Outcome(false, "Can't start yet", problem)
+            return
+        }
+        store.instantNear = Near.format(i!!)
+        store.dailyNear = Near.format(d!!)
         go(Screen.Setup)
         continueSetup()
     }
 
     fun continueSetup() = run("Setting up") {
+        requireNfc()
         val ob = Onboarding(near)
         if (!KeystoreSigner.exists()) {
             progress("Creating your phone key in secure hardware")
             try {
-                KeystoreSigner.create()
-            } catch (e: java.security.GeneralSecurityException) {
-                throw IllegalStateException("Set up a screen lock (PIN, pattern or fingerprint) on this phone first. (${e.message})")
+                KeystoreSigner.create(getApplication())
             } catch (e: IllegalStateException) {
-                throw IllegalStateException("Set up a screen lock (PIN, pattern or fingerprint) on this phone first. (${e.message})")
+                throw e
+            } catch (e: Exception) {
+                throw IllegalStateException("Set up a screen lock (PIN, pattern or password) on this phone first, then continue. (${e.message})")
             }
             note("phone key stored in ${phone.hardwareLabel}")
         }
         if (store.setupStep < 1) {
             progress("Creating your wallet account on NEAR testnet")
-            val sponsor = BuildConfig.SPONSOR_ACCOUNT.takeIf { it.isNotBlank() }?.let { Onboarding.Sponsor(it, NearKey.fromSecret(BuildConfig.SPONSOR_KEY)) }
-            val a = ob.createAccounts(sponsor = sponsor) { note(it) }
+            val a = ob.createAccounts(sponsor = sponsor()) { note(it) }
             store.walletAccount = a.wallet; store.walletKey = a.walletKey.secretString()
             store.gasAccount = a.gas; store.gasKey = a.gasKey.secretString()
             setStep(1)
@@ -228,6 +261,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Each step checks the chain first, so a retry after a crash or a lost
         // connection continues instead of repeating a step that already landed.
         val onChain = runCatching { TapvaultWallet(near, accounts.wallet, accounts.gas, accounts.gasKey).state() }.getOrNull()
+
+        // Read the card before deploying anything: a card that can't sign
+        // stops setup while undoing it is still cheap (Start over).
+        var pending = PendingCard.decode(store.pendingCard)
+        if (pending == null && store.setupStep < 3 && onChain?.card() == null) {
+            progress("Tap your card")
+            val svc = cards()
+            val enrol = try {
+                withCard("Hold your bank card to the back of the phone to add it") { t ->
+                    svc.enrol(t) { k -> Domain.cardEnrollChallenge(accounts.wallet, 1, k.keyHash()) }
+                }
+            } catch (e: CardCheckFailed) {
+                cardReport = e.report
+                throw IllegalStateException("This card can't sign for Tapvault: ${e.message}. Tap Continue setup to try another contactless card, or Start over.")
+            }
+            cardReport = enrol.report
+            store.cardRecipe = enrol.recipe.encode()
+            pending = PendingCard(enrol.key, enrol.proof, enrol.report.network, enrol.report.panLast4 ?: "????")
+            store.pendingCard = pending.encode()
+            note("card ${enrol.report.network} ****${enrol.report.panLast4} read (${enrol.report.iccKeyBits}-bit key, ${enrol.recipe.method.label})")
+        }
         if (store.setupStep < 2) {
             if (onChain != null) {
                 note("wallet contract already deployed")
@@ -241,27 +295,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             setStep(2)
         }
         if (store.setupStep < 3) {
-            if (onChain?.card() != null && store.cardRecipe != null) {
+            if (onChain?.card() != null) {
                 note("card already added")
             } else {
-                progress("Add your card")
-                val svc = cards()
-                val enrol = withCard("Hold your bank card to the back of the phone to add it") { t ->
-                    svc.enrol(t) { k -> Domain.cardEnrollChallenge(accounts.wallet, 1, k.keyHash()) }
-                }
-                cardReport = enrol.report
-                store.cardRecipe = enrol.recipe.encode()
-                note("card ${enrol.report.network} ****${enrol.report.panLast4} enrolled (${enrol.report.iccKeyBits}-bit key, ${enrol.recipe.method.label})")
-                progress("Approve adding card ****${enrol.report.panLast4}")
-                val cardName = enrol.report.network.let { if (it.endsWith("card")) it else "$it card" }
-                phone.reason = "Add $cardName ****${enrol.report.panLast4} as a signer"
-                ob.addCard(accounts, phone, 1, enrol)
+                val c = pending ?: throw IllegalStateException("The card details from this setup are missing. Start over to set up again.")
+                val cardName = c.network.let { if (it.endsWith("card")) it else "$it card" }
+                progress("Approve adding card ****${c.last4}")
+                phone.reason = "Add $cardName ****${c.last4} as a signer"
+                ob.addCard(accounts, phone, 1, c.key, c.proof)
+                note("card ****${c.last4} added as a signer")
             }
             setStep(3)
         }
         if (store.setupStep < 4) {
-            val locked = onChain?.setupMode == false
-            if (locked) {
+            if (onChain?.setupMode == false) {
                 note("wallet already locked")
             } else {
                 progress("Approve your limits to lock the wallet")
@@ -277,10 +324,35 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             note(if (keys.isEmpty()) "wallet account locked: no keys left" else "WARNING: wallet still has keys: $keys")
             setStep(4)
             store.walletKey = null
+            store.pendingCard = null
         }
         withContext(Dispatchers.Main) { screen = Screen.Home }
         refresh()
         outcome = Outcome(true, "Your wallet is ready", "Funds now move only with your phone and your card.", near.explorerAccount(accounts.wallet))
+    }
+
+    /**
+     * Abandon an unfinished setup. With a sponsor configured, accounts that
+     * have nothing deployed yet are deleted and their NEAR goes back to it.
+     */
+    fun startOver() = run("Starting over") {
+        val sp = sponsor()
+        if (sp != null) {
+            val wallet = store.walletAccount
+            val wk = store.walletKey
+            if (store.setupStep <= 1 && wallet != null && wk != null) {
+                runCatching { near.deleteAccount(wallet, NearKey.fromSecret(wk), sp.account) }
+                    .onSuccess { note("deleted $wallet; its NEAR went back to ${sp.account}") }
+                    .onFailure { note("couldn't delete $wallet: ${it.message}") }
+            }
+            val gas = store.gasAccount
+            val gk = store.gasKey
+            if (gas != null && gk != null) {
+                runCatching { near.deleteAccount(gas, NearKey.fromSecret(gk), sp.account) }
+                    .onFailure { note("couldn't delete $gas: ${it.message}") }
+            }
+        }
+        withContext(Dispatchers.Main) { resetApp() }
     }
 
     private fun setStep(n: Int) {
@@ -291,25 +363,47 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // ---- send ----
 
     fun send(receiver: String, amountNear: String) = run("Sending") {
-        val amount = try { Near.parse(amountNear.trim()) } catch (e: Exception) { throw IllegalArgumentException("Enter an amount like 0.5") }
+        val amount = try { Near.parse(amountNear.trim().replace(',', '.')) } catch (e: Exception) { throw IllegalArgumentException("Enter an amount like 0.5") }
         require(amount.signum() > 0) { "Amount must be more than zero" }
         val to = receiver.trim().lowercase()
         require(to.matches(Regex("^(([a-z\\d]+[-_])*[a-z\\d]+\\.)*([a-z\\d]+[-_])*[a-z\\d]+$")) && to.length in 2..64) { "That isn't a NEAR account id" }
+        requireNfc()
 
         val w = walletClient()
         val st = w.state()
         if (st.frozen) throw IllegalStateException("The wallet is frozen. Request an unfreeze first.")
         val phoneIdx = st.phoneIndexOf(phone.publicKey) ?: throw IllegalStateException("This phone isn't a signer of the wallet")
         val card = st.card() ?: throw IllegalStateException("No card enrolled")
+        require(to != w.account) { "That's this wallet's own account" }
+        val (available, _) = near.spendable(w.account)
+        require(amount <= available) { "The wallet only has ${Near.format(available, 4)} NEAR available to send" }
+        // 64-hex implicit accounts come into existence when they receive NEAR.
+        require(to.matches(Regex("^[0-9a-f]{64}$")) || near.accountExists(to)) { "$to doesn't exist on NEAR testnet" }
 
-        progress("Approve on your phone")
-        phone.reason = "Send ${Near.format(amount)} NEAR to $to"
-        val id = w.proposeByPhone(Action.Transfer(Asset.Near, amount, to), phone, phoneIdx)
-        note("proposal #$id created")
+        // An unfinished identical payment (phone approved, card tap failed) is
+        // finished instead of creating a second one.
+        val now = System.currentTimeMillis() / 1000
+        val existing = w.proposals().firstOrNull { p ->
+            p.isNearTransfer && p.transferAmount() == amount && p.transferReceiver() == to && p.approvedBy(phoneIdx) &&
+                !p.approvedBy(card.index) && !p.stale && (p.cardDeadlineTs ?: Long.MAX_VALUE) > now + 30
+        }
+        val id = if (existing != null) {
+            note("finishing unfinished payment #${existing.id}")
+            existing.id
+        } else {
+            progress("Approve on your phone")
+            phone.reason = "Send ${Near.format(amount)} NEAR to $to"
+            w.proposeByPhone(Action.Transfer(Asset.Near, amount, to), phone, phoneIdx).also { note("proposal #$it created") }
+        }
         progress("Waiting for the card challenge")
         val ch = w.awaitCardChallenge(id)
         val svc = cards()
-        val sig = withCard("Tap your card to approve sending ${Near.format(amount)} NEAR") { t -> svc.sign(t, card.cardKey()!!, ch, recipe()) }
+        val sig = try {
+            withCard("Tap your card to approve sending ${Near.format(amount)} NEAR") { t -> svc.sign(t, card.cardKey()!!, ch, recipe()) }
+        } catch (e: Exception) {
+            refresh()
+            throw IllegalStateException("${e.message}\n\nPayment #$id is saved and waits 10 minutes for your card: send the same amount again, or approve or cancel it in Activity.")
+        }
         progress("Submitting")
         val instant = st.nearLimit?.isInstant(amount) == true
         if (instant) {
@@ -322,7 +416,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             note("approved #$id; over the limit, executes after $hours h")
             outcome = Outcome(
                 true, "Approved, waiting $hours h",
-                "This is over your instant limit, so it can execute in $hours h. Until then you can cancel it or freeze the wallet.",
+                "This is over your instant limit. In $hours h, open Activity and tap Execute. Until then you can cancel it or freeze the wallet.",
                 near.explorerTx(r.hash),
             )
         }
@@ -338,8 +432,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val ch = p.cardChallenge ?: w.awaitCardChallenge(p.id)
         val svc = cards()
         val sig = withCard("Tap your card to approve: ${p.describe()}") { t -> svc.sign(t, card.cardKey()!!, ch, recipe()) }
-        val r = w.approveCard(p.id, card.index, sig)
-        outcome = Outcome(true, "Approved", p.describe(), near.explorerTx(r.hash))
+        // A NEAR payment the phone already approved can go out in the same transaction if it's within the limits.
+        val phoneIdx = st.phoneIndexOf(phone.publicKey)
+        val canRunNow = !st.frozen && p.isNearTransfer && phoneIdx != null && p.approvedBy(phoneIdx) &&
+            st.nearLimit?.isInstant(p.transferAmount()!!) == true
+        val r = if (canRunNow) w.approveCardAndExecute(p.id, card.index, sig) else w.approveCard(p.id, card.index, sig)
+        outcome = Outcome(true, if (canRunNow) "Approved and sent" else "Approved", p.describe(), near.explorerTx(r.hash))
         refresh()
     }
 

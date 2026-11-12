@@ -63,7 +63,6 @@ fun TapvaultApp(vm: AppViewModel) {
             val uri = LocalUriHandler.current
             Box(Modifier.fillMaxSize().safeDrawingPadding()) {
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(horizontal = 20.dp)) {
-                    vm.outcome?.let { Spacer(Modifier.height(8.dp)); OutcomeToast(it, { l -> uri.openUri(l) }) { vm.outcome = null } }
                     when (vm.screen) {
                         Screen.Welcome -> Welcome(vm)
                         Screen.Setup -> SetupProgress(vm)
@@ -77,6 +76,12 @@ fun TapvaultApp(vm: AppViewModel) {
                 }
                 if (vm.screen in tabScreens && vm.store.setupStep >= 4) {
                     BottomBar(vm.screen, vm.proposals.size, { vm.go(it) }, Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp))
+                }
+                // Results stay pinned on top, wherever the page is scrolled.
+                vm.outcome?.let {
+                    Box(Modifier.align(Alignment.TopCenter).padding(horizontal = 20.dp, vertical = 8.dp)) {
+                        OutcomeToast(it, { l -> uri.openUri(l) }) { vm.outcome = null }
+                    }
                 }
                 vm.tap?.let { TapSheet(it) { vm.cancelTap() } }
                 if (vm.tap == null) vm.busy?.let { BusyOverlay(it) }
@@ -110,8 +115,8 @@ private fun Welcome(vm: AppViewModel) {
         Caption("Within these, payments go through instantly. Anything bigger waits an hour so you can cancel it.")
         Spacer(Modifier.height(14.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            GlassField("At once (NEAR)", instant, { v -> instant = v.filter { it.isDigit() || it == '.' } }, Modifier.weight(1f), number = true)
-            GlassField("Per day (NEAR)", daily, { v -> daily = v.filter { it.isDigit() || it == '.' } }, Modifier.weight(1f), number = true)
+            GlassField("At once (NEAR)", instant, { v -> instant = v.replace(',', '.').filter { it.isDigit() || it == '.' } }, Modifier.weight(1f), number = true)
+            GlassField("Per day (NEAR)", daily, { v -> daily = v.replace(',', '.').filter { it.isDigit() || it == '.' } }, Modifier.weight(1f), number = true)
         }
     }
     Spacer(Modifier.height(20.dp))
@@ -141,19 +146,21 @@ private fun ChoiceTile(title: String, sub: String, tag: String, glyph: Glyph, se
 
 @Composable
 private fun SetupProgress(vm: AppViewModel) {
+    var confirmStartOver by remember { mutableStateOf(false) }
+    val cardRead = vm.store.pendingCard != null || vm.setupStep >= 3
     val steps = listOf(
-        Glyph.Phone to "Phone key in secure hardware",
-        Glyph.Shield to "Wallet account on NEAR",
-        Glyph.Check to "Wallet contract deployed",
-        Glyph.Card to "Card added as a signer",
-        Glyph.Freeze to "Limits set, account locked",
+        Triple(Glyph.Phone, "Phone key in secure hardware", KeystoreSigner.exists()),
+        Triple(Glyph.Shield, "Wallet account on NEAR", vm.setupStep >= 1),
+        Triple(Glyph.Card, "Card read and signed", cardRead),
+        Triple(Glyph.Check, "Wallet contract deployed", vm.setupStep >= 2),
+        Triple(Glyph.Card, "Card added as a signer", vm.setupStep >= 3),
+        Triple(Glyph.Freeze, "Limits set, account locked", vm.setupStep >= 4),
     )
     Header("Setting up")
     Text("Almost there", style = Numeral.copy(fontSize = 40.sp, color = Tv.Text))
     Caption("Three approvals and one card tap. Each step is saved, so you can continue if anything is interrupted.")
     Spacer(Modifier.height(16.dp))
-    steps.forEachIndexed { i, (g, s) ->
-        val done = if (i == 0) KeystoreSigner.exists() else vm.setupStep >= i
+    steps.forEach { (g, s, done) ->
         ListRow(g, s, if (done) "Done" else "Waiting", subColor = if (done) Tv.Up else Tv.Faint) {
             Box(
                 Modifier.size(28.dp).background(if (done) Tv.Lime else Color.Transparent, CircleShape).border(1.dp, if (done) Tv.Lime else Tv.Hairline, CircleShape),
@@ -166,7 +173,23 @@ private fun SetupProgress(vm: AppViewModel) {
         Spacer(Modifier.height(12.dp))
         PillButton("Continue setup", Modifier.fillMaxWidth()) { vm.continueSetup() }
         Spacer(Modifier.height(8.dp))
-        GhostButton("Start over", Modifier.fillMaxWidth(), Tv.Dim) { vm.resetApp() }
+        GhostButton("Start over", Modifier.fillMaxWidth(), Tv.Dim) { confirmStartOver = true }
+    }
+    if (confirmStartOver) {
+        AlertDialog(
+            onDismissRequest = { confirmStartOver = false },
+            containerColor = Tv.Plum,
+            confirmButton = { TextButton(onClick = { confirmStartOver = false; vm.startOver() }) { Text("Start over", color = Tv.Down) } },
+            dismissButton = { TextButton(onClick = { confirmStartOver = false }) { Text("Keep going", color = Tv.Text) } },
+            title = { Text("Start over?") },
+            text = {
+                Text(
+                    if (vm.setupStep <= 1) "The accounts made for this setup are deleted and the phone key is removed."
+                    else "The half-built wallet is left on testnet with its test NEAR, and the phone key is removed.",
+                    textAlign = TextAlign.Start,
+                )
+            },
+        )
     }
 }
 
@@ -179,6 +202,18 @@ private fun Home(vm: AppViewModel) {
     val ctx = LocalContext.current
     var tab by remember { mutableIntStateOf(0) }
     var showReceive by remember { mutableStateOf(false) }
+    var confirmFreeze by remember { mutableStateOf(false) }
+    if (confirmFreeze) {
+        AlertDialog(
+            onDismissRequest = { confirmFreeze = false },
+            containerColor = Tv.Plum,
+            confirmButton = { TextButton(onClick = { confirmFreeze = false; vm.freezeWithCard() }) { Text("Freeze", color = Tv.Down) } },
+            dismissButton = { TextButton(onClick = { confirmFreeze = false }) { Text("Cancel", color = Tv.Text) } },
+            title = { Text("Freeze the wallet?") },
+            text = { Text("One card tap stops every transfer. Unfreezing needs your phone and card, then waits ${(vm.wallet?.delays?.config ?: 3600) / 3600} h.", textAlign = TextAlign.Start) },
+        )
+    }
+    vm.offline?.let { Caption(it, Modifier.fillMaxWidth().padding(top = 10.dp), Tv.Warn) }
 
     Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
@@ -203,7 +238,7 @@ private fun Home(vm: AppViewModel) {
     Spacer(Modifier.height(26.dp))
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         CircleButton(Glyph.Receive, "Receive", 56.dp) { showReceive = true }
-        CircleButton(Glyph.Freeze, "Freeze with card", 56.dp, enabled = w?.frozen == false && vm.busy == null) { vm.freezeWithCard() }
+        CircleButton(Glyph.Freeze, "Freeze with card", 56.dp, enabled = w?.frozen == false && vm.busy == null) { confirmFreeze = true }
         CircleButton(Glyph.Card, "Check a card", 56.dp) { vm.go(Screen.CardCheck) }
         PillButton("Send", Modifier.weight(1f), enabled = w?.frozen == false && vm.busy == null, glyph = Glyph.Send) { vm.go(Screen.Send) }
     }
@@ -276,21 +311,28 @@ private fun Home(vm: AppViewModel) {
 
 private fun shortDescribe(p: ProposalInfo) = p.describe().removePrefix("Change settings: ")
 
-private fun proposalStatus(vm: AppViewModel, p: ProposalInfo): String {
-    val w = vm.wallet ?: return ""
+/** Seconds until the contract will execute [p] (0 = now), or null while it still needs approvals. */
+private fun secondsToExecute(vm: AppViewModel, p: ProposalInfo): Long? {
+    val w = vm.wallet ?: return null
+    val ready = p.readyTs ?: return null
+    if (p.stale) return null
     val now = System.currentTimeMillis() / 1000
-    val ready = p.readyTs
+    val phoneIdx = runCatching { w.phoneIndexOf(vm.phone.publicKey) }.getOrNull()
+    val delay = if (p.isTransfer) {
+        if (w.nearLimit?.isInstant(p.transferAmount() ?: BigInteger.ZERO) == true) 0 else w.delays.transfer
+    } else if (phoneIdx != null && p.approvedBy(phoneIdx)) w.delays.config else w.delays.recovery
+    return (ready + delay - now).coerceAtLeast(0)
+}
+
+private fun proposalStatus(vm: AppViewModel, p: ProposalInfo): String {
+    val left = secondsToExecute(vm, p)
     return when {
         p.stale -> "Void: signers changed"
-        ready == null -> "Waiting for approvals"
-        else -> {
-            val phoneIdx = runCatching { w.phoneIndexOf(vm.phone.publicKey) }.getOrNull()
-            val delay = if (p.isTransfer) {
-                if (w.nearLimit?.isInstant(p.transferAmount() ?: BigInteger.ZERO) == true) 0 else w.delays.transfer
-            } else if (phoneIdx != null && p.approvedBy(phoneIdx)) w.delays.config else w.delays.recovery
-            val left = ready + delay - now
-            if (left > 0) "Approved · executes in ${left / 3600} h ${(left % 3600) / 60} min" else "Approved · ready to execute"
-        }
+        p.readyTs == null -> "Waiting for approvals"
+        left == null -> ""
+        left > 0 -> "Approved · can execute in ${left / 3600} h ${(left % 3600) / 60} min"
+        vm.wallet?.frozen == true && p.isTransfer -> "Approved · wallet is frozen"
+        else -> "Approved · ready: tap Execute"
     }
 }
 
@@ -325,8 +367,8 @@ private fun Send(vm: AppViewModel) {
                 }
                 Spacer(Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    ChipButton("Half") { spendable?.let { amount = Near.format(it / BigInteger.TWO, 4) } }
-                    GlassField("", amount, { v -> amount = v.filter { it.isDigit() || it == '.' } }, Modifier.weight(1f), number = true, big = true, placeholder = "0")
+                    ChipButton("Half") { spendable?.let { amount = Near.format(it.divide(BigInteger.valueOf(2)), 4) } }
+                    GlassField("", amount, { v -> amount = v.replace(',', '.').filter { it.isDigit() || it == '.' } }, Modifier.weight(1f), number = true, big = true, placeholder = "0")
                     ChipButton("Max") {
                         // keep a little behind so the wallet can always pay for its own storage
                         val buffer = Near.parse("0.01")
@@ -411,7 +453,7 @@ private fun ActivityScreen(vm: AppViewModel) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (canCard) GhostButton("Approve · card", Modifier.weight(1f), Tv.Lime, vm.busy == null) { vm.approveWithCard(p) }
                 if (canPhone) GhostButton("Approve · phone", Modifier.weight(1f), Tv.Lime, vm.busy == null) { vm.approveWithPhone(p) }
-                if (p.readyTs != null && !p.stale) GhostButton("Execute", Modifier.weight(1f), Tv.Lime, vm.busy == null) { vm.execute(p) }
+                if (secondsToExecute(vm, p) == 0L && !(w?.frozen == true && p.isTransfer)) GhostButton("Execute", Modifier.weight(1f), Tv.Lime, vm.busy == null) { vm.execute(p) }
                 if (!p.stale) GhostButton("Cancel", Modifier.weight(1f), Tv.Down, vm.busy == null) { vm.cancel(p) }
                 if (p.stale || (p.readyTs == null && now > p.createdTs + 86_400)) GhostButton("Clean up", Modifier.weight(1f), Tv.Dim, vm.busy == null) { vm.closeStale(p) }
             }
