@@ -46,9 +46,9 @@ android {
 
 // The app deploys the wallet contract itself, so it ships the wasm: exactly
 // the reviewed build committed in contract/res, checked by its SHA-256
-// (base58 GniW1i9n8vAH6ers3jAZTnpCox3u5VwWvsmN9cY9Foow, as in the README).
+// (base58 5Db4uQQKpTkTtUspdQcx5iVcnvT7MSXCNMdKwhQibwcf, as in the README).
 val contractWasm = rootProject.file("../contract/res/tapvault_contract.wasm")
-val contractWasmSha256 = "ea955d5fb6ea63b2f75b9e8250849557b94286b36a3bdb6732d0c769d10097ea"
+val contractWasmSha256 = "3ea83cc88fecda3c727d624e5a935ed1fe20cc5623cafafa4e86969bf7cdc2ec"
 
 val verifyWasm by tasks.registering {
     doLast {

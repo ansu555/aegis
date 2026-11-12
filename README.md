@@ -140,7 +140,7 @@ On the sandbox (limit 300 Tgas per receipt):
 | Relayer / merchant POS | Not needed for the phone flow (the app pays its own gas); POS not started |
 
 Contract build: `tapvault_contract.wasm`, SHA-256 (base58)
-`GniW1i9n8vAH6ers3jAZTnpCox3u5VwWvsmN9cY9Foow`. Every wallet's `code_hash` on
+`5Db4uQQKpTkTtUspdQcx5iVcnvT7MSXCNMdKwhQibwcf`. Every wallet's `code_hash` on
 chain should equal this; e.g. the end-to-end test wallet
 [`tv-e2e-cdbefdd9ff.testnet`](https://testnet.nearblocks.io/address/tv-e2e-cdbefdd9ff.testnet)
 runs it and has no access keys.
