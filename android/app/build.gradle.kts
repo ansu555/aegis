@@ -1,3 +1,4 @@
+import java.security.MessageDigest
 import java.util.Properties
 
 plugins {
@@ -43,13 +44,27 @@ android {
     }
 }
 
-// The app deploys the wallet contract itself, so it ships the wasm.
-val copyWasm by tasks.registering(Copy::class) {
-    val wasm = rootProject.file("../target/near/tapvault_contract/tapvault_contract.wasm")
-    doFirst {
-        check(wasm.exists()) { "Build the contract first: cd contract && cargo near build non-reproducible-wasm" }
+// The app deploys the wallet contract itself, so it ships the wasm: exactly
+// the reviewed build committed in contract/res, checked by its SHA-256
+// (base58 GniW1i9n8vAH6ers3jAZTnpCox3u5VwWvsmN9cY9Foow, as in the README).
+val contractWasm = rootProject.file("../contract/res/tapvault_contract.wasm")
+val contractWasmSha256 = "ea955d5fb6ea63b2f75b9e8250849557b94286b36a3bdb6732d0c769d10097ea"
+
+val verifyWasm by tasks.registering {
+    doLast {
+        check(contractWasm.exists()) { "Missing ${contractWasm.path}: it is committed to the repo; restore it with git." }
+        val hash = MessageDigest.getInstance("SHA-256").digest(contractWasm.readBytes())
+            .joinToString("") { "%02x".format(it) }
+        check(hash == contractWasmSha256) {
+            "contract/res/tapvault_contract.wasm has SHA-256 $hash, expected $contractWasmSha256. " +
+                "If you changed the contract on purpose, update contractWasmSha256 here and the hash in README.md."
+        }
     }
-    from(wasm)
+}
+
+val copyWasm by tasks.registering(Copy::class) {
+    dependsOn(verifyWasm)
+    from(contractWasm)
     into(file("src/main/assets"))
 }
 tasks.named("preBuild") { dependsOn(copyWasm) }

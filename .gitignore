@@ -2,6 +2,8 @@ target/
 neardev/
 .env
 *.wasm
+# The audited contract build the app ships (see contract/res/README.md).
+!contract/res/tapvault_contract.wasm
 __pycache__/
 .DS_Store
 android/.gradle/
