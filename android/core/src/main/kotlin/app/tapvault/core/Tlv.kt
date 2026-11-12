@@ -76,6 +76,7 @@ class Tlv(val tag: Int, val value: ByteArray, val children: List<Tlv>) {
 data class DolEntry(val tag: Int, val len: Int)
 
 object Dol {
+    /** Throws IllegalArgumentException on a truncated list, like [Tlv.parse]. */
     fun parse(b: ByteArray): List<DolEntry> {
         val out = mutableListOf<DolEntry>()
         var i = 0
@@ -83,10 +84,12 @@ object Dol {
             var tag = b[i++].toInt() and 0xff
             if (tag and 0x1f == 0x1f) {
                 do {
+                    require(i < b.size) { "truncated DOL tag" }
                     val n = b[i++].toInt() and 0xff
                     tag = (tag shl 8) or n
                 } while (n and 0x80 != 0)
             }
+            require(i < b.size) { "truncated DOL length" }
             out += DolEntry(tag, b[i++].toInt() and 0xff)
         }
         return out

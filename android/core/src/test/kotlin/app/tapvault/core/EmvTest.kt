@@ -149,6 +149,13 @@ class EmvTest {
     }
 
     @Test
+    fun truncatedDataObjectListsAreRejectedCleanly() {
+        assertFailsWith<IllegalArgumentException> { Dol.parse("9F".unhex()) }
+        assertFailsWith<IllegalArgumentException> { Dol.parse("9F37".unhex()) }
+        assertEquals(listOf(DolEntry(0x9F37, 4)), Dol.parse("9F3704".unhex()))
+    }
+
+    @Test
     fun recipesRoundTrip() {
         val r = CardRecipe("A0000000041010", SignMethod.CDA, 100, CardRecipe.CDA_TC)
         assertEquals(r, CardRecipe.decode(r.encode()))

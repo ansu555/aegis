@@ -622,7 +622,7 @@ class EmvSession(private val card: CardTransceiver, private val capks: CapkStore
                 0x9A -> LocalDate.now().let { "%02d%02d%02d".format(it.year % 100, it.monthValue, it.dayOfMonth).unhex() }
                 0x9F21 -> LocalTime.now().let { "%02d%02d%02d".format(it.hour, it.minute, it.second).unhex() }
                 0x9C -> byteArrayOf(0)
-                0x9F35 -> byteArrayOf(0x22) // attended, online with offline capability
+                0x9F35 -> byteArrayOf(0x22) // terminal type: attended, offline with online capability
                 0x9F33 -> "E068C8".unhex() // terminal capabilities: chip, no-CVM/signature/online PIN, SDA DDA CDA
                 0x9F34 -> "1F0302".unhex() // CVM results: no CVM required, successful
                 else -> ByteArray(e.len)
@@ -646,10 +646,11 @@ class CardService(private val capks: CapkStore) {
     fun enrol(card: CardTransceiver, challengeFor: (SignerKey.EmvCard) -> ByteArray): Enrolment {
         val s = EmvSession(card, capks)
         var failure: CardCheckFailed? = null
-        for ((aid, _) in s.applications().take(3)) {
+        for ((aid, _) in s.applications().take(5)) {
             try {
                 return enrolWith(s, aid, challengeFor)
             } catch (e: CardCheckFailed) {
+                s.note("${aid.hex().uppercase()}: ${e.message}")
                 failure = e
             } catch (e: EmvException) {
                 s.note("${aid.hex().uppercase()}: ${e.message}")
@@ -675,6 +676,14 @@ class CardService(private val capks: CapkStore) {
             throw CardCheckFailed("certificate check failed", s.report(null, "certificate check failed"))
         }
         val (modulus, exponent) = icc
+        // The contract's rules for a card key (tapvault_core::emv::EmvKeyLayout::validate).
+        val keyProblem = when {
+            modulus.size !in 64..248 -> "its key is ${modulus.size * 8} bits; the wallet accepts 512 to 1984"
+            modulus[0] == 0.toByte() || modulus.last().toInt() and 1 == 0 -> "its key isn't a valid RSA modulus"
+            exponent != 3 && exponent != 65537 -> "its key exponent is $exponent; the wallet accepts 3 or 65537"
+            else -> null
+        }
+        if (keyProblem != null) throw CardCheckFailed("this card can't be a signer: $keyProblem", s.report(icc, keyProblem))
         val probe = SignerKey.EmvCard(modulus, exponent, 0, 4, 4)
         val challenge = challengeFor(probe)
         for (plan in s.plans(gpoSigned)) {
@@ -711,7 +720,8 @@ class CardService(private val capks: CapkStore) {
         val aid = recipe?.aid ?: s.applications().first().first.hex().uppercase()
         val plans = (listOfNotNull(recipe) + fallbacks(key, aid))
             .distinctBy { listOf(it.method, it.amount, if (it.method == SignMethod.CDA) it.variant else 0, it.ttq) }
-        var signed = false
+        var otherKey = false
+        var otherLayout = false
         var lastProblem = "no answer"
         for (plan in plans) {
             val results = try {
@@ -722,14 +732,19 @@ class CardService(private val capks: CapkStore) {
                 lastProblem = "unreadable answer"; continue
             }
             for (r in results) {
-                signed = true
                 val td = r.sig.terminalData
-                if (td.size != key.terminalDataLen) continue
-                if (!td.copyOfRange(key.unOffset, key.unOffset + key.unLen).contentEquals(challenge.copyOf(key.unLen))) continue
+                if (td.size != key.terminalDataLen ||
+                    !td.copyOfRange(key.unOffset, key.unOffset + key.unLen).contentEquals(challenge.copyOf(key.unLen))
+                ) {
+                    otherLayout = true
+                    continue
+                }
                 if (Rsa.verifySdad(key.modulus, key.exponent, r.sig.sdad, td)) return r.sig
+                otherKey = true
             }
         }
-        if (signed) throw WrongCardException()
+        if (otherKey) throw WrongCardException()
+        if (otherLayout) throw EmvException("the card signed, but not the way it did when it was added; tap it again")
         throw EmvException("the card didn't sign ($lastProblem)")
     }
 
