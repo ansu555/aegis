@@ -52,13 +52,32 @@ data class TapRequest(val title: String, val reading: Boolean = false, val hint:
 /** A finished operation, shown as a result card. */
 data class Outcome(val ok: Boolean, val title: String, val detail: String = "", val link: String? = null)
 
+/** One wallet in the switcher. [account] is null until setup has created it. */
+data class WalletEntry(val id: String, val name: String, val account: String?, val ready: Boolean, val active: Boolean)
+
 class AppViewModel(app: Application) : AndroidViewModel(app) {
-    val store = Store(app)
+    /** Every wallet on this phone; each has its own accounts, card and phone key. */
+    val wallets = WalletIndex(app)
+
+    /** The wallet on screen. Every flow below works on this one only. */
+    var activeId by mutableStateOf(wallets.active)
+        private set
+    var store by mutableStateOf(wallets.store(activeId))
+        private set
+    var walletList by mutableStateOf<List<WalletEntry>>(emptyList())
+        private set
+    var walletBalances by mutableStateOf<Map<String, BigInteger>>(emptyMap())
+        private set
+
     val near = NearClient()
     private var activityRef = WeakReference<MainActivity>(null)
-    val phone = KeystoreSigner { activityRef.get() }
+    val phone = KeystoreSigner({ WalletIndex.keyAlias(activeId) }) { activityRef.get() }
 
-    var screen by mutableStateOf(if (store.setupStep >= 4) Screen.Home else if (store.setupStep > 0) Screen.Setup else Screen.Welcome)
+    /** Whether the active wallet's phone key exists in the Keystore. */
+    val phoneKeyExists get() = KeystoreSigner.exists(WalletIndex.keyAlias(activeId))
+    val walletName get() = wallets.name(activeId)
+
+    var screen by mutableStateOf(startScreen(store))
     var busy by mutableStateOf<String?>(null)
     var outcome by mutableStateOf<Outcome?>(null)
     var tap by mutableStateOf<TapRequest?>(null)
@@ -197,9 +216,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- wallet ----
 
-    fun walletClient(): TapvaultWallet {
-        val acct = store.walletAccount ?: throw IllegalStateException("no wallet yet")
-        return TapvaultWallet(near, acct, store.gasAccount!!, NearKey.fromSecret(store.gasKey!!))
+    fun walletClient(s: Store = store): TapvaultWallet {
+        val acct = s.walletAccount ?: throw IllegalStateException("no wallet yet")
+        return TapvaultWallet(near, acct, s.gasAccount!!, NearKey.fromSecret(s.gasKey!!))
     }
 
     private val refreshing = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -207,22 +226,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Reload wallet state; skipped while another refresh is still running. */
     fun refresh() {
-        if (store.setupStep < 4) return
+        val id = activeId
+        val st = store
+        if (st.setupStep < 4) return
         if (!refreshing.compareAndSet(false, true)) return
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    val w = walletClient()
+                    val w = walletClient(st)
                     val s = w.state()
                     val (b, locked) = near.spendable(w.account)
                     val ps = w.proposals()
-                    withContext(Dispatchers.Main) { wallet = s; balance = b; storageLocked = locked; proposals = ps; offline = null }
+                    // The user may have switched wallets meanwhile: never show one wallet's state under another.
+                    withContext(Dispatchers.Main) {
+                        if (activeId == id) { wallet = s; balance = b; storageLocked = locked; proposals = ps; offline = null }
+                    }
                 }
             } catch (e: Exception) {
                 note("refresh failed: ${e.message}")
-                offline = "Can't reach NEAR testnet right now. Showing the last known state; retrying."
+                if (activeId == id) offline = "Can't reach NEAR testnet right now. Showing the last known state; retrying."
             } finally {
                 refreshing.set(false)
+                // A switch while this ran skipped the new wallet's refresh; do it now.
+                if (activeId != id) refresh()
             }
         }
     }
@@ -283,10 +309,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun continueSetup() = run("Setting up") {
         if (PendingCard.decode(store.pendingCard) == null && store.setupStep < 3) requireNfc()
         val ob = Onboarding(near)
-        if (!KeystoreSigner.exists()) {
+        if (!phoneKeyExists) {
             progress("Creating your phone key in secure hardware")
             try {
-                KeystoreSigner.create(getApplication())
+                KeystoreSigner.create(getApplication(), WalletIndex.keyAlias(activeId))
             } catch (e: IllegalStateException) {
                 throw e
             } catch (e: Exception) {
@@ -303,6 +329,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             store.gasAccount = a.gas; store.gasKey = a.gasKey.secretString()
             setStep(1)
             store.setupPlan = null
+            withContext(Dispatchers.Main) { reloadWalletList() }
             note("wallet ${a.wallet}, fee account ${a.gas}")
         }
         val accounts = Onboarding.Accounts(
@@ -383,7 +410,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             store.walletKey = null
             store.pendingCard = null
         }
-        withContext(Dispatchers.Main) { screen = Screen.Home }
+        withContext(Dispatchers.Main) { screen = Screen.Home; reloadWalletList() }
         refresh()
         outcome = Outcome(true, "Your wallet is ready", "Funds now move only with your phone and your card.", near.explorerAccount(accounts.wallet))
     }
@@ -412,7 +439,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         withContext(Dispatchers.Main) {
-            resetApp()
+            resetCurrent()
             if (done.isNotEmpty()) outcome = Outcome(true, "Started over", done.joinToString("; ") + ". Their NEAR went back to ${sp?.account}.")
         }
     }
@@ -611,12 +638,112 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         note("card check: ${report.network} ${report.signsWith ?: "can't sign"}")
     }
 
-    fun resetApp() {
+    // ---- wallets ----
+
+    init {
+        reloadWalletList()
+    }
+
+    private fun startScreen(s: Store) = if (s.setupStep >= 4) Screen.Home else if (s.setupStep > 0) Screen.Setup else Screen.Welcome
+
+    /** Nothing created yet for [id]: no account, no saved plan, no card read. */
+    private fun isEmpty(id: String): Boolean = wallets.store(id).let { it.setupStep == 0 && it.setupPlan == null && it.pendingCard == null }
+
+    fun reloadWalletList() {
+        walletList = wallets.ids.map { id ->
+            val s = wallets.store(id)
+            WalletEntry(id, wallets.name(id), s.walletAccount, s.setupStep >= 4, id == activeId)
+        }
+    }
+
+    /** Spendable balance of every finished wallet, for the switcher. */
+    fun loadWalletBalances() {
+        val ready = walletList.filter { it.ready && it.account != null }
+        viewModelScope.launch {
+            val found = withContext(Dispatchers.IO) {
+                ready.mapNotNull { e -> runCatching { e.id to near.spendable(e.account!!).first }.getOrNull() }.toMap()
+            }
+            walletBalances = walletBalances + found
+        }
+    }
+
+    /** Show wallet [id]. Refused while something is running, so no flow ever continues on another wallet. */
+    fun switchWallet(id: String) {
+        if (busy != null || id == activeId || id !in wallets.ids) return
+        dropIfEmpty(activeId)
+        activate(id)
+        note("switched to ${wallets.name(id)}")
+    }
+
+    /** Start a new wallet next to the existing ones: its own accounts, card and phone key. */
+    fun addWallet() {
+        if (busy != null) return
+        if (isEmpty(activeId)) {
+            // The wallet on screen hasn't been started yet: use it instead of adding another blank one.
+            go(Screen.Welcome)
+            return
+        }
+        val id = wallets.add()
+        activate(id)
+        note("new wallet: ${wallets.name(id)}")
+    }
+
+    /** Leave a new wallet that was never started and go back to another one. */
+    fun cancelNewWallet() {
+        val back = wallets.ids.firstOrNull { it != activeId && wallets.store(it).setupStep >= 4 }
+            ?: wallets.ids.firstOrNull { it != activeId } ?: return
+        switchWallet(back)
+    }
+
+    fun renameWallet(name: String) {
+        val n = name.trim().take(24)
+        if (n.isEmpty()) return
+        wallets.rename(activeId, n)
+        reloadWalletList()
+    }
+
+    private fun activate(id: String) {
+        wallets.active = id
+        activeId = id
+        store = wallets.store(id)
+        setupStep = store.setupStep
+        wallet = null; balance = null; storageLocked = null; proposals = emptyList(); cardReport = null; offline = null
+        outcome = null
+        screen = startScreen(store)
+        reloadWalletList()
+        refresh()
+    }
+
+    private fun dropIfEmpty(id: String) {
+        if (wallets.ids.size > 1 && isEmpty(id)) erase(id)
+    }
+
+    /** Delete [id]'s settings and phone key and take it off the list. */
+    private fun erase(id: String) {
+        wallets.store(id).clear()
+        runCatching { KeystoreSigner.delete(WalletIndex.keyAlias(id)) }
+        wallets.remove(id)
+        walletBalances = walletBalances - id
+    }
+
+    /** Clear the active wallet's setup and phone key but keep it in the list (Start over). */
+    private fun resetCurrent() {
         store.clear()
-        runCatching { KeystoreSigner.delete() }
+        runCatching { KeystoreSigner.delete(WalletIndex.keyAlias(activeId)) }
         setStep(0)
-        wallet = null; balance = null; proposals = emptyList(); cardReport = null
-        log.clear()
+        wallet = null; balance = null; storageLocked = null; proposals = emptyList(); cardReport = null
         screen = Screen.Welcome
+        reloadWalletList()
+    }
+
+    /** Forget the active wallet on this phone; the other wallets stay as they are. */
+    fun forgetWallet() {
+        if (busy != null) return
+        val gone = walletName
+        erase(activeId)
+        log.clear()
+        val next = wallets.ids.firstOrNull { wallets.store(it).setupStep >= 4 } ?: wallets.ids.first()
+        activate(next)
+        if (wallets.ids.size > 1 || store.setupStep > 0) outcome = Outcome(true, "$gone forgotten", "Now showing ${walletName}.")
     }
 }

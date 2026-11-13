@@ -25,21 +25,24 @@ import java.util.concurrent.TimeUnit
  * hardware (TEE) that can only sign after a fresh biometric or screen-lock
  * check, every single time.
  *
+ * Each wallet on the phone has its own key; [alias] names the one of the
+ * wallet currently in use ([WalletIndex.keyAlias]).
+ *
  * [sign] blocks its (background) thread while the system prompt is shown.
  */
-class KeystoreSigner(private val activity: () -> FragmentActivity?) : P256Signer {
+class KeystoreSigner(private val alias: () -> String, private val activity: () -> FragmentActivity?) : P256Signer {
     /** What the prompt says the user is approving. Set it before each operation. */
     @Volatile var reason: String = "Approve with Tapvault"
 
     private val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
 
     override val publicKey: ByteArray
-        get() = ks.getCertificate(ALIAS)?.let { P256.compress(it.publicKey as ECPublicKey) }
+        get() = ks.getCertificate(alias())?.let { P256.compress(it.publicKey as ECPublicKey) }
             ?: throw IllegalStateException("This phone's Tapvault key is missing. On testnet, forget the wallet in Settings and create a new one.")
 
     val hardwareLabel: String
         get() = runCatching {
-            val key = ks.getKey(ALIAS, null) as PrivateKey
+            val key = ks.getKey(alias(), null) as PrivateKey
             val info = java.security.KeyFactory.getInstance(key.algorithm, ANDROID_KEYSTORE)
                 .getKeySpec(key, android.security.keystore.KeyInfo::class.java)
             when {
@@ -52,7 +55,7 @@ class KeystoreSigner(private val activity: () -> FragmentActivity?) : P256Signer
 
     override fun sign(message: ByteArray): P256Sig {
         val sig = try {
-            Signature.getInstance("SHA256withECDSA").apply { initSign(ks.getKey(ALIAS, null) as PrivateKey) }
+            Signature.getInstance("SHA256withECDSA").apply { initSign(ks.getKey(alias(), null) as PrivateKey) }
         } catch (e: android.security.keystore.KeyPermanentlyInvalidatedException) {
             throw IllegalStateException("This phone's Tapvault key no longer works (the screen lock was removed). The wallet needs its recovery path; on testnet, forget it in Settings and create a new one.")
         } catch (e: NullPointerException) {
@@ -114,11 +117,10 @@ class KeystoreSigner(private val activity: () -> FragmentActivity?) : P256Signer
 
     companion object {
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
-        private const val ALIAS = "tapvault_phone_p256"
 
-        fun exists(): Boolean = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }.containsAlias(ALIAS)
+        fun exists(alias: String): Boolean = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }.containsAlias(alias)
 
-        fun delete() = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }.deleteEntry(ALIAS)
+        fun delete(alias: String) = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }.deleteEntry(alias)
 
         /**
          * Create the key in the phone's hardware keystore (TEE). Requires a
@@ -129,12 +131,12 @@ class KeystoreSigner(private val activity: () -> FragmentActivity?) : P256Signer
          * fine and then fails or stalls when it signs, which would strand the
          * wallet. The TEE is still isolated hardware.
          */
-        fun create(context: android.content.Context) {
+        fun create(context: android.content.Context, alias: String) {
             val bm = androidx.biometric.BiometricManager.from(context)
             if (Build.VERSION.SDK_INT < 30 && bm.canAuthenticate(BIOMETRIC_STRONG) != androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS) {
                 throw IllegalStateException("On this Android version Tapvault needs a fingerprint. Add one in Settings → Security, then try again.")
             }
-            val spec = KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_SIGN)
+            val spec = KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN)
                 .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
                 .setDigests(KeyProperties.DIGEST_SHA256)
                 .setUserAuthenticationRequired(true)

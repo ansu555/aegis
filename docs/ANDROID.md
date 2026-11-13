@@ -76,7 +76,7 @@ Dependencies: `org.bouncycastle:bcprov-jdk18on:1.79` (ed25519),
 | `MainActivity.kt` | The only activity: NFC reader mode on while resumed, `IsoDepTransceiver` (the APDU link), `vibrate()` |
 | `AppViewModel.kt` | All app state and every flow (`AndroidViewModel`); `Screen`, `TapRequest`, `Outcome` |
 | `Keystore.kt` | `KeystoreSigner`: the phone's P-256 key behind BiometricPrompt |
-| `Store.kt` | `Store`: app settings in SharedPreferences |
+| `Store.kt` | `Store`: one wallet's settings in SharedPreferences; `WalletIndex`: the wallets on this phone |
 | `PendingCard.kt` | A card read during setup, kept until it is added on-chain |
 | `Screens.kt` | Every screen (`TapvaultApp`, `Welcome`, `SetupProgress`, `Home`, `Send`, `ActivityScreen`, `CardCheck`, `SettingsScreen`, `CardReportCard`) |
 | `Components.kt` | UI parts: buttons, list rows, `BottomBar`, `OutcomeToast`, `BusyOverlay`, `TapSheet`, `CardArt` |
@@ -144,7 +144,7 @@ Dependencies: Compose BOM `2024.12.01` (ui, material3, material-icons-core),
 
   | Row | Done when |
   |---|---|
-  | "Phone key in secure hardware" | `KeystoreSigner.exists()` |
+  | "Phone key in secure hardware" | `AppViewModel.phoneKeyExists` (this wallet's alias) |
   | "Wallet account on NEAR" | step ≥ 1 |
   | "Card read and signed" | a `PendingCard` is saved, or step ≥ 3 |
   | "Wallet contract deployed" | step ≥ 2 |
@@ -264,7 +264,8 @@ Below the proposals, "Log": the in-app log, newest first, the last 60 lines
 - "Forget this wallet on this phone": "Forget this wallet?" / "This deletes
   the phone key. With a single card the wallet can't approve anything without
   it, so its NEAR stays locked in the wallet for good (on testnet that is only
-  test NEAR)." with "Forget" / "Keep". Calls `resetApp`.
+  test NEAR). Your other wallets on this phone aren't affected." with
+  "Forget" / "Keep". Calls `forgetWallet`.
 
 ### Overlays
 
@@ -393,7 +394,7 @@ Label "Starting over". With a sponsor built in, it deletes the wallet account
 if setup is at step 0 or 1 and its key is known, and deletes the fee account
 at any step; the deleted accounts' NEAR goes to the sponsor (also for
 accounts the faucet created). Without a sponsor (or with an unreadable
-sponsor key) nothing is deleted on-chain. Then `resetApp` (back to Welcome)
+sponsor key) nothing is deleted on-chain. Then `resetCurrent` (back to Welcome)
 and, if it tried to delete anything, the result "Started over" / "<items>.
 Their NEAR went back to <sponsor>.", each item "deleted <account>" or
 "couldn't delete <account> (<reason, cut to 80 characters>)", joined with
@@ -483,12 +484,46 @@ card you want to check", runs `CardService.inspect` (the full enrolment probe
 with a random challenge; nothing touches the chain or is saved), shows the
 report, and logs "card check: <network> <method label or "can't sign">".
 
-### Forget: `resetApp`
+### Several wallets: `WalletIndex`
 
-Clears the `Store`, deletes the Keystore key, sets the step to 0, clears the
-wallet view, proposals, report and log, and opens Welcome. Nothing happens
-on-chain. It runs directly (not through `run`). Used by "Forget" in Settings
-and at the end of Start over.
+A phone holds any number of wallets, like accounts in a browser wallet, but
+there is no seed phrase: each wallet's phone key is made inside the Keystore
+and can't be exported or derived. Each wallet is fully separate: its own
+wallet account and fee account (two new testnet accounts, so the faucet's
+limit of about 10 accounts per IP per 12 h means about 5 wallets), its own
+`Store` file, its own card enrolment (the same bank card may be enrolled in
+several wallets) and its own Keystore key.
+
+- `WalletIndex` (file `tapvault_wallets`) keeps the ids, the active id and a
+  name per wallet ("Wallet 1", "Wallet 2", … renameable in Settings, stored
+  on the phone only). Wallet 1 has id `0` and the original file `tapvault`
+  and alias `tapvault_phone_p256`, so a wallet from an older build becomes
+  wallet 1 unchanged.
+- `AppViewModel.activeId` and `store` are the wallet on screen;
+  `KeystoreSigner` reads its alias from `activeId` on every use. Every flow
+  works on the active wallet only.
+- `switchWallet(id)` is refused while anything runs (`busy`), so no flow
+  continues on another wallet. A refresh that finishes after a switch is
+  dropped (`refresh` checks `activeId`) and rerun for the new wallet.
+- `addWallet()` registers a new id and opens Welcome for it (or just opens
+  Welcome if the current wallet was never started). A new wallet that was
+  never started (step 0, no setup plan, no card read) is removed when you
+  switch away from it ("Back to my wallets" on Welcome).
+- The switcher (`WalletPicker`) opens from the wallet name on Home, "My
+  wallets" in Settings, or "Switch wallet" on a paused setup. It lists each
+  wallet's name, account and spendable balance (`loadWalletBalances`), and
+  "+ Add a wallet".
+
+### Forget: `forgetWallet`, and Start over: `resetCurrent`
+
+`forgetWallet` clears the active wallet's `Store`, deletes its Keystore key,
+removes it from `WalletIndex`, clears the log and shows another wallet (a
+finished one if there is one; with none left, an empty wallet 1 on Welcome).
+Other wallets are untouched. Nothing happens on-chain. Used by "Forget" in
+Settings.
+
+`resetCurrent` (end of Start over) clears the active wallet's `Store` and
+key but keeps it in the list under the same name, and opens Welcome.
 
 ### Refresh
 
@@ -539,7 +574,7 @@ prompt's subtitle:
 - **NFC binder thread:** the reader-mode callback calls `vm.onTag(tag)`, which
   only completes the awaited future or stores the early tag.
 - State written from the IO thread: `busy`, `outcome`, `tap`, `cardReport`,
-  `setupStep`, `log`. The switch to Home after setup, `resetApp` and the
+  `setupStep`, `log`. The switch to Home after setup, `resetCurrent` and the
   "Started over" result after Start over, and the refresh results are posted
   with `withContext(Dispatchers.Main)`.
 - **Busy guard:** one `run` at a time; a second call returns at once.
@@ -645,7 +680,7 @@ takes longer than a payment tap.
 
 | | |
 |---|---|
-| Alias | `tapvault_phone_p256` in `AndroidKeyStore` |
+| Alias | One per wallet in `AndroidKeyStore`: `tapvault_phone_p256` (wallet 1), `tapvault_phone_p256_<id>` (others); `WalletIndex.keyAlias` |
 | Algorithm | EC P-256 (`secp256r1`), `PURPOSE_SIGN`, `SHA256withECDSA` |
 | Where | The TEE. StrongBox is not requested: on several phones a StrongBox key is created fine and then fails or stalls when it signs, which would strand the wallet |
 | Auth | Required for every single use. Android 11+ (API 30+): `setUserAuthenticationParameters(0, AUTH_BIOMETRIC_STRONG or AUTH_DEVICE_CREDENTIAL)`, so a strong biometric or the PIN / pattern / password. Android 9 and 10: `setUserAuthenticationValidityDurationSeconds(-1)`, strong biometric only |
@@ -715,7 +750,8 @@ tell that the key is hardware-backed ([ARCHITECTURE.md](ARCHITECTURE.md)).
 
 ## Local storage: `Store`
 
-SharedPreferences file `tapvault`, `MODE_PRIVATE`. Every write uses
+One SharedPreferences file per wallet (`tapvault` for wallet 1,
+`tapvault_w_<id>` for the others; `WalletIndex.prefsFile`), `MODE_PRIVATE`. Every write uses
 `commit()` (synchronous), so a crash right after a step can't lose it.
 `android:allowBackup="false"` keeps it out of cloud and adb backups. Android's
 documentation notes that for apps targeting API 31+ some manufacturers'

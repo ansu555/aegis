@@ -210,7 +210,8 @@ What makes it resumable and safe to retry:
 - **Start over** (`AppViewModel.startOver`): if the APK has a sponsor (with
   a key that parses), the wallet account is deleted when step ≤ 1 and the
   fee account at any step, with the sponsor as beneficiary; then
-  `resetApp()` clears the Store and deletes the phone key, and if any
+  `resetCurrent()` clears this wallet's Store and deletes its phone key
+  (other wallets on the phone are untouched), and if any
   deletion was tried, a "Started over" result lists each one (or why it
   failed). Without a sponsor
   nothing is deleted on-chain. The confirmation dialog (`SetupProgress`,
@@ -426,7 +427,7 @@ transaction (the card's ATC goes up). Details of the probe: [CARDS.md](CARDS.md)
 |---|---|---|
 | The wallet's NEAR | Wallet account balance | About 3.35 NEAR (`storage_usage` × 10^19: the 334,258-byte code, the account and the wallet's state) is locked for storage; the app shows the rest as spendable |
 | Signers, threshold, delays, limits (with `used` and `updated_at`), `frozen`, `freeze_nonce`, `signer_epoch`, `next_proposal_id`, per-signer proposal counters, open proposals (intent hash, approvals bitmap, `ready_ts`, seed, `sealed_ts`, action) | Contract state on the wallet account | The only authority. Read with `get_wallet`, `get_proposal`, `list_proposals` |
-| Phone private key | Android Keystore alias `tapvault_phone_p256` | Can't be exported. Deleted by uninstalling, clearing the app's storage, Forget, or Start over |
+| Phone private key | Android Keystore, one key per wallet: alias `tapvault_phone_p256` for wallet 1, `tapvault_phone_p256_<id>` for the others (`WalletIndex.keyAlias`) | Can't be exported. Deleted by uninstalling, clearing the app's storage, or Forget / Start over of that wallet |
 | Phone public key | On-chain signer 0 | The app reads it back from the Keystore certificate (`KeystoreSigner.publicKey`) |
 | Card private key | The card's chip | Never leaves it |
 | Card public key and terminal-data layout | On-chain signer 1; `Store.pendingCard` during setup | `PendingCard` holds the key, the enrolment proof, the network and the last four digits; no PAN |
@@ -441,7 +442,13 @@ transaction (the card's ATC goes up). Details of the probe: [CARDS.md](CARDS.md)
 | CA public keys | `android/core/src/main/resources/capk.txt` | Loaded by `CapkStore.load()` |
 | Screen, busy label, result, tap request, last wallet view, balance, proposals, card report, offline banner, in-app log | `AppViewModel` (memory) | Lost when the process dies. The log keeps the last 200 lines (Activity → Log shows 60) |
 
-`Store` is the SharedPreferences file `tapvault` (`MODE_PRIVATE`), written
+A phone can hold several wallets (`WalletIndex`, SharedPreferences file
+`tapvault_wallets`: the ids, the active one, their names). Every row above
+from `Store` exists once per wallet: wallet 1 uses the file `tapvault`, the
+others `tapvault_w_<id>`. Wallets share nothing but the phone: each has its
+own wallet account, fee account, card enrolment and phone key.
+
+`Store` is a SharedPreferences file (`MODE_PRIVATE`), written
 with `commit()` so a crash right after a step can't lose it. The manifest sets
 `android:allowBackup="false"`, so it isn't copied to backups. The app writes
 nothing to logcat; its log is the in-app list.

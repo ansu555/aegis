@@ -17,6 +17,7 @@ class EmvTest {
         assertTrue(all.find("A000000524", 0x6B).isNotEmpty(), "RuPay 6B")
         assertTrue(all.find("A000000524", 0x05).isNotEmpty(), "RuPay 05")
         assertTrue(all.find("A000000003", 0x10).isNotEmpty(), "Visa 10")
+        assertTrue(all.find("A000000152", 0x05).isNotEmpty(), "Discover 05")
     }
 
     @Test

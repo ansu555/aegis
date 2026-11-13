@@ -533,6 +533,7 @@ affect existing wallets.
 | Visa | `A000000003` | production 09 and 10 (active), 08, 07, 01 (expired); test 50, 92, 94, 95, 99 |
 | Mastercard | `A000000004` | production 06 (active), 05 (1408-bit), 04, 03 (expired); test 00, 02, 05 (1024-bit), EF, F1, F3, F5, F6, F7, F8, F9, FA |
 | RuPay | `A000000524` | 04, 05, 06 (eftlab.com list); 6A, 6B, 6C, 6D (bonum-capk-keys list, which doesn't label them; eftlab.com labels all four as test keys) |
+| Discover / Diners Club International | `A000000152` | production 05 (Worldpay's production key list, expiry 31 Dec 2034; added 13 Nov) |
 
 Expiry dates come from Visa's own CA key list for Visa (09 and 10 active
 until 31 Dec 2036, 10 only for transit fare-gate terminals; 08 expired on
@@ -544,9 +545,10 @@ and capk.txt has no expiry field. So a Visa card in use today should name
 index 09 and a Mastercard 06, and whether current RuPay cards use any RuPay
 key in the file is unknown.
 
-No other network has keys, so Amex (`A000000025`), Discover / Diners
-(`A000000152`), JCB (`A000000065`) and UnionPay (`A000000333`) cards fail with
-"no CA key for ...".
+Discover / Diners (`A000000152`) has only index 05, added for RuPay cards
+co-badged with Diners Club International (their "INTERNATIONAL" application).
+No other network has keys, so Amex (`A000000025`), JCB (`A000000065`) and
+UnionPay (`A000000333`) cards fail with "no CA key for ...".
 
 Sources named in the file: proxmark3 `client/resources/capk.txt` and
 `github.com/Mungunkhuyag1/bonum-capk-keys`; Visa 10 from Visa's CA key list;
@@ -594,6 +596,7 @@ published checksum when in doubt:
 | A000000524 | 6B | 1152 | 03 | `9602428A46271C63CCC6DD99477CDB70435D6D5B` | bonum list; test per eftlab.com |
 | A000000524 | 6C | 1408 | 03 | `3B18A21BF34F781208145D7567982513D1CE8C92` | bonum list; test per eftlab.com (added 12 Nov) |
 | A000000524 | 6D | 1984 | 03 | `411008F9921B89C62E2160F6D0358614115ECD4A` | bonum list; test per eftlab.com (added 12 Nov) |
+| A000000152 | 05 | 1984 | 03 | `12BCD407B6E627A750FDF629EE8C2C9CC7BA636A` | production, expiry 31 Dec 2034; matches Worldpay's published hash (added 13 Nov) |
 
 ### Adding a CA key
 
@@ -959,7 +962,8 @@ and the simulated card, not on a real tap.
 | Visa (payWave) | `A0000000031010`; Visa Electron `A0000000032010` | fDDA in the GPO answer | `A0000000031010:FDDA:0:0:0` | 19 bytes (UN, amount, currency, `9F69`), format `95` | Medium |
 | RuPay | `A0000005241010` | Unknown | Unknown | Unknown | Low |
 | Any network, cards that answer INTERNAL AUTHENTICATE | | DDA | `<AID>:DDA:0:0:0` | UN, 4 bytes, format `05` | Medium for those cards; many contactless cards don't answer it |
-| Amex, Discover / Diners, JCB, UnionPay | | | | | Not supported: no CA keys |
+| Discover / Diners (RuPay co-badged "INTERNATIONAL") | `A0000001523010` | fDDA in the GPO answer (a real card returned `9F4B` there) | `A0000001523010:FDDA:0:0:0` | Unknown; the app tries its three fDDA forms | Low |
+| Amex, JCB, UnionPay | | | | | Not supported: no CA keys |
 
 **Mastercard.** The AIP should have the CDA bit and CDOL1 should be in the
 records. Plan 4 (ARQC, amount 0) may come back as an AAC with no signature;

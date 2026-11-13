@@ -45,6 +45,7 @@ The app build from `941865c` compiles; it hasn't been run on a device.
 | RuPay cards | NPCI's contactless specs aren't public; the signing method is unknown and a newer CA key index may be missing | Card check + "Share report" |
 | A real phone's Keystore, fingerprint prompt and NFC antenna | Phones differ (StrongBox, face unlock, antenna position) | The real-phone plan |
 | Android 9/10 | The fingerprint-only path is untested on a device | Only if the test phone runs Android 9/10 |
+| Several wallets on one phone (13 Nov) | Compiles; switching, adding and forgetting wallets and the per-wallet phone keys haven't run on a phone. Each wallet uses two new testnet accounts | On a phone: keep wallet 1, add wallet 2, send from each, switch back and forth, forget wallet 2 and check wallet 1 still sends |
 | Wallets created before 12 Nov | They run the previous contract build, which rejects Visa online signatures | Create a new wallet; old wallets can't be upgraded |
 
 ## The 12 Nov review

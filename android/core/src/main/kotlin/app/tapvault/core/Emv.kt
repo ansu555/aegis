@@ -584,8 +584,8 @@ class EmvSession(private val card: CardTransceiver, private val capks: CapkStore
 
     companion object {
         val PPSE = "2PAY.SYS.DDF01".toByteArray()
-        val KNOWN_AIDS = listOf("A0000000031010", "A0000000041010", "A0000005241010", "A0000000043060", "A0000000032010")
-        val NETWORKS = mapOf("A000000003" to "Visa", "A000000004" to "Mastercard", "A000000524" to "RuPay")
+        val KNOWN_AIDS = listOf("A0000000031010", "A0000000041010", "A0000005241010", "A0000000043060", "A0000000032010", "A0000001523010")
+        val NETWORKS = mapOf("A000000003" to "Visa", "A000000004" to "Mastercard", "A000000524" to "RuPay", "A000000152" to "Discover")
         val DEFAULT_DDOL = listOf(DolEntry(0x9F37, 4))
 
         /**

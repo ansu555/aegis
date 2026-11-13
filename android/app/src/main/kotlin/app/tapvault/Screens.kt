@@ -96,8 +96,12 @@ fun TapvaultApp(vm: AppViewModel) {
 private fun Welcome(vm: AppViewModel) {
     var instant by remember { mutableStateOf(vm.store.instantNear) }
     var daily by remember { mutableStateOf(vm.store.dailyNear) }
+    val others = vm.walletList.count { !it.active }
     Spacer(Modifier.height(28.dp))
-    Text("tapvault", fontSize = 18.sp, color = Tv.Dim, letterSpacing = 1.sp)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("tapvault", fontSize = 18.sp, color = Tv.Dim, letterSpacing = 1.sp, modifier = Modifier.weight(1f))
+        if (others > 0) Tag("New: ${vm.walletName}", Tv.Lime)
+    }
     Spacer(Modifier.height(20.dp))
     Text("Your bank card\nis your\nhardware wallet.", style = Numeral.copy(fontSize = 44.sp, lineHeight = 48.sp, color = Tv.Text))
     Spacer(Modifier.height(14.dp))
@@ -122,6 +126,11 @@ private fun Welcome(vm: AppViewModel) {
     Spacer(Modifier.height(20.dp))
     PillButton("Create my wallet", Modifier.fillMaxWidth(), enabled = vm.hasNfc, glyph = Glyph.Plus) { vm.beginSetup(instant, daily) }
     Caption("NEAR testnet · accounts and test NEAR come from the faucet", Modifier.fillMaxWidth().padding(top = 12.dp), Tv.Faint)
+    if (others > 0) {
+        Caption("This wallet gets its own NEAR account, its own phone key and its own card. Your other wallets aren't touched.", Modifier.fillMaxWidth().padding(top = 8.dp), Tv.Faint)
+        Spacer(Modifier.height(12.dp))
+        GhostButton("Back to my wallets", Modifier.fillMaxWidth(), Tv.Dim) { vm.cancelNewWallet() }
+    }
 }
 
 @Composable
@@ -147,9 +156,10 @@ private fun ChoiceTile(title: String, sub: String, tag: String, glyph: Glyph, se
 @Composable
 private fun SetupProgress(vm: AppViewModel) {
     var confirmStartOver by remember { mutableStateOf(false) }
+    var showPicker by remember { mutableStateOf(false) }
     val cardRead = vm.store.pendingCard != null || vm.setupStep >= 3
     val steps = listOf(
-        Triple(Glyph.Phone, "Phone key in secure hardware", KeystoreSigner.exists()),
+        Triple(Glyph.Phone, "Phone key in secure hardware", vm.phoneKeyExists),
         Triple(Glyph.Shield, "Wallet account on NEAR", vm.setupStep >= 1),
         Triple(Glyph.Card, "Card read and signed", cardRead),
         Triple(Glyph.Check, "Wallet contract deployed", vm.setupStep >= 2),
@@ -168,7 +178,7 @@ private fun SetupProgress(vm: AppViewModel) {
             ) { if (done) GlyphIcon(Glyph.Check, 16.dp, Tv.OnLime) }
         }
     }
-    vm.store.walletAccount?.let { Caption("Wallet account: $it", Modifier.padding(top = 10.dp)) }
+    vm.store.walletAccount?.let { Caption("${vm.walletName} account: $it", Modifier.padding(top = 10.dp)) }
     vm.cardReport?.let { r ->
         CardReportCard(r)
         val ctx = LocalContext.current
@@ -181,7 +191,12 @@ private fun SetupProgress(vm: AppViewModel) {
         PillButton("Continue setup", Modifier.fillMaxWidth()) { vm.continueSetup() }
         Spacer(Modifier.height(8.dp))
         GhostButton("Start over", Modifier.fillMaxWidth(), Tv.Dim) { confirmStartOver = true }
+        if (vm.walletList.size > 1) {
+            Spacer(Modifier.height(8.dp))
+            GhostButton("Switch wallet (this setup stays saved)", Modifier.fillMaxWidth(), Tv.Dim) { showPicker = true }
+        }
     }
+    if (showPicker) WalletPicker(vm) { showPicker = false }
     if (confirmStartOver) {
         AlertDialog(
             onDismissRequest = { confirmStartOver = false },
@@ -210,7 +225,9 @@ private fun Home(vm: AppViewModel) {
     val ctx = LocalContext.current
     var tab by remember { mutableIntStateOf(0) }
     var showReceive by remember { mutableStateOf(false) }
+    var showPicker by remember { mutableStateOf(false) }
     var confirmFreeze by remember { mutableStateOf(false) }
+    if (showPicker) WalletPicker(vm) { showPicker = false }
     if (confirmFreeze) {
         AlertDialog(
             onDismissRequest = { confirmFreeze = false },
@@ -224,9 +241,13 @@ private fun Home(vm: AppViewModel) {
     vm.offline?.let { Caption(it, Modifier.fillMaxWidth().padding(top = 10.dp), Tv.Warn) }
 
     Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Caption("Hello,")
-            Text("Your vault", fontSize = 22.sp)
+        Column(Modifier.weight(1f).clip(RoundedCornerShape(16.dp)).clickable(enabled = vm.busy == null) { showPicker = true }.padding(vertical = 4.dp)) {
+            Caption(if (vm.walletList.size > 1) "${vm.walletList.size} wallets · tap to switch" else "Tap to add a wallet")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(vm.walletName, fontSize = 22.sp)
+                Spacer(Modifier.width(6.dp))
+                GlyphIcon(Glyph.Down, 16.dp, Tv.Dim)
+            }
         }
         CircleButton(Glyph.History, "Activity", 48.dp, dot = vm.proposals.isNotEmpty()) { vm.go(Screen.Activity) }
     }
@@ -548,10 +569,25 @@ private fun CardReportCard(r: app.tapvault.core.CardReport) {
 private fun SettingsScreen(vm: AppViewModel) {
     val uri = LocalUriHandler.current
     var confirmReset by remember { mutableStateOf(false) }
+    var showPicker by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf<String?>(null) }
     Header("Settings")
+    ListRow(Glyph.Home, "Wallet name", vm.walletName, "Edit", onClick = { renaming = vm.walletName })
+    ListRow(Glyph.Plus, "My wallets", "${vm.walletList.size} on this phone · switch or add one", "${vm.walletList.size}", onClick = { showPicker = true })
+    if (showPicker) WalletPicker(vm) { showPicker = false }
+    renaming?.let { current ->
+        AlertDialog(
+            onDismissRequest = { renaming = null },
+            containerColor = Tv.Plum,
+            confirmButton = { TextButton(onClick = { vm.renameWallet(current); renaming = null }, enabled = current.isNotBlank()) { Text("Save", color = Tv.Lime) } },
+            dismissButton = { TextButton(onClick = { renaming = null }) { Text("Cancel", color = Tv.Text) } },
+            title = { Text("Wallet name") },
+            text = { GlassField("Shown on this phone only", current, { renaming = it.take(24) }) },
+        )
+    }
     vm.store.walletAccount?.let { a -> ListRow(Glyph.Shield, "Wallet account", a, "↗", onClick = { uri.openUri(vm.near.explorerAccount(a)) }) }
     vm.store.gasAccount?.let { a -> ListRow(Glyph.Send, "Fee account", "pays gas, can't move funds", "↗", onClick = { uri.openUri(vm.near.explorerAccount(a)) }) }
-    ListRow(Glyph.Phone, "Phone key", if (KeystoreSigner.exists()) vm.phone.hardwareLabel else "none", "P-256")
+    ListRow(Glyph.Phone, "Phone key", if (vm.phoneKeyExists) "${vm.phone.hardwareLabel} · this wallet only" else "none", "P-256")
     ListRow(Glyph.Card, "Card", app.tapvault.core.CardRecipe.decode(vm.store.cardRecipe)?.let { "Bank card over NFC · ${it.method.label}" } ?: "Contactless bank card over NFC", "NFC")
     vm.wallet?.let { w ->
         ListRow(Glyph.History, "Delays", "transfers ${w.delays.transfer / 3600} h · changes ${w.delays.config / 3600} h · recovery ${w.delays.recovery / 3600} h")
@@ -566,10 +602,43 @@ private fun SettingsScreen(vm: AppViewModel) {
         AlertDialog(
             onDismissRequest = { confirmReset = false },
             containerColor = Tv.Plum,
-            confirmButton = { TextButton(onClick = { confirmReset = false; vm.resetApp() }) { Text("Forget", color = Tv.Down) } },
+            confirmButton = { TextButton(onClick = { confirmReset = false; vm.forgetWallet() }) { Text("Forget", color = Tv.Down) } },
             dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("Keep", color = Tv.Text) } },
-            title = { Text("Forget this wallet?") },
-            text = { Text("This deletes the phone key. With a single card the wallet can't approve anything without it, so its NEAR stays locked in the wallet for good (on testnet that is only test NEAR).", textAlign = TextAlign.Start) },
+            title = { Text("Forget ${vm.walletName}?") },
+            text = { Text("This deletes this wallet's phone key. With a single card the wallet can't approve anything without it, so its NEAR stays locked in the wallet for good (on testnet that is only test NEAR). Your other wallets on this phone aren't affected.", textAlign = TextAlign.Start) },
         )
     }
+}
+
+// ---------------------------------------------------------------- wallet switcher
+
+/** Every wallet on this phone; tap one to switch, or add a new one. */
+@Composable
+private fun WalletPicker(vm: AppViewModel, onDismiss: () -> Unit) {
+    LaunchedEffect(Unit) { vm.reloadWalletList(); vm.loadWalletBalances() }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Tv.Plum,
+        title = { Text("My wallets") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Caption("Each wallet has its own NEAR account, phone key and card. They share nothing but this phone.")
+                Spacer(Modifier.height(10.dp))
+                vm.walletList.forEach { e ->
+                    val sub = when {
+                        e.ready -> e.account ?: ""
+                        e.account != null -> "setup not finished · ${e.account}"
+                        else -> "not created yet"
+                    }
+                    val bal = vm.walletBalances[e.id]?.let { "${Near.format(it, 2)} Ⓝ" } ?: if (e.ready) "…" else null
+                    ListRow(if (e.ready) Glyph.Shield else Glyph.Plus, e.name, sub, bal, subColor = if (e.ready) Tv.Dim else Tv.Warn,
+                        onClick = { onDismiss(); vm.switchWallet(e.id) }) {
+                        if (e.active) Box(Modifier.size(22.dp).background(Tv.Lime, CircleShape), contentAlignment = Alignment.Center) { GlyphIcon(Glyph.Check, 14.dp, Tv.OnLime) }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onDismiss(); vm.addWallet() }, enabled = vm.busy == null) { Text("+ Add a wallet", color = Tv.Lime) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close", color = Tv.Text) } },
+    )
 }
