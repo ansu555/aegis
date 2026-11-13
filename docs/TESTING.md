@@ -417,8 +417,8 @@ Each step says which of these to collect when something fails:
 | Code | What | How |
 |---|---|---|
 | **S** | Screenshot of the screen and the exact message | The banner at the top ("That didn't work", with a red icon) stays until you tap × or swipe it up, or move to another screen |
-| **L** | The in-app Log | Activity screen, section "Log" (newest first, last 60 lines). Screenshot every line since the step began. The Log is kept in memory only: take it before closing the app. It can only be opened after a wallet exists |
-| **R** | The card report | Card check → "Check a card" with the card involved → "Share report" |
+| **L** | The in-app Log | Settings → Advanced → "Technical log" (newest first, last 60 lines). Screenshot every line since the step began. The Log is kept in memory only: take it before closing the app. It can only be opened after a wallet exists |
+| **R** | The card report | Card check (after setup: Settings → "Your card") → "Check a card" with the card involved → "Share report" |
 | **W** | Wallet account name and links | Settings → "Wallet account" (the name is shown under it), or during setup the "Wallet account: …" line on the Setup screen; any "View on explorer" link from a result banner |
 | **V** | A short video | Film the tap with another phone if the problem is about holding the card |
 | **C** | Crash details (the app closes by itself) | Time of the crash and what you tapped. With a computer: `adb logcat -b crash -d > tapvault-crash.txt` |
@@ -452,8 +452,8 @@ On failure: **S**.
 
 For each card:
 
-1. Welcome → **Check my card first**. (After setup: **Card** in the bottom
-   bar, or **Check card** on Home.)
+1. Welcome → **Check my card first**. (After setup: tap the card on Home, or
+   Settings → **Your card** → **Check a card**.)
 2. Tap **Check a card**. A sheet says "Hold the card you want to check".
 3. Hold the card flat against the back of the phone, near the camera, and keep
    it still. The sheet changes to "Keep holding the card…"; keep holding until
@@ -521,17 +521,17 @@ Expect:
 - Then Home with the banner **Your wallet is ready** / "Funds now move only
   with your phone and your card." / "View on explorer".
 - Home: "Total balance" about 6.6 (faucet-funded) or about 2.1
-  (sponsor-funded), the pill "1 NEAR available instantly", and at the bottom
-  "+ … NEAR reserved for the wallet contract's storage" (a little over 3.34).
-- "Spending limits": "Used today" 0 / 2 NEAR, "Instant up to" 1 NEAR per
-  payment, "Bigger payments" wait 1 h, cancellable. "Security": "This phone"
-  (P-256), your card as "`<network>` •••• `<last 4>`" (RSA), "2 of 2
-  approvals required".
+  (sponsor-funded), the pill "1 NEAR available instantly", and the card
+  picture showing "•••• `<last 4>`" and the network.
+- "Spent today": 0 / 2 NEAR, "Up to 1 NEAR per payment goes out instantly".
+- Settings → "Your card": your card as "`<network>` •••• `<last 4>`";
+  "Security": "Approvals" "2 of 2 signers for every payment"; "Advanced":
+  "Contract storage" a little over 3.34 NEAR.
 - Settings: "Phone key" shows "Trusted Execution Environment · this wallet
   only" (Android 12+) or "secure hardware · this wallet only" (older); "Bank
   card" shows "Contactless over NFC · `<method>`"; "Delays" shows "Transfers
   1 h · changes 1 h · recovery 24 h".
-- Activity → "Technical log" → **Show** includes these lines (each starts with the time):
+- Settings → Advanced → **Technical log** includes these lines (each starts with the time):
   - `phone key stored in …`
   - `wallet tv-…, fee account tv-…-gas…`
   - `card <network> ****<last 4> read (<bits>-bit key, <method>)`
@@ -592,11 +592,11 @@ Record: wallet account, code hash, number of keys. Fail: a different code hash
 #### 5. Send 0.1 NEAR within the limit
 
 1. Home → **Send**.
-2. "To": `<receiver>`; amount `0.1` (a comma works too). The summary below
-   shows, label then value: "Speed" Instant, "Instant allowance left" 1 NEAR,
-   "Network fee" Paid by your fee account, "Approve with" Fingerprint + card
-   tap.
-3. Tap **Review**, check the sheet, then **Approve and send**.
+2. "To": `<receiver>`; amount `0.1` on the keypad. Under the amount: "Goes
+   out instantly".
+3. Tap **Review**, check the sheet ("To", "Speed" Instant, "Instant allowance
+   left" 1 NEAR, "Network fee" Paid by your fee account), then drag **Slide to
+   approve** to the end.
 4. Prompt **Send 0.1 NEAR to `<receiver>`**: check amount and receiver, approve.
 5. "Waiting for the card challenge" (a second or two), then the sheet **Tap
    your card to approve sending 0.1 NEAR**: hold the enrolled card until it
@@ -625,13 +625,13 @@ Settings → "Card" method. On failure: **S**, **L**, **W**, **R**.
 
 1. Home → **Send** → "To" `<receiver>`, amount `1.5`. The summary shows
    "Speed" Waits 1 h.
-2. **Review** → **Approve and send** → prompt **Send 1.5 NEAR to `<receiver>`** → sheet
+2. **Review** → **Slide to approve** → prompt **Send 1.5 NEAR to `<receiver>`** → sheet
    **Tap your card to approve sending 1.5 NEAR** → hold the card.
 
 Expect **Approved, waiting 1 h** / "This is over your instant limit. In 1 h,
 open Activity and tap Execute. Until then you can cancel it or freeze the
-wallet." The balance doesn't change. Home lists it under "Pending approvals", the
-Activity tab in the bottom bar shows a count, and Activity has a "Send" card
+wallet." The balance doesn't change. Home lists it under "Pending", the
+Activity tab in the tab bar shows a count, and Activity has a "Send" card
 for 1.5 NEAR ("To `<receiver>` · #`<n>`") with "Approved · can execute in 0 h
 59 min".
 
@@ -643,8 +643,8 @@ failure: **S**, **L**, **W**.
 
 #### 7. Activity: cancel it
 
-1. Open **Activity** (the clock button at the top right of Home, or in the
-   bottom bar). The entry shows "Send 1.5 NEAR to `<receiver>`", "Approved · can
+1. Open **Activity** (the clock icon in the tab bar, or "See all" next to
+   "Pending" on Home). The entry shows "Send 1.5 NEAR to `<receiver>`", "Approved · can
    execute in 0 h …", the tag "#`<n>`" and a **Cancel** button (no Execute yet).
 2. Tap **Cancel** → prompt **Cancel: Send 1.5 NEAR to `<receiver>`** → approve.
 
@@ -692,7 +692,7 @@ and **R** of the enrolled card.
 
 #### 9. Freeze with card
 
-1. Home → **Freeze** (the snowflake button between Receive and Check card).
+1. Home → **Freeze** (the snowflake button to the right of Receive).
 2. Dialog **Freeze the wallet?** "One card tap stops every transfer. Unfreezing
    needs your phone and card, then waits 1 h." → **Freeze**.
 3. Sheet **Tap your card to FREEZE the wallet** → hold the enrolled card.
@@ -725,7 +725,7 @@ prompt. On failure: **S**, **L**, **W**.
 
 #### 11. Failure drills, part A (during the 1-hour wait)
 
-Use Card check (**Card** in the bottom bar).
+Use Card check (Settings → **Your card** → **Check a card**).
 
 a. **Pull the card away early.** **Check a card**, hold the card, and pull it
    away as soon as "Keep holding the card…" appears. Expect the sheet to come
@@ -767,7 +767,7 @@ minutes and set date and time to automatic. On failure: **S**, **L**, **W**.
 
 #### 13. Failure drills, part B (sending)
 
-a. **Cancel the fingerprint.** Send `0.1` → **Review** → **Approve and send** →
+a. **Cancel the fingerprint.** Send `0.1` → **Review** → **Slide to approve** →
    cancel the prompt (back gesture, or "Cancel" on Android 9/10). Expect "That
    didn't work" / "Approval cancelled: `<your phone's text>`". Activity: nothing
    new.

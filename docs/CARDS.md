@@ -687,7 +687,7 @@ appear as "(N bytes, not TLV)".
 ### Where it comes from
 
 - **Card check:** Welcome → "Check my card first", or once a wallet exists
-  "Check card" on Home or the Card tab of the bottom bar. Then the "Check a
+  tap the card on Home, or Settings → "Your card". Then the "Check a
   card" button and the tap sheet "Hold the card you want to check". Nothing
   touches the chain and nothing is saved.
 - **Setup:** the same report appears on the Setup screen after the card step,
@@ -998,7 +998,7 @@ often have no offline data authentication, which Tapvault needs.
    screen ("Share card report"): the whole text, including the trace. It
    holds the last four digits, no other card data.
 2. The **exact error** shown in the app (a screenshot is fine), and the
-   lines from Activity → Technical log around it.
+   lines from Settings → Advanced → Technical log around it.
 3. **The card:** network, debit / credit / prepaid, issuing bank, whether it
    has the contactless symbol, whether contactless is enabled in the bank's
    app, and whether it works at a shop's contactless terminal.

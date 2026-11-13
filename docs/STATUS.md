@@ -18,7 +18,7 @@ the main risk.
 | Card protocol code | `EmvTest`: 15 tests, the simulated card answering real APDUs as a DDA card, a Visa-style fDDA card and a Mastercard-style CDA card | Pass |
 | RPC error handling | `RpcProbeTest` against live testnet | Pass |
 | Whole wallet on live testnet | `TestnetE2ETest`, once per card kind, with the shipped contract build: create accounts, deploy, enrol the card, lock the account, pay 0.5 NEAR, over-limit payment waits, cancel, a replayed card signature is refused, freeze by card | Pass for all three (below) |
-| Android app on the emulator | Setup, send, approvals, freeze and card check ran on 11 Nov with the old in-app demo card; on 12 Nov the new build was checked to launch and to refuse setup cleanly on a phone without NFC | Pass (emulator has no NFC) |
+| Android app on the emulator | Setup, send, approvals, freeze and card check ran on 11 Nov with the old in-app demo card; on 12 Nov the new build was checked to launch and to refuse setup cleanly on a phone without NFC. 13 Nov, the redesign (glass, tab bar, Your card, keypad): Home, Activity, Settings, Your card, Welcome, Limits and the wallet switcher checked on an Android 15 emulator with a view-only testnet wallet; Send's review sheet, the tap sheet and blur performance on a real phone not yet | Pass (emulator has no NFC) |
 
 Live testnet runs on 12 Nov (contract code hash `5Db4uQQKpTkTtUspdQcx5iVcnvT7MSXCNMdKwhQibwcf`; each wallet has no access keys left):
 

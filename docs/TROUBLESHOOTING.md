@@ -38,7 +38,7 @@ Contents:
 | Home banner | `Can't reach NEAR testnet right now. Showing the last known state; retrying.` | The background refresh (every 8 s on Home and Activity) failed |
 | Card check report | Badge `Can't sign` and notes | Not an error box; see [Reading the Card check report](#reading-the-card-check-report) |
 | Activity status | `Waiting for approvals`, `Void: signers changed`, `Approved · wallet is frozen`, … | See [Sending, Activity and freeze](#sending-activity-and-freeze) |
-| Log | Activity → Technical log → Show: newest first, each line starts with the time | Kept in memory only (200 lines kept, 60 shown); gone when the app process ends, and cleared by Start over and by Forget; can only be opened once a wallet exists (not during setup). Nothing is written to the Android system log |
+| Log | Settings → Advanced → Technical log: newest first, each line starts with the time | Kept in memory only (200 lines kept, 60 shown); gone when the app process ends, and cleared by Start over and by Forget; can only be opened once a wallet exists (not during setup). Nothing is written to the Android system log |
 
 Composite messages:
 

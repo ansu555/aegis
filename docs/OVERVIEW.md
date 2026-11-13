@@ -191,8 +191,8 @@ removed. The accounts made so far stay on testnet with their test NEAR."
    implicit account). **Half** fills half the spendable balance; **Max
    instant** fills the most that can go out instantly (the instant allowance left,
    capped at the spendable balance minus 0.01 NEAR). The summary under the
-   fields says "Instant" or "Waits 1 h" for "Speed".
-2. **Review** opens a summary sheet; **Approve and send** starts. Before any prompt the app checks that NFC is
+   amount says "Goes out instantly" or "Waits 1 h · you can cancel it".
+2. **Review** opens a summary sheet; dragging **Slide to approve** to the end starts. Before any prompt the app checks that NFC is
    on, the wallet isn't frozen, the spendable balance covers the amount, and
    the receiver exists.
 3. Fingerprint prompt "Send 0.5 NEAR to friend.testnet". The phone signs the
@@ -245,15 +245,14 @@ status turns to "Expired: it can no longer execute; cancel it".
 
 ### 8. Other screens
 
-After setup a bottom bar switches between Wallet, Activity, Card and
+After setup a floating glass tab bar switches between Wallet, Activity and
 Settings (Activity shows a count while proposals are open).
 
 - **Home:** the wallet switcher and a QR button at the top, "Total balance",
-  the instant pill ("Frozen" while frozen), the round buttons Send, Receive,
-  Freeze (with the card) and Check card, then "Pending approvals", "Spending
-  limits" (instant limit and a "Used today" meter) and "Security" ("This
-  phone" P-256, "Bank card" RSA, "2 of 2 approvals required"). Pull down to
-  refresh.
+  the card (tap it for Your card; frosted while frozen), "Total balance", the
+  instant pill ("Frozen" while frozen), the round buttons Send, Receive and
+  Freeze (with the card), "Pending" (only while something waits) and "Spent
+  today" with a meter. Pull down to refresh.
 - **Activity:** every open proposal with its status ("Waiting for
   approvals", "Approved · can execute in …", "Approved · ready: tap Execute",
   "Approved · wallet is frozen", "Expired: it can no longer execute; cancel
@@ -262,13 +261,15 @@ Settings (Activity shows a count while proposals are open).
   card here also executes it when the phone has approved it, the wallet
   isn't frozen and it is within the limits ("Approved and sent"); if the
   contract doesn't agree that it can run yet, the card approval is kept
-  ("Approved"). Below the list: "All transactions" (the explorer) and the
-  in-app log ("Technical log" → **Show**, the last 60 lines).
-- **Card check:** the same check as on Welcome, for any card.
+  ("Approved"). Each proposal shows a Phone → Card → delay tracker with a
+  countdown. Below the list: "All transactions" (the explorer).
+- **Your card** (tap the card on Home, or Settings): the enrolled card and the
+  same check as on Welcome, for any card.
 - **Settings:** the wallet name (**Rename**), "My wallets", wallet and fee
   account (explorer links), where the phone key lives (for example "Trusted
   Execution Environment"), how the card signs, approvals, the delays,
-  **Freeze with phone** (while not frozen), and **Forget this
+  the limits, **Freeze with phone** (while not frozen), the storage reserve,
+  the in-app log ("Technical log", the last 60 lines), and **Forget this
   wallet on this phone**. Forgetting deletes the phone key; with a single card the wallet
   can never approve anything again, so its NEAR stays locked for good
   (testnet NEAR only).

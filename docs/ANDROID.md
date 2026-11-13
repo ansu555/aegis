@@ -79,9 +79,10 @@ Dependencies: `org.bouncycastle:bcprov-jdk18on:1.79` (ed25519),
 | `Store.kt` | `Store`: one wallet's settings in SharedPreferences; `WalletIndex`: the wallets on this phone |
 | `PendingCard.kt` | A card read during setup, kept until it is added on-chain |
 | `Onboarding.kt` | Welcome (three-slide intro), `LimitsScreen` (spending limits, the step before setup), `SetupProgress`, `NfcNotice`, the onboarding illustrations |
-| `Screens.kt` | `TapvaultApp` (shell, transitions, bottom bar, overlays), `Home`, `ReceiveSheet`, `Send` (with its review sheet), `ActivityScreen`, `CardCheck`, `CardReportCard`, `SettingsScreen`, `WalletPicker` |
-| `Components.kt` | UI parts: `TvButton`, `ActionButton`, `Group`/`Row_` lists, `Notice`, `StatusPill`, `TvField`, `AmountField`, `BottomNav`, `OutcomeBanner`, `BusyOverlay`, `TapSheet`, `CardArt`, `QrCode`, `LogoMark` |
-| `Theme.kt` | Colour tokens `Tv`, type scale `Type` (Inter), `TapvaultTheme` (dark only), `AppBackground`, icons `Ic` / `TvIcon` |
+| `Screens.kt` | `TapvaultApp` (shell, transitions, tab bar, overlays), `Home`, `ReceiveSheet`, `Send` (keypad and review sheet), `ActivityScreen` (`ProposalCard` with its approval tracker), `CardCheck` ("Your card" after setup), `CardReportCard`, `SettingsScreen` (with the technical log sheet), `WalletPicker` |
+| `Components.kt` | UI parts: `TvButton`, `ActionButton`, `Group`/`Row_` lists, `Notice`, `StatusPill`, `TvField`, `AmountField`, `CountingAmount`, `OutcomeBanner`, `AnimatedCheck`, `BusyOverlay`, `GlassDialog`/`ConfirmDialog`, `GlassSheet`, `TapSheet`, `CardArt`, `SlideToConfirm`, `QrCode`, `LogoMark` |
+| `Glass.kt` | The glass look and motion: `glassRim`, `frosted` (backdrop blur through Haze, `LocalHaze`), `AppBackground` (ambient light and grain), `GlassTabBar` and its `LiquidLens` (AGSL, Android 13+), `enter` (staggered entrance), `sharedCard` (the card flying between Home and Your card), `rememberTilt` (rotation sensor), `rememberReduceMotion` |
+| `Theme.kt` | Colour tokens `Tv` (titanium monochrome, `Tv.titanium()` brush), type scale `Type` (Inter), `TapvaultTheme` (dark only), `Modifier.surface` (static glass), icons `Ic` / `TvIcon` |
 
 Resources: `res/values/themes.xml` (`Theme.Tapvault`, parent
 `Theme.AppCompat.NoActionBar`) and `res/values-v31/themes.xml` (adds the
@@ -97,7 +98,7 @@ adaptive launcher icon (`ic_launcher_background`, `ic_launcher_foreground`,
 Dependencies: Compose BOM `2024.12.01` (ui, material3, material-icons-core),
 `activity-compose` 1.9.3, `lifecycle-viewmodel-compose` 2.8.7, `biometric`
 1.1.0, `fragment-ktx` 1.8.5, `kotlinx-coroutines-android` 1.9.0, ZXing `core`
-3.5.3 (the Receive QR code), and `:core`.
+3.5.3 (the Receive QR code), Haze 1.5.4 (`dev.chrisbanes.haze`, backdrop blur), and `:core`.
 
 ### Tests
 
@@ -110,36 +111,60 @@ Dependencies: Compose BOM `2024.12.01` (ui, material3, material-icons-core),
 
 ## Screens
 
-The look: graphite surfaces, one mint accent (`Tv.Accent`) for primary actions
-and "safe" states, amber for "waiting", ice blue only for the frozen state,
-coral for danger. Inter throughout, with tabular figures for amounts. The app
-is dark only: `TapvaultTheme` reports night mode to everything inside it so
-system-drawn parts (bottom-sheet windows and their navigation bar) match.
+The look: titanium monochrome. Near-black background with two slow light
+pools and fine grain (`AppBackground`), glass surfaces (translucent white with
+a rim that catches light at the top-left, `Modifier.surface`), platinum
+primary buttons with black text, and a brushed-titanium brush (`Tv.titanium()`)
+on the balance and the card. Colour carries meaning only: green
+(`Tv.Positive`) for approved and done, amber for waiting, ice blue for frozen,
+coral for danger. Floating parts (tab bar, status-bar strip, result banner,
+busy overlay, tap sheet) blur what scrolls behind them through Haze on
+Android 12+, and fall back to a dark tint below that. Bottom sheets and dialogs
+are separate windows that can't blur the app, so they use an opaque dark glass
+(`Tv.Sheet`); dialogs ask the system to blur behind them on Android 12+. Inter
+throughout, with tabular figures for amounts. The app is dark only:
+`TapvaultTheme` reports night mode to everything inside it so system-drawn
+parts (bottom-sheet windows and their navigation bar) match.
+
+Motion: screens slide and scale with springs; list items rise in one after
+another (`enter`); the card leans with the phone (`rememberTilt`, the game
+rotation sensor, registered only while the app is resumed) and flies between
+Home and Your card (`sharedCard`); the balance counts up when it changes. All
+of it is skipped when the system's animator duration scale is 0
+(`rememberReduceMotion`).
 
 ### Navigation
 
 - `Screen` enum: `Welcome`, `Limits`, `Setup`, `Home`, `Send`, `Activity`,
   `CardCheck`, `Settings`. Everything is drawn by `TapvaultApp` in
-  `Screens.kt`; screens cross-fade with a short upward slide, and the keyboard
-  closes on every screen change.
+  `Screens.kt`; the keyboard closes on every screen change.
 - Start screen: `Home` when `Store.setupStep` is 4, `Setup` when it is 1 to 3,
   `Welcome` when it is 0.
-- The bottom bar (`BottomNav`: "Wallet", "Activity", "Card", "Settings", icon
-  and label; the current tab in mint) shows on those four screens once setup is
-  done. "Activity" carries a count badge while proposals are open.
-- System back on Limits goes to Welcome; on Send, Activity, Card check and
-  Settings it goes to Home (to Welcome before setup is done). On Home, Welcome
-  and Setup it leaves the app.
+- The tab bar (`GlassTabBar`) floats above the navigation bar on Home,
+  Activity and Settings once setup is done: three icons ("Wallet", "Activity",
+  "Settings") in a frosted pill, the current one under a glass bubble that
+  slides with a spring, stretches with its speed and shows the label. Dragging
+  along the bar moves the bubble too. On Android 13+ the bubble magnifies what
+  is under it (`LiquidLens`, an AGSL shader). "Activity" carries an amber count
+  badge while proposals are open.
+- Card check is not a tab: after setup it is "Your card", opened by tapping
+  the card on Home or from Settings › Your card. Its back button and system
+  back return to the tab it was opened from (`AppViewModel.cameFrom`).
+- System back on Limits goes to Welcome; on Send, Activity and Settings it
+  goes to Home (to Welcome before setup is done). On Home, Welcome and Setup it
+  leaves the app.
 - Home and Activity refresh on pull-down (`AppViewModel.pullRefresh`) as well
   as every 8 s.
-- `AppViewModel.go(screen)` changes screen and clears the result banner.
+- `AppViewModel.go(screen)` changes screen, clears the result banner and, when
+  leaving a tab, remembers it in `cameFrom`.
 
 ### Welcome
 
 - Wordmark and a "Testnet" pill. A three-slide pager (auto-advances every
   5.5 s until swiped), each with an animated illustration: "Your bank card is
   your hardware wallet", "Two keys, every payment", "Limits that have your
-  back".
+  back". Swiping moves the picture and the text at different speeds; the
+  buttons sit on a glass panel.
 - `NfcNotice`: "This phone has no NFC" / "It can't read a bank card. Use an
   Android phone with NFC.", or "NFC is off" / "Turn it on to tap your card
   (Connected devices → NFC)." with "Open NFC settings".
@@ -193,33 +218,34 @@ system-drawn parts (bottom-sheet windows and their navigation bar) match.
 
 ### Home
 
+Only what is used every day; the details moved to Settings.
+
 - Header: avatar, wallet name and account (tap: the wallet switcher), and a
   QR button (Receive).
 - Offline notice when the last refresh failed: "Offline" / "Can't reach NEAR
   testnet right now. Showing the last known state; retrying."
+- The card (`CardArt`): brushed titanium with the chip, "tapvault", the
+  contactless mark, "•••• <last 4>" and the network once known. It leans with
+  the phone and frosts over with a snowflake while the wallet is frozen. Tap it
+  for Your card.
 - "Total balance": the spendable balance (balance minus the part locked for
-  storage), up to 4 decimals with the decimals dimmed, and "NEAR"; a shimmer
-  until loaded. Pill "Frozen", or "<x> NEAR available instantly"
+  storage), up to 4 decimals, counting up when it changes, and "NEAR"; a
+  shimmer until loaded. Pill "Frozen", or "<x> NEAR available instantly"
   (`LimitInfo.availableNow()`, capped by the balance).
 - Action buttons (icon and label): "Send" (opens Send), "Receive" (Receive
   sheet), "Freeze" ("Freeze the wallet?": "One card tap stops every transfer.
   Unfreezing needs your phone and card, then waits <h>." with "Freeze" /
-  "Cancel"; calls `freezeWithCard`), "Check card" (opens Card check). Send and
-  Freeze are disabled while frozen or busy, and until the wallet state has
-  loaded; while frozen, Freeze reads "Frozen".
+  "Cancel"; calls `freezeWithCard`). Send and Freeze are disabled while frozen
+  or busy, and until the wallet state has loaded; while frozen, Freeze reads
+  "Frozen".
 - When frozen: an ice-blue notice "Wallet frozen" / "No transfers can go out.
   Unfreezing needs your phone and your card, then waits <h>." with "Request
   unfreeze".
-- "Pending approvals" (with "See all" when there are any): up to three open
-  proposals ("Send · #<id>" or the settings change, the status, the amount);
-  tap one for Activity. Empty: "All clear" / "Nothing waiting for approval".
-- "Spending limits": "Used today" "<used> / <daily> NEAR" with a meter (amber
-  above 85 %), "Instant up to" "<x> NEAR per payment", "Bigger payments" "wait
-  <h>, cancellable".
-- "Security": "This phone" (P-256), the card ("<network> •••• <last 4>" when
-  known, else "Bank card"; RSA), "<threshold> of <n> approvals required" /
-  "Neither key alone can move funds".
-- Footer: "+ <x> NEAR reserved for the wallet contract's storage".
+- "Pending" with "See all", only while proposals are open: up to two
+  ("Send · #<id>" or the settings change, the status, the amount); tap one for
+  Activity.
+- "Spent today": "<used> / <daily> NEAR" with a meter (amber above 85 %) and
+  "Up to <x> NEAR per payment goes out instantly".
 
 Receive sheet (`ReceiveSheet`): "Receive NEAR", a QR code of the account id,
 the account id, "Copy" (turns into "Copied") and "Share", and the notice
@@ -227,32 +253,44 @@ the account id, "Copy" (turns into "Copied") and "Share", and the notice
 
 ### Send
 
+- "Send NEAR" with a back button.
 - "To" field (placeholder "name.testnet"; trimmed and lowercased as you type)
   with "Paste". Shows "That isn't a NEAR account name" or "That's this
   wallet's own account" under it.
-- Amount card: a large centred amount (placeholder "0"), "Available: <x>
+- The amount, large and centred (placeholder "0"; the text shrinks as it gets
+  longer), typed on the app's own keypad (`Keypad`: digits, ".", delete; hold
+  delete to clear), so the system keyboard never covers it. "Available: <x>
   NEAR" (or "More than the wallet holds"), chips "Half" (half the spendable
   balance) and "Max instant" (the smaller of the instant allowance left and
   the spendable balance minus 0.01 NEAR).
-- Summary: "Speed" ("Instant", "Waits <h>", or "–"), "Instant allowance left",
-  "Network fee" / "Paid by your fee account", "Approve with" / "Fingerprint +
-  card tap". "Instant" is the app's estimate with the phone's clock
+- One line on speed: "You'll approve with your fingerprint and a card tap"
+  before an amount, then "Goes out instantly" (green) or "Waits <h> · you can
+  cancel it" (amber). "Instant" is the app's estimate with the phone's clock
   (`LimitInfo.isInstant`); the contract decides.
-- "Review" (pinned at the bottom; enabled when idle with a valid receiver and
-  an amount above 0 that the wallet holds) opens the review sheet: the amount,
-  "To", "From", "Speed", "Network", the two next steps, "Approve and send"
-  (calls `send`) and "Edit".
+- "Review" (pinned under the keypad; enabled when idle with a valid receiver
+  and an amount above 0 that the wallet holds) opens the review sheet "Review
+  payment": the amount, "To", "From", "Speed", "Instant allowance left",
+  "Network fee" / "Paid by your fee account", "Network", the two next steps
+  ("Confirm with your fingerprint", "Tap your bank card on the phone"), a
+  "Slide to approve" track (`SlideToConfirm`: drag the knob to the end; it
+  springs back if let go early; accessibility services can activate it
+  directly) that calls `send`, and "Edit". The sheet shows exactly the
+  receiver and amount that `send` is called with.
 
 ### Activity (`ActivityScreen`)
 
-"Activity" / "Approvals, delays and history". One card per open proposal
-(`list_proposals`, up to 50): title ("Send" or the settings change), "To
-<receiver, shortened> · #<id>", the amount, a status pill, and two approval
-marks ("Phone", "Card"; ticked once that signer approved). Statuses
-(`proposalStatus`): "Void: signers changed", "Waiting for approvals",
-"Expired: it can no longer execute; cancel it", "Approved · can execute in
-<time>", "Approved · wallet is frozen", "Approved · ready: tap Execute".
-Empty: "You're all caught up".
+"Activity" / "Approvals, delays and history", then "Pending · <n>" and one
+glass card per open proposal (`ProposalCard`; `list_proposals`, up to 50):
+title ("Send" or the settings change), "To <receiver, shortened> · #<id>", the
+amount, and an approval tracker of three steps joined by lines that fill in
+green: "Phone" and "Card" (ticked once that signer approved), then the delay:
+"Delay" until fully approved, a countdown with a ring that fills as the delay
+runs (ticks every second), "Ready", or "Void" / "Expired" in red. Under it a
+status pill (`proposalStatus`): "Void: signers changed", "Waiting for
+approvals", "Expired: it can no longer execute; cancel it", "Approved · can
+execute in <time>", "Approved · wallet is frozen", "Approved · ready: tap
+Execute". Empty: a tick that draws itself, "You're all caught up" / "Payments
+waiting for an approval or a delay show up here."
 
 | Button | Shown when | Calls |
 |---|---|---|
@@ -269,40 +307,55 @@ the limits right now, else `delays.transfer`; for a settings change it is
 clock is more than 7 days past the end of that delay (the contract's
 `EXECUTION_WINDOW`).
 
-Below: "History" → "All transactions" (the wallet on testnet.nearblocks.io),
-and "Technical log" with "Show" / "Hide": the in-app log, newest first, the
-last 60 lines ("Nothing yet." when empty). See [Logs](#logs).
+Below: "History" → "All transactions" (the wallet on testnet.nearblocks.io).
+The technical log is in Settings › Advanced.
 
 ### Card check (`CardCheck`)
 
-- "Card check" / "See whether a card can sign for Tapvault"; a back button
-  only before setup is done (it is a tab after).
-- A card picture showing "•••• <last 4>" and the network after a check.
-- Before a check: what it does ("Reads the payment chip", "Checks it can
-  sign", "Your card number stays here").
+- Before setup: "Card check" / "See whether a card can sign for Tapvault",
+  with a back button to Welcome. After setup the same screen is "Your card",
+  opened from Home (tap the card) or Settings, with a back button to where it
+  was opened.
+- The card picture (it flies in from Home): "•••• <last 4>" and the network
+  from the last report, or from the enrolled card after setup; frosted while
+  the wallet is frozen.
+- After setup, before any check: the enrolled card ("<network> •••• <last 4>",
+  "Contactless · <method label>", "RSA") and "Co-signs every payment" /
+  "Together with this phone's key; neither alone moves funds", then "Check a
+  card" / "See whether this or any other card can sign for Tapvault. Nothing is
+  signed or stored."
+- Before setup, before a check: what it does ("Reads the payment chip",
+  "Checks it can sign", "Your card number stays here").
 - `NfcNotice`, then "Check a card" ("Check another card" after one; disabled
   without NFC) calls `checkCard`; then the report card (`CardReportCard`: "This
-  card can sign" / "This card can't sign", "<network> •••• <last 4> · <label>",
-  the notes, and "Technical details", open by default for a card that can't
-  sign) and "Share report", which shares `CardReport.diagnostics()` as text
-  ("Share card report"). Reading the report:
+  card can sign" with a tick that draws itself / "This card can't sign",
+  "<network> •••• <last 4> · <label>", the notes, and "Technical details", open
+  by default for a card that can't sign) and "Share report", which shares
+  `CardReport.diagnostics()` as text ("Share card report"). Reading the report:
   [CARDS.md](CARDS.md#reading-a-card-check-report).
-- The picture, report and "Share report" show `AppViewModel.cardReport`, the
-  last report in memory, so right after setup this screen already shows the
+- The report and "Share report" show `AppViewModel.cardReport`, the last
+  report in memory, so right after setup this screen already shows the
   enrolled card's report (until the next check, Forget or a restart).
 
 ### Settings (`SettingsScreen`)
 
 - Profile card: avatar, wallet name, account (tap to copy), and a pencil to
   rename ("Wallet name" / "Shown on this phone only").
-- "Wallets": "My wallets" (the switcher), "Wallet account" and "Fee account"
-  ("Pays network fees, can't move funds"), each opening testnet.nearblocks.io.
+- "Wallets": "My wallets" ("<n> on this phone · switch or add one"; the
+  switcher).
+- "Your card": the enrolled card ("<network> •••• <last 4>", "Contactless ·
+  <method label>") and "Check a card"; both open Your card.
 - "Security": "Phone key" (`KeystoreSigner.hardwareLabel` · "this wallet only",
-  or "none"), the card ("<network> •••• <last 4>" when known; "Contactless
-  over NFC · <method label>" from the saved recipe), "Approvals", "Delays"
-  ("Transfers <h> · changes <h> · recovery <h>").
+  or "none"; "P-256"), "Approvals" ("<threshold> of <n> signers for every
+  payment; neither key alone can move funds"), "Delays" ("Transfers <h> ·
+  changes <h> · recovery <h>"), "Limits" ("Instant up to <x> NEAR per payment ·
+  <y> NEAR a day").
 - "Emergency" while not frozen: "Freeze with phone" asks "Freeze with phone?"
   then calls `freezeWithPhone` (the fingerprint prompt follows).
+- "Advanced": "Wallet account" and "Fee account" ("Pays network fees, can't
+  move funds"), each opening testnet.nearblocks.io; "Contract storage"
+  ("Reserved by the wallet contract, not spendable", "<x> NEAR"); "Technical
+  log" (a sheet with the last 60 lines, see [Logs](#logs)).
 - "About": "Network" "NEAR testnet" and the app version.
 - "Forget this wallet on this phone": "Forget <name>?" / "This deletes this
   wallet's phone key. With a single card the wallet can't approve anything
@@ -316,19 +369,20 @@ balance, a tick on the active one), and "Add a wallet".
 
 ### Overlays
 
-- **Result banner** (`OutcomeBanner`), pinned at the top, solid: an icon (tick
-  or alert), title, detail (scrolls past 180 dp), "View on explorer" when there
+- **Result banner** (`OutcomeBanner`), pinned at the top, frosted glass: an
+  icon (a tick that draws itself, with a haptic, or an alert), title, detail (scrolls past 180 dp), "View on explorer" when there
   is a link, and × to dismiss; a swipe up dismisses it too. Successes leave on
   their own after 5 s (7 s with a link); failures stay and buzz. Cleared when
   the next operation starts or on navigation.
-- **Tap sheet** (`TapSheet`), a bottom sheet while a card tap is awaited: "Ready
+- **Tap sheet** (`TapSheet`), a frosted sheet drawn in the app's window while
+  a card tap is awaited: "Ready
   to scan", an animation of the card gliding onto the back of a phone, the
   request's title, then "Hold the card flat against the back of the phone,
   near the camera, for 2–3 seconds." or a retry hint (amber), and "Cancel".
   Once a card is in the field: "Reading card", "Keep holding the card…" /
   "Reading the chip and asking it to sign. Don't move the card until this
   closes.", with no Cancel.
-- **Busy overlay** (`BusyOverlay`): spinner, the current step's label and "Keep
+- **Busy overlay** (`BusyOverlay`), a frosted card: spinner, the current step's label and "Keep
   the app open"; blocks touches; hidden while the tap sheet is up and on the
   Setup screen. It has no cancel.
 
@@ -1017,7 +1071,7 @@ A new APK changes the app, not existing wallets' contract code.
 
 ### The in-app log
 
-Activity → "Technical log" → "Show": newest first, `HH:mm:ss  message`, the last 60 lines of
+Settings → Advanced → "Technical log": newest first, `HH:mm:ss  message`, the last 60 lines of
 up to 200. Held in memory only: it is lost when the process dies and cleared
 by Forget and Start over, and it can't be shared (take screenshots:
 `adb exec-out screencap -p > screen.png`). It records every progress step,

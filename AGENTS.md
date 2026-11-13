@@ -33,7 +33,7 @@ The first file to read if you are a coding agent or a new contributor.
 | `android/core/src/main/kotlin/app/tapvault/core/` | Kotlin client: `NearClient.kt`, `Wallet.kt` (`TapvaultWallet`, `Onboarding`), `Model.kt`, `Borsh.kt`, `Domain.kt`, `Emv.kt` (`EmvSession`, `CardService`), `Tlv.kt`, `P256.kt`, `Bytes.kt` |
 | `android/core/src/main/resources/capk.txt` | EMV CA public keys (RID, index, exponent, modulus) |
 | `android/core/src/test/` | `EmvTest`, `VectorsTest`, `RpcProbeTest`, `TestnetE2ETest`, the `SimCard` fixture and its `SimKeys`, `resources/vectors.json` |
-| `android/app/src/main/kotlin/app/tapvault/` | App: `MainActivity.kt` (NFC reader mode, `IsoDepTransceiver`), `AppViewModel.kt` (every flow), `Keystore.kt` (`KeystoreSigner`), `Store.kt`, `PendingCard.kt`, `Screens.kt`, `Components.kt`, `Theme.kt` |
+| `android/app/src/main/kotlin/app/tapvault/` | App: `MainActivity.kt` (NFC reader mode, `IsoDepTransceiver`), `AppViewModel.kt` (every flow), `Keystore.kt` (`KeystoreSigner`), `Store.kt`, `PendingCard.kt`, `Screens.kt`, `Onboarding.kt`, `Components.kt`, `Glass.kt` (glass, tab bar, motion), `Theme.kt` |
 | `android/app/build.gradle.kts` | App build: wasm hash check (`verifyWasm`, `copyWasm`), sponsor `BuildConfig` fields |
 | `android/build-apk.sh` | Finds a JDK 17 and builds the debug APK |
 | `tools/` | Python generators: EMV test vectors, the Rust test card key, the simulated card's key chain |
@@ -109,7 +109,7 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 adb logcat -b crash -d        # crash stack traces; the app itself writes nothing to logcat
 ```
 
-The app's own log is in memory: Activity → Technical log → Show (last 60 of 200 lines).
+The app's own log is in memory: Settings → Advanced → Technical log (last 60 of 200 lines).
 
 ### Checking the shipped build and a wallet on chain
 
@@ -225,7 +225,7 @@ Don't break these. Most have a test or a build check behind them.
 | Explorer links | `NearClient.explorerTx`, `NearClient.explorerAccount` |
 | Phone key and the prompt | `Keystore.kt`: `KeystoreSigner.create`, `publicKey`, `sign`, `reason`, `hardwareLabel`; `AppViewModel.phoneIndex` (the phone's signer index, or a readable error) |
 | NFC reader and tap handling | `MainActivity.onResume` (`enableReaderMode`), `IsoDepTransceiver`; `AppViewModel.withCard`, `onTag`, `awaitTag` |
-| Screens and UI text | `Screens.kt` (`Welcome`, `SetupProgress`, `Home`, `Send`, `ActivityScreen`, `CardCheck`, `SettingsScreen`), `Components.kt` (`TapSheet`, `OutcomeToast`, `BusyOverlay`), messages in `AppViewModel.kt`; prompt errors in `Keystore.kt`, network errors in `NearClient.kt` (`readableError`, `awaitOutcome`), card errors in `Emv.kt` (exception messages, `swMeaning`) |
+| Screens and UI text | `Screens.kt` (`Home`, `Send`, `ActivityScreen`, `CardCheck` ("Your card" after setup), `SettingsScreen` with the technical log), `Onboarding.kt` (`Welcome`, `LimitsScreen`, `SetupProgress`), `Components.kt` (`TapSheet`, `OutcomeBanner`, `BusyOverlay`, `SlideToConfirm`), `Glass.kt` (`GlassTabBar`, `AppBackground`, `frosted`), messages in `AppViewModel.kt`; prompt errors in `Keystore.kt`, network errors in `NearClient.kt` (`readableError`, `awaitOutcome`), card errors in `Emv.kt` (exception messages, `swMeaning`) |
 | Local storage | `Store.kt` |
 | Shipped contract and its hash | `contract/res/`, `android/app/build.gradle.kts` (`contractWasmSha256`, `verifyWasm`, `copyWasm`) |
 | Sponsor build config | `android/app/build.gradle.kts` (`buildConfigField` `SPONSOR_ACCOUNT`, `SPONSOR_KEY`) |
