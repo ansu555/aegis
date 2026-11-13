@@ -8,7 +8,7 @@ The first file to read if you are a coding agent or a new contributor.
 - A Rust contract (`contract/`, security logic in `crates/tapvault-core/`) is deployed to each wallet's own account; it verifies both signatures on-chain and enforces limits, delays and freeze. The account's key is deleted at the end of setup.
 - The Android app (`android/app`) creates the wallet, reads the card over NFC and sends every transaction. Its client logic lives in `android/core`: plain Kotlin with no Android APIs, so the same code is tested on the JVM and against live testnet.
 - NEAR testnet only. Hackathon project: NEAR HACKATHON, submission deadline 14 Nov 2026, 23:59 UTC.
-- Status (12 Nov 2026): all tests pass with simulated cards; **nothing has run against a real bank card or a real phone's NFC yet**.
+- Status (14 Nov 2026): all offline tests pass with simulated cards; **nothing has run against a real bank card or a real phone's NFC yet**. The 14 Nov contract build (v0.3: wallets without a card) hasn't run on live testnet yet (docs/STATUS.md).
 
 ## Read first
 
@@ -28,7 +28,7 @@ The first file to read if you are a coding agent or a new contributor.
 | `crates/tapvault-core/` | Dependency-free Rust: `bigint` (RSA public op), `sha1`, `sha256`, `emv` (SDAD check, formats `05`/`95`), `webauthn`, `domain` (every signed message), `policy` (limits, delays, approvals, rate limit), `testcard` (feature `test-card`, tests only) |
 | `crates/tapvault-core/tests/` | EMV vector tests and `emv_vectors.json` (from `tools/gen_emv_vectors.py`) |
 | `contract/src/` | NEAR contract: `lib.rs` (state, `new`, constants), `types.rs`, `auth.rs` (signature checks), `setup.rs`, `proposals.rs`, `execute.rs`, `guard.rs` (cancel, freeze, close_stale), `views.rs`, `events.rs`, `error.rs` |
-| `contract/tests/` | `flows.rs` (29 tests, mocked runtime; 5 for v0.2), `vectors.rs` (writes/checks the Kotlin vectors), `sandbox.rs` (compiled wasm on a local node, opt-in) |
+| `contract/tests/` | `flows.rs` (32 tests, mocked runtime; 5 for v0.2, 3 for v0.3 phone-only), `vectors.rs` (writes/checks the Kotlin vectors), `sandbox.rs` (compiled wasm on a local node, opt-in; two tests: the full flow, and a phone-only wallet that adds its card) |
 | `contract/res/` | The shipped contract build `tapvault_contract.wasm` and its README (hashes, how to replace it) |
 | `android/core/src/main/kotlin/app/tapvault/core/` | Kotlin client: `NearClient.kt`, `Wallet.kt` (`TapvaultWallet`, `Onboarding`), `Model.kt`, `Borsh.kt`, `Domain.kt`, `Emv.kt` (`EmvSession`, `CardService`), `CardBook.kt` (the cards a phone knows per wallet), `Integrity.kt` (wallet check), `Watch.kt` (watchtower rules), `Receivers.kt` (receivers paid before, look-alikes), `Recovery.kt` (recover on a new phone), `Guardian.kt` (guardian codes), `Tlv.kt`, `P256.kt`, `Bytes.kt` |
 | `android/core/src/main/resources/capk.txt` | EMV CA public keys (RID, index, exponent, modulus) |
@@ -47,7 +47,7 @@ Run them from the repository root unless a `cd` says otherwise.
 ### Rust
 
 ```bash
-cargo test                                         # core (20 unit + 7 EMV vectors), contract flows (29) + vectors (1); no testnet needed
+cargo test                                         # core (21 unit + 7 EMV vectors), contract flows (32) + vectors (1); no testnet needed
 cargo test -p tapvault-core                        # core only
 cargo test -p tapvault-contract --test flows       # contract flows only
 cargo test -p tapvault-contract --test vectors     # fails if android/core/src/test/resources/vectors.json is stale
@@ -73,7 +73,7 @@ cd contract && cargo near build non-reproducible-wasm
 cd android
 export JAVA_HOME="$(/usr/libexec/java_home -v 17)"   # macOS; elsewhere point it at a JDK 17
 "$JAVA_HOME/bin/java" -version                       # must say 17
-./gradlew :core:test                                 # EmvTest (15), MultiCardTest (7), Phase2Test (8), Phase3Test (6), Phase4Test (5), VectorsTest (3); the live tests return at once and count as passed
+./gradlew :core:test                                 # EmvTest (15), MultiCardTest (7), Phase2Test (8), Phase3Test (6), Phase4Test (5), Phase5Test (3), SecurityKeyTest (5), VectorsTest (3); the live tests return at once and count as passed
 ```
 
 ### Live testnet tests
@@ -87,6 +87,7 @@ TAPVAULT_TESTNET=1 TAPVAULT_CARD_PROFILE=DDA            ./gradlew :core:test --t
 TAPVAULT_TESTNET=1 TAPVAULT_CARD_PROFILE=VISA_FDDA      ./gradlew :core:test --tests '*TestnetE2E*' --rerun
 TAPVAULT_TESTNET=1 TAPVAULT_CARD_PROFILE=MASTERCARD_CDA ./gradlew :core:test --tests '*TestnetE2E*' --rerun
 TAPVAULT_TESTNET=1 ./gradlew :core:test --tests '*RecoveryE2E*' --rerun   # setup with 2 cards, recovery on a new phone, old phone cancels, guardian
+TAPVAULT_TESTNET=1 ./gradlew :core:test --tests '*PhoneOnlyE2E*' --rerun  # v0.3: wallet without a card, phone alone pays, add the card (+ SetThreshold 2)
 ```
 
 | Variable | Meaning |
@@ -117,9 +118,9 @@ The app's own log is in memory: Settings → Advanced → Technical log (last 60
 
 ```bash
 shasum -a 256 contract/res/tapvault_contract.wasm
-# 3ea83cc88fecda3c727d624e5a935ed1fe20cc5623cafafa4e86969bf7cdc2ec
+# bbb34d0898d18ab7bb8687c61ba8605def6e7c9a33be91659b199d0834ca2f1c
 
-# base58 form (NEAR's code_hash): 5Db4uQQKpTkTtUspdQcx5iVcnvT7MSXCNMdKwhQibwcf
+# base58 form (NEAR's code_hash): DdhpDh3c2gbVJK4iFQLU7C3c2W4Bgg6JYTBSBtBDRcS7
 python3 - contract/res/tapvault_contract.wasm <<'EOF'
 import hashlib, sys
 d = hashlib.sha256(open(sys.argv[1], 'rb').read()).digest()
@@ -170,6 +171,7 @@ Don't break these. Most have a test or a build check behind them.
 9. **Never run two Gradle builds of the same project at once.** A concurrent run once made a test task report a false failure.
 10. **The phone signs what it shows.** Build the action on the phone, compute the hash locally (`Domain.intentHash`) and set `KeystoreSigner.reason` from the same values; don't sign hashes taken from RPC views (`contract/src/views.rs`: clients compute what they sign). `TapvaultWallet.approvePhone` and `cancelByPhone` take a proposal from the RPC, so they parse its action (`ActionJson.parse`), recompute the intent hash and refuse a mismatch (`ProposalInfo.verifiedAction`), and set the prompt from the parsed action (`beforeSign`). Known exception on v0.1 wallets: the card's challenge comes from `get_proposal` (`card_challenge`; that view doesn't return the seed). v0.2 wallets return `card_seed`, and `TapvaultWallet.checkedChallenge` (called by `awaitCardChallenge`) recomputes the challenge from the parsed action and refuses a mismatch. See [docs/DESIGN.md](docs/DESIGN.md), known gaps.
 11. **A card alone never moves funds.** Every transfer needs a P-256 approval (`policy::check_execution`, `Refusal::NeedsUserVerifiedApproval`); card approvals only count against a challenge sealed after the proposal (`seal_challenge`). Read [docs/DESIGN.md](docs/DESIGN.md) before touching `proposals.rs`, `guard.rs` or `policy.rs`.
+12. **Threshold 1 only for a phone-only wallet.** Contract v0.3 allows threshold 1 only while the wallet's one signer is the phone (`policy::threshold_is_valid`, checked in `validate_config`). Adding any key to such a wallet must raise the threshold to 2 in the same change (`AddSigner` + `SetThreshold(2)`, `AppViewModel.addFirstCard`). The app treats a wallet as phone-only by `WalletState.phoneOnly` (threshold 1, no cards), never by a local flag.
 
 ## Making a change safely
 
@@ -223,6 +225,7 @@ Don't break these. Most have a test or a build check behind them.
 | Recover on a new phone | `Recovery.kt`: `Recovery.plan`, `isRecovery`; `Wallet.kt`: `TapvaultWallet.proposeWithCard`, `Onboarding.createFeeAccount`; `AppViewModel.findWalletToRecover`, `startRecovery`, `approveRecovery`, `refreshRecovery`, `finishRecovery`, `myRecovery`; `Join.kt`: `RecoverScreen`; `Store.joinMode` |
 | Guardian phone | `Guardian.kt`: `Guardian.offer`, `decode` (checksum, curve, possession signature via `P256.verify`), `addAction`, `WARNING`; `AppViewModel.becomeGuardian`, `checkGuardianAdded`, `addGuardian`; `Join.kt`: `GuardianScreen`, `AddGuardianSheet` |
 | Fingerprint only (strict key) | `Keystore.kt`: `KeystoreSigner.create(strict)`, `isStrict`; `AppViewModel.switchToStrictKey`, `adoptPendingKey` (in `refresh`); `Store.strictKey`, `phoneAlias`, `pendingAlias`; `WalletIndex.aliasOf`; `Join.kt`: `StrictKeySheet` |
+| Wallet without a card (contract v0.3) | `crates/tapvault-core/src/policy.rs`: `threshold_is_valid`, `PHONE_ONLY_THRESHOLD`; `contract/src/lib.rs`: `validate_config`. Client: `Wallet.kt`: `WalletState.phoneOnly`. App: `Onboarding.kt`: `CreateChoiceSheet` ("Create wallet"), `LimitsScreen` (Bank card Now/Later); `AppViewModel.chooseSetup`, `continueSetup` (threshold from the signers on chain), `continueWithoutCard`, `sendPhoneOnly`, `addFirstCard` (via `addBackupCard`), `requestUnfreeze`; `Store.withCard`; `Screens.kt`: Home "Add your card" notice, `securityPill`; `Security.kt`: "No card yet" |
 | Contract v0.2 (possession, seed, allowlist, upgrade) | `contract/src/proposals.rs`: `propose(…, possession)`, `prove_possession`, `record_possession`; `execute.rs`: `execute_upgrade`, allowlist check; `lib.rs`: `migrate`, `CONTRACT_VERSION`; `types.rs`: `PossessionProof`, `OpPossession`, `ConfigOp::{AllowReceiver, DisallowReceiver, UpgradeCode}`; `domain.rs`: `possession_message`, `card_possession_challenge`; `policy.rs`: `ActionClass::Upgrade`. Client: `Wallet.kt`: `isV02`, `contractVersion`, `provePossession`, `executeUpgrade`, `checkedChallenge`; `Model.kt`: `PossessionProof`; `Domain.kt`: `possessionMessage`, `cardPossessionChallenge`; `NearClient.kt`: `NearAction.RawFunctionCall`. App: `AppViewModel.isV02`, `changeAllowlist`; `Join.kt`: `AllowlistSheet` (Security Center → Instant receivers, v0.2 wallets only) |
 | Security key (app-enforced) | `SecurityKey.kt` (core: PBKDF2 hash, Keystore HMAC pepper, pauses after wrong tries; `SecurityKeyTest`); `Keystore.kt`: `SecurityPepper`; `AppViewModel.requireSecurityKey` (asked in `send` after the card tap, approvals, add/remove card, guardian, allowlist, strict key, unfreeze; never for freeze or cancel), `createSecurityKey` (first setup step), `changeSecurityKey`, `resetSecurityKey` (card tap verified with `provesPossession` + fingerprint); `KeyAndContacts.kt`: `SecurityKeySheet`, `SecurityKeySettingsSheet`; `Store.securityKey`, `keyFailures` |
 | Address book | `AddressBook.kt` (core); `WalletIndex.addressBook` (shared by all wallets); `AppViewModel.saveContact`, `deleteContact`; `KeyAndContacts.kt`: `AddressBookSheet`, `ContactChips` (Send) |

@@ -136,6 +136,44 @@ Wallets created before this build keep their code (invariant 4).
 | App build | Compiles |
 | On a phone | Not yet |
 
+### 14 Nov: create a wallet without a card (contract v0.3, new shipped build)
+
+- **"Create wallet" asks first:** *With my card* (as before) or *Without a
+  card for now*. The sheet says plainly that the card can be added later
+  (Security → Add your card) and that until then the phone key alone
+  approves payments. The limits screen shows the choice ("Bank card: Now /
+  Later") and lets it change; setup's progress screen offers "Continue
+  without a card" when the card step fails.
+- **Without a card:** setup needs no NFC, skips the card steps and
+  finalizes with threshold 1 (decided from the signers on chain, so a card
+  that already landed always gets 2). Send asks the security key, then the
+  fingerprint, and executes at once within the limits; freeze and unfreeze
+  use the phone. Home shows "Add your card" and the pill "Phone only · add
+  your card"; Security shows "No card yet" and the guardian row waits for a card.
+- **Adding the card later:** the existing add-card flow; on a phone-only
+  wallet it proposes `AddSigner(card)` + `SetThreshold(2)` with the card's
+  possession proof. The phone's proposal is the only approval, so no other
+  card taps; it executes after the config delay (1 h) from Activity. Then
+  every payment needs phone + card.
+- **Contract v0.3.0** (`CONTRACT.md`, "Contract v0.3"): threshold 1 only
+  with exactly one signer, the phone. **New shipped build**
+  `DdhpDh3c2gbVJK4iFQLU7C3c2W4Bgg6JYTBSBtBDRcS7` (hex `bbb34d08…2f1c`,
+  352,170 bytes), pinned in `build.gradle.kts`, `README.md` and
+  `contract/res/README.md`. It is also the **first shipped build with the
+  v0.2 features** (possession proofs, seed in the view, allowlist, upgrade):
+  before it the app shipped the 12 Nov v0.1 build. Wallets created before
+  this build keep their code (`5Db4uQQKpTkTtUspdQcx5iVcnvT7MSXCNMdKwhQibwcf`
+  or older) and can't become phone-only.
+
+| Check | Result |
+|---|---|
+| `cargo test` | Pass: core 21 (+ `threshold_rules`) + 7, flows 32 (3 new), vectors 1 |
+| `sandbox.rs` (compiled wasm, nearcore 2.6.5) | Pass: `full_flow_and_gas` unchanged; new `phone_only_wallet_then_add_the_card`: finalize with threshold 1 35.0 Tgas, the phone alone pays (propose 34.9, execute 2.7), propose `AddSigner(card)` + `SetThreshold(2)` with possession 35.7, refused before the delay, executed after it (`ready_ts` moved back in state), then the phone alone is refused |
+| `./gradlew :core:test` | Pass: 56 tests (`Phase5Test` 3 new; the new live `PhoneOnlyE2ETest` returns at once offline); `Phase2Test` checks the new shipped hash |
+| `android/build-apk.sh` | Pass, `verifyWasm` with the new hash |
+| Live testnet (`PhoneOnlyE2ETest`, `TestnetE2ETest` ×3 with the new build) | **Not run**: the faucet answered HTTP 429 ("retry in 6 hours") and no sponsor was set. Run them before the demo (commands in AGENTS.md) |
+| On a phone | Not yet |
+
 ## What is not verified
 
 | Item | Why it matters | How it gets verified |
@@ -258,6 +296,7 @@ move funds. Notes from that pass:
 | A newer RuPay CA index may be missing | Card check says "no CA key for A000000524 index XX" | Add the key to `capk.txt` once its modulus is known |
 | Delayed payments and unfreeze don't execute by themselves | Someone must open Activity and tap Execute after the delay | By design; within the 7-day execution window |
 | Long network waits have no cancel button | The busy overlay stays until the RPC answers or times out | Every call has a timeout, but with all three RPCs unreachable a send can stay busy for several minutes before it reports "may still go through: check Activity" |
+| A phone-only wallet (made without a card) relies on the phone key alone | Within the limits, whoever holds the unlocked phone and its fingerprint or screen lock can pay; it can't be recovered on a new phone or get a guardian | Until the card is added; the app keeps asking for it (Home, Security). Adding it waits 1 h |
 | A single-card wallet can't be recovered without the phone key | Uninstalling the app or clearing its data strands the wallet's test NEAR | Testnet only; don't uninstall during testing |
 | The sponsor key ships inside APKs built with it | Anyone with the APK could spend the sponsor's testnet NEAR | Testnet only; leave `tapvault.sponsor.*` out of `local.properties` to build without it |
 | The contract build isn't reproducible elsewhere | Rebuilding gives a different hash | The app ships the committed file; see [`contract/res/README.md`](../contract/res/README.md) |
