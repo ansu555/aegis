@@ -14,6 +14,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -358,6 +360,69 @@ fun Modifier.liquidBubble(): Modifier {
             ),
             shape,
         )
+}
+
+// ---------------------------------------------------------------- liquid glass button
+
+/**
+ * A full-width pill made of the tab bar's liquid glass: a translucent body, the
+ * bubble's specular rim (bright top-left and bottom-right), a glow along the top
+ * and a soft contact shadow. Pressing squashes it like a drop (wider, flatter)
+ * and a highlight blooms where the finger is; letting go it springs back with
+ * a small wobble. [light] is the call to action: milky white glass, dark text.
+ */
+@Composable
+fun LiquidGlassButton(text: String, modifier: Modifier = Modifier, light: Boolean = false, height: Dp = 60.dp, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(50)
+    val src = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val pressed by src.collectIsPressedAsState()
+    val reduce = rememberReduceMotion()
+    val wobble = spring<Float>(dampingRatio = 0.42f, stiffness = 380f)
+    val sx by androidx.compose.animation.core.animateFloatAsState(if (pressed && !reduce) 1.03f else 1f, wobble, label = "sx")
+    val sy by androidx.compose.animation.core.animateFloatAsState(if (pressed && !reduce) 0.93f else 1f, wobble, label = "sy")
+    val glow by androidx.compose.animation.core.animateFloatAsState(if (pressed) 1f else 0f, tween(if (pressed) 120 else 420), label = "glow")
+    var touch by remember { mutableStateOf(Offset.Unspecified) }
+    val haptic = LocalHapticFeedback.current
+    val body = if (light) Modifier.background(
+        Brush.verticalGradient(0f to Color.White.copy(alpha = 0.97f), 0.55f to Color(0xFFEDEFF2).copy(alpha = 0.92f), 1f to Color(0xFFD9DCE1).copy(alpha = 0.90f)), shape,
+    ) else Modifier.frosted(shape, strength = 0.42f).background(Color.White.copy(alpha = 0.06f), shape)
+
+    Box(
+        modifier.height(height)
+            .graphicsLayer { scaleX = sx; scaleY = sy }
+            .shadow(if (light) 20.dp else 24.dp, shape, ambientColor = if (light) Color.White.copy(alpha = 0.35f) else Color.Black, spotColor = if (light) Color.White.copy(alpha = 0.35f) else Color.Black)
+            .clip(shape)
+            .then(body)
+            .drawBehind {
+                // inner glow along the top, and a faint reflection along the bottom, as in the tab bar's bubble
+                drawRect(Brush.verticalGradient(0f to Color.White.copy(alpha = if (light) 0.55f else 0.16f), 0.4f to Color.Transparent, 0.82f to Color.Transparent, 1f to Color.White.copy(alpha = if (light) 0.25f else 0.06f)))
+                if (glow > 0f && touch != Offset.Unspecified) {
+                    val r = size.height * 1.6f
+                    drawCircle(Brush.radialGradient(listOf((if (light) Color.White else Color.White.copy(alpha = 0.22f)).copy(alpha = (if (light) 0.8f else 0.22f) * glow), Color.Transparent), touch, r), r, touch)
+                }
+            }
+            .border(
+                1.2.dp,
+                Brush.linearGradient(
+                    0f to Color.White.copy(alpha = if (light) 1f else 0.75f), 0.22f to Color.White.copy(alpha = if (light) 0.35f else 0.12f),
+                    0.62f to Color.White.copy(alpha = if (light) 0.15f else 0.06f), 1f to Color.White.copy(alpha = if (light) 0.8f else 0.45f),
+                ),
+                shape,
+            )
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val e = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                        e.changes.firstOrNull()?.let { if (it.pressed) touch = it.position }
+                    }
+                }
+            }
+            .clickable(src, indication = null) { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onClick() }
+            .semantics { role = Role.Button },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text, style = Type.Button.copy(fontSize = 17.sp), color = if (light) Color(0xFF0B0B0D) else Tv.Text, maxLines = 1)
+    }
 }
 
 // ---------------------------------------------------------------- staggered entrance

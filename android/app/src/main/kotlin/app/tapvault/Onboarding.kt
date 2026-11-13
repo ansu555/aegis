@@ -122,9 +122,10 @@ fun Welcome(vm: AppViewModel) {
         }
         Spacer(Modifier.height(14.dp))
         NfcChip(vm)
-        GlassButton(Ic.Plus, "Create wallet", Mint, Mint.copy(alpha = 0.14f)) { vm.go(Screen.Limits) }
-        Spacer(Modifier.height(10.dp))
-        GlassButton(Ic.Wallet, "I have a wallet") { more = true }
+        // Full-width pills of the tab bar's liquid glass: milky white for the call to action, clear for the other.
+        LiquidGlassButton("Create wallet", Modifier.fillMaxWidth(), light = true) { vm.go(Screen.Limits) }
+        Spacer(Modifier.height(12.dp))
+        LiquidGlassButton("I have a wallet", Modifier.fillMaxWidth()) { more = true }
         Row(
             Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 8.dp).clip(RoundedCornerShape(12.dp)).pressable { vm.go(Screen.CardCheck) }.padding(vertical = 4.dp),
             horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
@@ -158,22 +159,6 @@ private fun SlideText(slide: Slide, modifier: Modifier = Modifier) {
         )
         Spacer(Modifier.height(10.dp))
         Text(slide.body, style = Type.Body, color = Tv.Text2, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 12.dp))
-    }
-}
-
-/** A welcome button on the same glass box as a [Group]: icon tile, label, chevron. */
-@Composable
-private fun GlassButton(icon: Ic, text: String, tint: Color = Tv.Text, tileBg: Color = Tv.GlassStrong, onClick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().height(64.dp).surface(22.dp).clip(RoundedCornerShape(22.dp))
-            .pressable(haptic = true, onClick = onClick).semantics { role = Role.Button }
-            .padding(horizontal = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        IconTile(icon, tint, tileBg)
-        Spacer(Modifier.width(14.dp))
-        Text(text, style = Type.BodyStrong, color = tint, maxLines = 1, modifier = Modifier.weight(1f))
-        TvIcon(Ic.Chevron, 18.dp, Tv.Text3)
     }
 }
 
