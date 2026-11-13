@@ -351,11 +351,18 @@ Recommended: **phone + 2 cards (or phone + card + guardian's phone), threshold 2
 | Phone + one card (bag stolen) | Need the second card plus a guardian. The thief has one usable key (the card), which is below threshold. |
 
 With threshold 2 and only phone + one card, losing either one locks the
-wallet. **That is what the app sets up today:** phone (signer 0) + one card
-(signer 1), threshold 2, and there is no screen yet to add a third signer.
-An app wallet therefore can't be recovered: uninstalling the app, clearing
-its data or removing the screen lock destroys the phone key and strands the
-wallet's NEAR. That is acceptable only on testnet. The "Forget this wallet?"
+wallet. **That is what app setup creates:** phone (signer 0) + one card
+(signer 1), threshold 2. Since 13 Nov the app can add **backup cards**
+afterwards (Security Center → Add backup card: a config proposal
+`AddSigner(EmvCard)` by the phone, approved by a card already in the wallet,
+executed after the config delay). With a backup card, a lost or broken card
+is no longer fatal: the phone pays with any remaining card. Removing a lost
+card and recovering on a new phone with two cards work on-chain but have no
+screen in the app yet (plan phases 2 and 3,
+[HARDWARE-WALLET-PLAN.md](HARDWARE-WALLET-PLAN.md)). So losing the phone key
+still strands the wallet in the app today: uninstalling the app, clearing
+its data or removing the screen lock destroys the phone key. That is
+acceptable only on testnet. The "Forget this wallet?"
 dialog in Settings warns about it: "This deletes the phone key. With a
 single card the wallet can't approve anything without it, so its NEAR stays
 locked in the wallet for good (on testnet that is only test NEAR)."
@@ -487,9 +494,14 @@ terminal does). It must not store or transmit it.
    Offline signing avoids the ARQC where a card supports it (an offline TC
    under the TTQ that allows it, or DDA on a card whose GPO produces no
    cryptogram); the app currently asks for an online cryptogram first.
-4. **A single-card wallet can't be recovered.** App wallets are phone + one
-   card, threshold 2, and recovery needs two other signers. Losing the phone
-   key (uninstall, cleared data, removed screen lock) strands the wallet.
+   Since several cards per wallet (13 Nov), a signing tap first identifies
+   the card (`CardService.identify`: one more GPO with a random UN), so each
+   signing tap is at least two card transactions.
+4. **A wallet can't be recovered in the app yet.** App setup creates
+   phone + one card, threshold 2; backup cards can be added afterwards, so a
+   lost card is survivable. Recovering from a lost phone key (uninstall,
+   cleared data, removed screen lock) needs two other signers and a recovery
+   proposal that the app can't make yet, so it still strands the wallet.
    Testnet only.
 5. **Nothing executes by itself, and approval and execution share a
    receipt.** Over-limit payments and unfreezes need someone to send
@@ -508,15 +520,16 @@ terminal does). It must not store or transmit it.
    recompute it, and the card signs whatever the app passes. A dishonest
    RPC can therefore turn each legitimate tap into a signature over a UN of
    its choosing (the power of a skimmer, section 2), for example an
-   approval of a different proposal. (b) Activity →
-   "Approve · phone" signs the intent hash returned by `get_proposal`
-   (`TapvaultWallet.approvePhone`) under that view's description, instead
-   of recomputing the hash from the action. (a) alone can't move funds,
-   because a transfer also needs a phone approval and Send and Request
-   unfreeze compute their intent locally; (a) and (b) together could get a
-   disguised proposal approved by both. Fix: recompute the intent in
-   `approvePhone`, and return the seed in `ProposalView` so clients can check
-   the challenge. (Cancel and freeze also sign values read from the RPC, the
+   approval of a different proposal. (b) **Fixed 13 Nov (app):** Activity →
+   "Approve · phone" used to sign the intent hash returned by `get_proposal`
+   under that view's description. `TapvaultWallet.approvePhone` (and
+   `cancelByPhone`) now parse the view's action (`ActionJson.parse`),
+   recompute `Domain.intentHash`, refuse a mismatch
+   (`ProposalInfo.verifiedAction`) and build the prompt from the parsed
+   action. (a) alone can't move funds, because a transfer also needs a phone
+   approval and every phone approval is now over an intent the phone
+   computed. Remaining fix for (a): return the seed in `ProposalView`
+   (contract v0.2) so clients can check the challenge. (Cancel and freeze also sign values read from the RPC, the
    proposal's intent hash and the freeze nonce, but those messages can only
    cancel a proposal or freeze the wallet.)
 7. **A phone key's biometric lock can't be checked on-chain.** The contract
@@ -525,7 +538,11 @@ terminal does). It must not store or transmit it.
    hardware-backed and has `setUserAuthenticationRequired`).
 8. **`AddSigner` via config proposal has no proof of possession.** A bad key
    only hurts the wallet that adds it. Fix by requiring the new key to sign
-   during the delay window. (The app doesn't propose `AddSigner`.)
+   during the delay window. The app proposes `AddSigner` for backup cards and
+   checks possession itself first: the new card signs an enrolment-style
+   challenge that the phone verifies (`provesPossession`) before anything is
+   proposed. That is an app-side check: a client of one's own could still
+   propose a key nobody holds.
 9. **Some card challenges can be collected in advance.** The propose, cancel
    and enrolment challenges are deterministic, and the freeze challenge is
    public (the `freeze_challenge` view; the nonce starts at 0). A skimmed

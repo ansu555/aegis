@@ -1,6 +1,6 @@
 # Status
 
-Last updated 12 Nov 2026. Submission deadline: 14 Nov 2026, 23:59 UTC.
+Last updated 13 Nov 2026. Submission deadline: 14 Nov 2026, 23:59 UTC.
 
 **In one line:** the contract, the Kotlin client and the Android app work end to
 end on NEAR testnet with simulated cards of all three kinds. Nothing has run
@@ -37,6 +37,44 @@ Visa-style run passed again with the new defaults:
 [payment](https://testnet.nearblocks.io/txns/D1vpzKzVpmpbRr9LUcwvgWcbDXYmiZs2CvHq1QAnT3JK).
 The app build from `941865c` compiles; it hasn't been run on a device.
 
+### 13 Nov: hardware-wallet phase 1 (app only, same contract)
+
+[HARDWARE-WALLET-PLAN.md](HARDWARE-WALLET-PLAN.md) phase 1 is built: several
+cards per wallet (Store keyed by card key hash, old single-card wallets
+migrated), the tapped card's signer index from its key hash, Add backup card
+with an on-phone possession check, Security Center, the Home status pill,
+hold-to-sign, and `FLAG_SECURE`. No contract change: the shipped wasm and its
+hash are unchanged (`android/build-apk.sh` passes `verifyWasm`), and no
+signed bytes changed (`vectors.json` untouched).
+
+| Check | Result |
+|---|---|
+| `./gradlew :core:test` | Pass: `EmvTest` 15, `MultiCardTest` 7 (identify the tapped card among two by key hash, all three card kinds; a stranger card refused before it signs anything, zero signatures for DDA and CDA; a lifted card noticed during the hold; possession check; card 1 refused as already a signer; card book migration and binding; config proposals name the cards they add and remove), `VectorsTest` 3 |
+| `android/build-apk.sh` | Pass, wasm hash check unchanged |
+| `TestnetE2ETest`, all three card kinds | Pass ([DDA](https://testnet.nearblocks.io/address/tv-e2e-9023ecafaa.testnet), [Visa-style](https://testnet.nearblocks.io/address/tv-e2e-908d9f3edb.testnet), [Mastercard-style](https://testnet.nearblocks.io/address/tv-e2e-852efa9847.testnet)): besides the earlier steps, card 1 is refused as a backup (already a signer), card 2 (own key and card number) passes the possession check, the phone proposes `AddSigner(card 2)`, card 2 is refused before signing because it isn't a signer yet, card 1 approves, and executing before the 1 h config delay is refused |
+| `TestnetE2ETest` with `TAPVAULT_WAIT_DELAYS=1` (waits out both 1 h delays: AddSigner executes and voids the open payment, phone + card 2 pays, card 1 removed and refused, card 2 pays at its new index) | LONG_RUN_RESULT |
+| On a phone | Not yet: hold timer reset when the card is lifted, a wrong card refused before any signature, the add-backup flow, Security Center, the pill, `FLAG_SECURE` |
+
+### 13 Nov: hardware-wallet phase 2 (app only, same contract)
+
+Built: lost card (plan 5.4: freeze first, remove with another card, unfreeze
+in the same change), integrity check (5.7: code hash, account keys, phone
+key, setup mode; every 6 h and from Security Center), review warnings (4.4),
+the gap 6b fix (the phone recomputes the intent of any proposal it approves
+or cancels and builds the prompt from it), watchtower alerts (5.9, a
+JobScheduler job about every 15 min, off until turned on) and an app lock
+(fingerprint or screen lock after more than a minute away). Security Center
+gained the protection score and the Checks section; the Home pill shows
+"Wallet check failed". No contract change, same wasm and hash, no signed
+bytes changed.
+
+| Check | Result |
+|---|---|
+| `./gradlew :core:test` | Pass: 35 tests, `Phase2Test` 8 new (gap 6b refusals, integrity verdicts, watchtower alerts, receivers, the shipped wasm's code hash) |
+| `Phase2Test` live (`TAPVAULT_TESTNET=1`) | Pass: `tv-e2e-cc807a553f.testnet` reports code hash `5Db4uQQKpTkTtUspdQcx5iVcnvT7MSXCNMdKwhQibwcf` and no account keys |
+| App build | Compiles and assembles |
+| On a phone | Not yet: everything in [MANUAL-TESTS.md](MANUAL-TESTS.md), phase 2 |
+
 ## What is not verified
 
 | Item | Why it matters | How it gets verified |
@@ -48,6 +86,8 @@ The app build from `941865c` compiles; it hasn't been run on a device.
 | Several wallets on one phone (13 Nov) | Compiles; switching, adding and forgetting wallets and the per-wallet phone keys haven't run on a phone. Each wallet uses two new testnet accounts | On a phone: keep wallet 1, add wallet 2, send from each, switch back and forth, forget wallet 2 and check wallet 1 still sends |
 | The redesigned app UI (13 Nov) | New look, onboarding slides, a separate limits screen, Receive QR, review sheet before sending, pull to refresh, a result banner that no longer shows through. Every screen was checked on the emulator with a view-only copy of an existing testnet wallet; card taps, fingerprint prompts and a full setup can't run there (no NFC) | The real-phone plan, which now uses the new labels |
 | Wallets created before 12 Nov | They run the previous contract build, which rejects Visa online signatures | Create a new wallet; old wallets can't be upgraded |
+| Phase 2 on a phone (13 Nov) | Lost card, wallet check, review warnings, alerts and the app lock compile and their logic is unit-tested; none has run on a device, and Android decides when background jobs actually run | [MANUAL-TESTS.md](MANUAL-TESTS.md), phase 2 |
+| Phase 1 on a phone (13 Nov) | Hold-to-sign, the backup-card flow, Security Center, the Home pill and `FLAG_SECURE` compile and the client logic passes on live testnet with simulated cards; none of the screens has run on a device. `FLAG_SECURE` also makes screenshots, screen recording and `adb exec-out screencap` come out black | [TESTING.md](TESTING.md) steps 15 to 17, checklist 21 to 25 |
 
 ## The 12 Nov review
 

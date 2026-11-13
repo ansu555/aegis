@@ -725,22 +725,33 @@ exists", `nfcEnabled` is "it is switched on".
 - `awaitTag()`: an early tag less than 30 s old is used at once (if the card
   has gone, connecting fails and that try is retried); otherwise it waits for
   the next tap.
-- `withCard(title, block)` runs one card operation:
+- `withCard(title, holding, block)` runs one card operation:
 
 ```
 if Store.legacyDemoWallet: error "This wallet was set up with the old simulated demo card. ..."
-up to 3 tries:
+up to 3 tries (6 when the hold timer is on):
   activity in the foreground, NFC present, NFC on            (else an error, see below)
   tap = TapRequest(title, hint)                               (tap sheet)
   tag = awaitTag(), at most 2 minutes                         (else "No card was tapped. ...")
   tap = TapRequest(title, reading = true)                     ("Keep holding the card…")
   IsoDepTransceiver(tag): IsoDep.connect(), timeout 5,000 ms per command
-  result = block(card); vibrate; return result
-  TagLostException, IOException, SecurityException, WrongCardException:
+  result = block(card); vibrate (250 ms after a hold, else 90 ms); return result
+  TagLostException, IOException, SecurityException, WrongCardException, CardNotUsable:
       log the problem, set a hint, try again
-after 3 failed tries: "That's not the card in this wallet. Use the card you added during setup." if any try was a different card,
+after 3 failed tries: "That card isn't one of this wallet's cards. Use a card you added to this wallet." if any try was a different card,
   else "Couldn't read the card. Hold it flat against the back of the phone, near the camera, for 3 seconds."
 ```
+
+- `tapWalletCard(title, state, challenge, hold, unusable)` is the `block` of
+  every signing tap on a finished wallet (payment, Activity card approval,
+  unfreeze approval, backup-card approval, card freeze with `hold = false`):
+  `CardService.identify` against the wallet's card signers (`get_wallet`,
+  with each card's recipe from `Store.cards`); `unusable` may refuse a card
+  that can't be used for this tap (`CardNotUsable`, e.g. it already approved
+  this proposal); then `holdCard` (countdown of `Store.holdSeconds`, a
+  re-SELECT about every 500 ms, a 20 ms tick each second, `TapRequest.hold`
+  drives the ring in `Components.kt` `HoldPanel`); then `HeldCard.sign`. The
+  signer index is the matched signer's, looked up by key hash at that moment.
 
 Any other exception (a card that can't sign, "the card didn't sign (...)",
 "the card signed, but not the way it did when it was added; tap it again", a
@@ -751,7 +762,9 @@ non-ISO-DEP tag) ends the operation at once.
 | Card pulled away (`TagLostException`) | "card moved away (attempt <n>); hold it still" | "The card moved away too soon. Tap again and keep it still until this screen closes." |
 | Link error (`IOException`) | "card link error: <reason>; tap again" | "The card connection dropped. Tap again and keep it still until this screen closes." |
 | Stale tag after reader mode restarted (`SecurityException`) | "stale card connection: <reason>; tap again" | "Tap the card again and keep it still until this screen closes." |
-| A different card signed: a signature in the enrolled layout that doesn't verify (`WrongCardException`) | "a different card was tapped" | "That's not the card in this wallet. Tap the card you added." |
+| A card whose certified key matches none of the wallet's card signers (`WrongCardException` from `identify`, before any signature) | "a card that isn't one of this wallet's was tapped; it signed nothing" | "That card isn't one of this wallet's cards. Tap a card you added." |
+| Card lifted during the hold countdown (`TagLostException`) | "card moved away (attempt <n>); hold it still" | "Card moved, hold it again. The timer starts over." |
+| A wallet card that can't be used for this tap (`CardNotUsable`) | "card not usable here: <reason>" | the reason, e.g. "<card> already approved this. Tap another card of this wallet." |
 
 | Error | When |
 |---|---|
@@ -759,8 +772,8 @@ non-ISO-DEP tag) ends the operation at once.
 | "This phone has no NFC, so it can't read a bank card." | no NFC adapter |
 | "Turn on NFC in Android settings (Connected devices → NFC), then try again." | NFC off |
 | "No card was tapped. Try again and hold the card flat against the back of the phone." | 2 minutes without a card |
-| "That's not the card in this wallet. Use the card you added during setup." | 3 failed tries, at least one of them a different card |
-| "Card tap cancelled" | "Cancel" on the tap sheet |
+| "That card isn't one of this wallet's cards. Use a card you added to this wallet." | 3 failed tries, at least one of them a different card |
+| "Card tap cancelled" | "Cancel" on the tap sheet, also during the hold countdown |
 | "This card doesn't speak ISO-DEP. Transit cards, stickers and key fobs can't sign; use a contactless bank card." | `IsoDep.get(tag)` is null |
 | "This wallet was set up with the old simulated demo card. Forget it in Settings and set up again with your bank card." | the store has the old `demo_card` flag |
 
@@ -874,8 +887,9 @@ never does.
 | `step` | `setupStep` | 0 nothing, 1 accounts, 2 deployed, 3 card added, 4 finalized | no | after each setup step / Forget |
 | `setup_plan` | `setupPlan` | `Onboarding.Plan.encode()`: `tag\|walletSecret\|gasSecret` | **yes** | before any account is created / once the accounts exist |
 | `pending_card` | `pendingCard` | `PendingCard.encode()`, below | no PAN; the proof only works for this wallet's setup | after the card step / after finalize |
-| `card_recipe` | `cardRecipe` | `CardRecipe.encode()`, e.g. `A0000000041010:CDA:100:0:0` | no | after the card step / Forget |
-| `card_network`, `card_last4` | `cardNetwork`, `cardLast4` | the enrolled card's network name and last four digits, for the card art and Security rows (never more of the PAN) | no | after the card is read at enrolment / Forget |
+| `cards` | `cards` | `CardBook.encode()`: one line per card of the wallet, `keyHash\|recipe\|network\|last4` (key hash in hex as `get_wallet` lists it, `CardRecipe.encode()`, network name, last four digits; never more of the PAN) | no | after the card step at setup, when a backup card is proposed, and when a migrated card gets its key hash / Forget |
+| `card_recipe`, `card_network`, `card_last4` | (read by `cards`) | builds before several cards per wallet: the one enrolled card. Read as entry 1 of `cards` with an empty key hash, which `CardBook.bind` fills in from the chain (the first card signer not already listed, i.e. setup's signer 1) on the next refresh; removed on the first write of `cards` | no | never written now |
+| `hold_seconds` | `holdSeconds` | hold-to-sign timer: 0 (off), 3, 5 (default) or 10 | no | Security Center → Hold card to sign (needs a fingerprint) / Forget |
 | `instant`, `daily` | `instantNear`, `dailyNear` | the limits from the Limits screen, as typed (a comma saved as a dot; defaults "1", "2") | no | "Continue" on Limits / Forget |
 | `demo_card` | `legacyDemoWallet` | set only by old builds that had a simulated demo card; with step > 0 it blocks every card tap | no | never written now |
 

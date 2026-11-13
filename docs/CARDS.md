@@ -316,17 +316,42 @@ and every signature is an RSA computation on the card, so an
 enrolment that needs several plans takes a few seconds: the card must stay
 still until the tap sheet closes.
 
-## Later taps: `CardService.sign`
+## Later taps: `CardService.identify`, then `HeldCard.sign`
 
-Every payment approval, card freeze and unfreeze approval calls
-`CardService.sign(card, key, challenge, recipe)`:
+A wallet can have several cards (a main card and backup cards), so the app
+first finds out which card is on the phone, and only then asks it to sign.
+Every payment approval, card approval in Activity, unfreeze approval, card
+freeze and backup-card approval goes through `AppViewModel.tapWalletCard`:
 
-- `key` is the enrolled card key rebuilt from the chain (`get_wallet`,
-  `SignerInfo.cardKey()`), with its layout.
+1. **Identify** (`CardService.identify(card, candidates)`). `candidates` are
+   the wallet's card signers from `get_wallet` (`WalletState.cards()`), each
+   with its on-chain key (`SignerInfo.cardKey()`) and, if this phone knows
+   the card, its recipe from `Store.cards`. For up to five applications
+   (those named by a known recipe first): SELECT, GPO with a random UN and
+   amount 0, READ RECORD, and the certificate chain (`recoverCardKey`). The
+   recovered key's hash is matched against the candidates' `key_hash`.
+   A card whose key matches none is refused with `WrongCardException`
+   **before it signs anything for the wallet**. (A Visa-style card returns
+   a signature over the random UN in every GPO answer; nothing else.)
+2. **Hold** (only when the hold timer is on, default 5 s, and never for a
+   freeze). `HeldCard.stillThere()` re-SELECTs the application about every
+   500 ms. A lifted card throws `TagLostException`: the sheet says "Card
+   moved, hold it again. The timer starts over." and the next tap starts
+   again from step 1 (it may be a different card). This is an app-side
+   pause, not a card feature: a skimmer with its own reader doesn't wait.
+3. **Sign** (`HeldCard.sign(challenge)`), in the same session, the same way
+   `CardService.sign(card, key, challenge, recipe)` does:
+
+- `key` is the matched card's key from the chain, with its layout.
 - `challenge` is the proposal's sealed `card_challenge` (from `get_proposal`,
   or from the last `list_proposals` when approving in Activity) or the freeze
   challenge `Domain.cardFreezeChallenge(account, freeze_nonce)`.
-- `recipe` is `Store.cardRecipe`, decoded.
+- `recipe` is that card's entry in `Store.cards`, used only if it names the
+  application identify matched.
+
+The signer index sent to the contract is the matched signer's index at that
+moment. Indices move down when a signer is removed (`apply_config` removes
+from a list), so the app never keeps one.
 
 The certificate chain isn't checked at sign time (DDA and CDA attempts still
 read the records, to find the DDOL or CDOL1; fDDA reads only the last one,
@@ -350,7 +375,7 @@ bytes of the challenge, and the SDAD verifies with the enrolled key. Then:
 | Outcome | Thrown | What the app does |
 |---|---|---|
 | A result passes | returns the `CardSig` | submits it |
-| A signature in the enrolled layout (`terminal_data_len` bytes, the challenge at `un_offset`) didn't verify with the enrolled key | `WrongCardException` ("this isn't the card enrolled in the wallet") | tap sheet hint "That's not the card in this wallet. Tap the card you added.", tries again (3 tries in all); if all three fail and any was the wrong card, the error is "That's not the card in this wallet. Use the card you added during setup." |
+| A signature in the enrolled layout (`terminal_data_len` bytes, the challenge at `un_offset`) didn't verify with the enrolled key | `WrongCardException` ("this isn't the card enrolled in the wallet") | tap sheet hint "That card isn't one of this wallet's cards. Tap a card you added.", tries again (3 tries in all); if all three fail and any was the wrong card, the error is "That card isn't one of this wallet's cards. Use a card you added to this wallet." |
 | Signatures came back, but none in the enrolled layout | `EmvException("the card signed, but not the way it did when it was added; tap it again")` | error shown, no retry; for Send, with the same addition as the next row |
 | No signature at all | `EmvException("the card didn't sign (<last problem>)")` | error shown, no retry; for Send, the error adds "Payment #<id> is saved and waits 10 minutes for your card: ..." (the card can still approve it until 600 s after its challenge was sealed) |
 
@@ -435,11 +460,28 @@ before the TTQ field existed, which always sent `37004000`) decodes with
 `TTQ_OFFLINE_OK`. Anything unreadable decodes to null, and `sign` then relies
 on the PPSE and the fallbacks.
 
-Where it lives: `Store.cardRecipe` (SharedPreferences key `card_recipe`),
-written in `AppViewModel.continueSetup` right after enrolment, read by
-`AppViewModel.recipe()` before every signing tap (payments, card approvals,
-freeze, unfreeze), and shown in Settings ("Bank card over NFC · <label>").
-It is not on-chain and holds no card number.
+Where it lives: `Store.cards` (SharedPreferences key `cards`, one
+`CardBook` line per card, keyed by key hash), written in
+`AppViewModel.continueSetup` right after enrolment and in
+`AppViewModel.addBackupCard` for a backup card, read by
+`AppViewModel.tapWalletCard` before every signing tap, and shown in Settings
+and Security Center. Builds before several cards per wallet kept one card
+under `card_recipe`, `card_network` and `card_last4`; `CardBook.load` reads
+it as entry 1, and the next refresh binds it to the first card signer of the
+wallet. It is not on-chain and holds no card number.
+
+### Backup cards: possession is checked on the phone
+
+After setup the contract adds a card through a config proposal
+(`ConfigOp.AddSigner`) and checks no proof of possession for it (DESIGN gap
+8). So `AppViewModel.readBackupCard` enrols the new card as at setup:
+certificate chain, key rules, a signing method, and a signature over
+`Domain.cardEnrollChallenge(wallet, signer_count, key_hash)`. It refuses the
+card if its key hash is already a signer (`AlreadySignerException`, thrown
+before the card signs) and keeps it only if `provesPossession` (the
+signature verifies under the recovered key with the challenge at the place
+the key's layout says) passes. That challenge's domain only works during
+setup, which is over, so the signature can't be reused on-chain.
 
 ## What the contract sees and checks
 
@@ -939,10 +981,9 @@ no report; see [ANDROID.md](ANDROID.md#nfc-and-card-taps).
 | "unreadable answer (...)" | TLV that doesn't parse, or a truncated DDOL or CDOL1 ("truncated DOL tag", "truncated DOL length") |
 
 At payment time (`CardService.sign`) there is no report; the tap sheet and
-the error say what happened: "That's not the card in this wallet. Tap the card
-you added." (a signature in the enrolled layout came back but didn't verify;
-after three tries, "That's not the card in this wallet. Use the card you added
-during setup."), "the card signed, but not the way it did when it was added;
+the error say what happened: "That card isn't one of this wallet's cards. Tap a card you added." (a signature in the enrolled layout came back but didn't verify;
+after three tries, "That card isn't one of this wallet's cards. Use a card
+you added to this wallet."), "the card signed, but not the way it did when it was added;
 tap it again" (signatures came back, none in the enrolled layout), "the card
 didn't sign (<last problem>)", or, after three failed tries with no wrong
 card among them, "Couldn't read the card. Hold it flat against the back of

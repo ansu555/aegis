@@ -72,18 +72,17 @@ the contract and in native tests:
   (`ERR_INIT_NOT_SELF`), `setup_finalize` must be signed by it
   (`ERR_FINALIZE_SIGNER`), and `seal_challenge` and `on_transfer` are
   `#[private]` (only the contract can call them).
-- **The app trusts the RPC for reads only, with three exceptions.** In Send
-  and Request unfreeze the phone builds the action itself, computes the
-  intent hash itself (`Domain.intentHash`) and sets the prompt text from the
-  same values. A lying RPC can make those calls fail or show wrong balances;
-  it can't change what those prompts approve. The exceptions (see
+- **The app trusts the RPC for reads only, with one exception.** In Send,
+  Add backup card, I lost this card and Request unfreeze the phone builds the
+  action itself, computes the intent hash itself (`Domain.intentHash`) and
+  sets the prompt text from the same values. Activity → "Approve · phone" and
+  "Cancel" start from a proposal the RPC returned, so the phone parses its
+  action (`ActionJson.parse`), recomputes the intent hash, refuses if it
+  differs from the view's (`ProposalInfo.verifiedAction`: "The node returned
+  a request whose details don't match its hash…"), and builds the prompt
+  from the parsed action. A lying RPC can make calls fail or show wrong
+  balances; it can't change what a prompt approves. The exception (see
   [Known gaps](#known-gaps)):
-  - Activity → "Approve · phone" signs the intent hash returned by
-    `get_proposal` under a description taken from `list_proposals`
-    (`TapvaultWallet.approvePhone`).
-  - Activity → "Cancel" signs a cancel over the intent hash returned by
-    `get_proposal` (`TapvaultWallet.cancelByPhone`). Safe direction: at worst
-    a different proposal is cancelled.
   - The card signs the `card_challenge` returned by `get_proposal`. The view
     doesn't return the seed, so the phone can't recompute the challenge, and
     `CardService.sign` only checks that the card signed what it was given.
@@ -431,7 +430,7 @@ transaction (the card's ATC goes up). Details of the probe: [CARDS.md](CARDS.md)
 | Phone public key | On-chain signer 0 | The app reads it back from the Keystore certificate (`KeystoreSigner.publicKey`) |
 | Card private key | The card's chip | Never leaves it |
 | Card public key and terminal-data layout | On-chain signer 1; `Store.pendingCard` during setup | `PendingCard` holds the key, the enrolment proof, the network and the last four digits; no PAN |
-| How the card signs (`CardRecipe`) | `Store.cardRecipe` | AID, method, amount, variant, TTQ; reused first on every tap |
+| How each card signs (`CardRecipe`) | `Store.cards` (`CardBook`, keyed by card key hash) | AID, method, amount, variant, TTQ; reused first on every tap of that card |
 | PAN, track data, cardholder name, certificates | Memory, during one card session (`EmvSession`) | Never stored, logged or sent |
 | Wallet account id and temporary key | `Store.walletAccount`, `Store.walletKey` | The key is cleared after setup |
 | Fee account id and key | `Store.gasAccount`, `Store.gasKey` | Kept for the wallet's life |
@@ -587,9 +586,9 @@ delay, the approvals or a freeze; see Instant payment).
   2 minutes for a tap, and retries up to three taps when the card moves away
   ("The card moved away too soon. Tap again and keep it still until this
   screen closes."), the link drops, the tag goes stale, or a different card
-  answers ("That's not the card in this wallet. Tap the card you added.").
-  After three failed taps: "That's not the card in this wallet. Use the card
-  you added during setup." if a different card answered any of them,
+  answers ("That card isn't one of this wallet's cards. Tap a card you added.").
+  After three failed taps: "That card isn't one of this wallet's cards. Use a
+  card you added to this wallet." if a different card answered any of them,
   otherwise "Couldn't read the card. Hold it flat against the back of the
   phone, near the camera, for 3 seconds."
 - `KeystoreSigner.sign` waits until the app is on screen before prompting
@@ -649,19 +648,13 @@ about how the system is built:
 - No upgrade path: each wallet keeps the contract code it was deployed with.
 - The app doesn't verify Android key attestation, so "hardware-backed and
   biometric-gated" is the app's word, not something the contract checks.
-- `TapvaultWallet.approvePhone` signs the intent hash returned by the RPC
-  (`get_proposal`) instead of recomputing it from the action; the prompt text
-  comes from another RPC view (`list_proposals`). The app's own flows never
-  need this button (the phone proposes everything), but a dishonest RPC could
-  make it approve something other than what is shown.
 - The card signs the `card_challenge` from `get_proposal` without the phone
   being able to check it (the view has no seed). A dishonest RPC can turn a
   legitimate tap into a card signature over a challenge of its choosing.
-  That alone can't move funds (transfers need the phone's approval, and Send
-  and Request unfreeze compute their intent locally), but together with the
-  `approvePhone` gap it could. `TapvaultWallet.cancelByPhone` likewise signs
-  a cancel over the RPC's intent hash (safe direction). Details and the
-  planned fix: [DESIGN.md](DESIGN.md), known gaps.
+  That alone can't move funds: transfers need the phone's approval, and the
+  phone recomputes every intent it signs (the `approvePhone` half of this gap
+  was closed on 13 Nov). Details and the planned fix (seed in the view,
+  contract v0.2): [DESIGN.md](DESIGN.md), known gaps.
 - On a phone that still holds a wallet made by an earlier build with a
   simulated card (`Store.legacyDemoWallet`), `withCard` refuses every card
   read, Card check included: "This wallet was set up with the old simulated

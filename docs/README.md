@@ -14,6 +14,8 @@ real phone's NFC yet ([STATUS.md](STATUS.md)).
 | [OVERVIEW.md](OVERVIEW.md) | What Tapvault is, who does what, the user journey from install to payment, the policy, the glossary (EMV, Android, NEAR, Tapvault terms), hackathon context |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Components and boundaries, accounts and keys, sequence diagrams for every flow, where state lives, the NEAR client, error handling |
 | [CONTRACT.md](CONTRACT.md) | Contract API reference: argument types, every method and its checks, views, events, errors, constants, signed messages, the shipped build, changing the contract safely |
+| [HARDWARE-WALLET-PLAN.md](HARDWARE-WALLET-PLAN.md) | Plan, phase 1 built (13 Nov): hardware-wallet features for Tapvault, Security Center and screens, user flows (backup card, lost card, recover on a new phone, hold-to-sign), build order |
+| [MANUAL-TESTS.md](MANUAL-TESTS.md) | What only a person with a phone and real cards can test, per plan phase, with what is already tested automatically |
 | [DESIGN.md](DESIGN.md) | Security model and threat analysis: why the card challenge is sealed in a later block, limits and delays, freeze and cancel rules, known gaps |
 | [CARDS.md](CARDS.md) | How the app talks to bank cards over NFC: EMV basics, the three signing methods (DDA, fDDA, CDA), enrolment and later taps command by command, CA keys, privacy, reading a Card check report, expected behaviour per network |
 | [ANDROID.md](ANDROID.md) | The Android app's internals, build, install, configuration (sponsor), logs |

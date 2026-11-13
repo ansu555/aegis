@@ -57,6 +57,8 @@ Three levels of evidence are used throughout these docs:
 | Reference vectors | `contract/tests/vectors.rs` | Writes/compares `android/core/src/test/resources/vectors.json` | 1 | No |
 | Sandbox | `contract/tests/sandbox.rs` (`#[ignore]`) | Compiled wasm on a local node: outsider can't initialise, setup with a 1024-bit and a 1984-bit card, key deleted, two payments, freeze by card, gas per receipt | 1 (ignored by default) | First run downloads nearcore |
 | `EmvTest` | `android/core/src/test/kotlin/app/tapvault/core/EmvTest.kt` | CA key file, TLV, enrolment through the certificate chain, chain refused without the test CA key, wrong card, Card check report, every `SimCard` profile, fDDA full terminal data and format 95, format byte check, Mastercard-style zero-amount fallback, truncated data object lists, recipe encoding, reports never carry the PAN, P-256 DER, Base58 | 15 | No |
+| `MultiCardTest` (13 Nov) | `.../MultiCardTest.kt` | Several cards per wallet: the tapped card identified among two by key hash for every profile, then signs for that key; a card that isn't the wallet's refused before it signs (no signature at all for DDA and CDA); a card lifted during the hold noticed; backup-card possession check; a card already a signer stops the enrolment; card book migration from the single-card store and binding to setup's card; config proposals name the cards they add and remove | 7 | No |
+| `Phase2Test` (13 Nov) | `.../Phase2Test.kt` | Every action parses back from its view JSON to the same Borsh bytes; the phone refuses a proposal whose action doesn't match its intent hash (other receiver, other id, other wallet, unreadable action); the shipped wasm's code hash; the integrity check's pass, note (previous build) and each failure; watchtower alerts once per new thing (unknown request, frozen, signer change, integrity) and never on the first look; receivers and look-alikes (1–2 letters); live with `TAPVAULT_TESTNET=1`: `codeHash` and `accessKeys` of a testnet wallet | 8 | One test, opt-in |
 | `VectorsTest` | `.../VectorsTest.kt` | Kotlin Borsh/JSON/messages equal the Rust bytes in `vectors.json` | 3 | No |
 | `RpcProbeTest` | `.../RpcProbeTest.kt` | How `NearClient` reports a view on an account without code (`CodeDoesNotExist`) and on a missing account (`UNKNOWN_ACCOUNT`) | 1 | Live testnet, only with `TAPVAULT_TESTNET=1` |
 | `TestnetE2ETest` | `.../TestnetE2ETest.kt` | The whole wallet on testnet with the app's own client code ([below](#live-testnet-test)) | 1 | Live testnet, only with `TAPVAULT_TESTNET=1` |
@@ -151,7 +153,7 @@ module too. Build setup details: [ANDROID.md](ANDROID.md).
 ```bash
 cd android
 export JAVA_HOME=$(/usr/libexec/java_home -v 17)   # macOS; elsewhere point JAVA_HOME at a JDK 17
-./gradlew :core:test                               # all 20 Kotlin tests
+./gradlew :core:test                               # all 35 Kotlin tests
 ./gradlew :core:test --tests '*EmvTest*'           # one class
 ```
 
@@ -159,7 +161,7 @@ export JAVA_HOME=$(/usr/libexec/java_home -v 17)   # macOS; elsewhere point JAVA
 installed; `"$JAVA_HOME/bin/java" -version` must report `17.x`
 (`android/build-apk.sh` does this check itself).
 
-Expected: 20 tests, all `PASSED` (`testLogging` prints one line per test).
+Expected: 35 tests, all `PASSED` (`testLogging` prints one line per test).
 **`RpcProbeTest` and `TestnetE2ETest` also show `PASSED` without
 `TAPVAULT_TESTNET=1`, but they returned immediately and tested nothing.**
 `TestnetE2ETest` prints
@@ -238,7 +240,20 @@ What one run does, in order (each line is printed with an `[e2e]` prefix):
    with `Delay has not elapsed`, then the phone cancels it.
 7. Asserts a card signature for one proposal can't approve the next
    (`Card signature verification failed`).
-8. Freezes with a card tap and asserts a new transfer is refused.
+8. Backup card: card 1 is refused as a backup (already a signer, it signs
+   nothing); a second `SimCard` with its own key (`TestCards.random()`) and
+   card number (`PAN2`) signs the enrolment-style challenge and passes
+   `provesPossession`; the phone proposes `Config{AddSigner(card 2)}`; card 2
+   is refused before signing (not a signer yet); card 1, found by key hash,
+   approves; `execute` is refused with `Delay has not elapsed`.
+9. Only with `TAPVAULT_WAIT_DELAYS=1` (adds about 2 h 10 min): waits out the
+   config delay and executes; card 2 is a signer and the open payment from
+   step 7 is void (signer epoch); pays 0.2 NEAR with phone + card 2 (signer
+   index from its key hash); proposes `RemoveSigner(card 1)`, approved by
+   card 2, waits, executes; card 1 is gone and refused before signing; card 2
+   has moved down to index 1 and pays again.
+10. Freezes with a card tap (card 2 after step 9) and asserts a new transfer
+    is refused.
 
 Expected per profile: `DDA` signs with 4 bytes of terminal data, format 05;
 `VISA_FDDA` with 19 bytes, format 95; `MASTERCARD_CDA` with 4 bytes, format 05,
@@ -659,34 +674,33 @@ clear" / "Nothing waiting for approval"; the balance is unchanged. On failure:
    card. If you can, try one of the same network as the enrolled card first,
    then one of another network.
 
-Expect one of:
+Every tap first reads the card's certificate chain to find which of the
+wallet's cards it is, so a different card is refused **before it signs
+anything** (no hold countdown starts for it). Expect one of:
 
-- **Same network, a card that signs the same way as the enrolled one:** the
-  sheet comes back with "That's not the card in this wallet. Tap the card you
-  added." Hold the enrolled card: **Sent 0.1 NEAR**.
-- **Same network, a card that signs another way:** the box "That didn't work"
-  with "the card signed, but not the way it did when it was added; tap it
-  again", then the "Payment #`<n>` is saved …" text. Finish the payment as in
-  the next case.
-- **Another network, or a card that can't sign this way:** the box "That
-  didn't work" with "the card didn't sign (…)" (for another network usually
-  "card answered SELECT `<AID>` with 6A82 (not found)"), then "Payment #`<n>` is
-  saved and waits 10 minutes for your card: send the same amount again, or
-  approve or cancel it in Activity." Within 10 minutes, tap **Approve, then tap
-  card** again with the same amount and receiver: there is **no** prompt this
-  time (Log: "finishing unfinished payment #`<n>`"); hold the enrolled card →
-  **Sent 0.1 NEAR**.
+- **A bank card whose network key the app knows (most cards):** the sheet
+  comes back with "That card isn't one of this wallet's cards. Tap a card you
+  added." (Log: "a card that isn't one of this wallet's was tapped; it signed
+  nothing"). Hold the enrolled card: the hold countdown runs, then **Sent 0.1
+  NEAR**.
+- **A card whose chain can't be read:** the box "That didn't work" with
+  "couldn't read the card's key (…)", then "Payment #`<n>` is saved and waits
+  10 minutes for your card: send the same amount again, or approve or cancel
+  it in Activity." Within 10 minutes, tap **Approve, then tap card** again
+  with the same amount and receiver: there is **no** prompt this time (Log:
+  "finishing unfinished payment #`<n>`"); hold the enrolled card → **Sent 0.1
+  NEAR**.
 
 Never acceptable: a payment going out after only the wrong card was tapped, or
 two 0.1 NEAR payments from this step. Three failed tries that include a
-wrong-card tap end with "That's not the card in this wallet. Use the card you
-added during setup." followed by the "Payment #`<n>` is saved …" text; the
+wrong-card tap end with "That card isn't one of this wallet's cards. Use a
+card you added to this wallet." followed by the "Payment #`<n>` is saved …" text; the
 enrolled card then finishes the same payment as above.
 
 Record: which cards, the exact messages, Log lines ("a different card was
 tapped", "finishing unfinished payment #…"). On failure: **S**, **L**, **W**,
-and **R** for the other card. If the **enrolled** card is answered with "That's
-not the card in this wallet" (a bug) or "the card signed, but not the way it
+and **R** for the other card. If the **enrolled** card is answered with "That
+card isn't one of this wallet's cards" (a bug) or "the card signed, but not the way it
 did when it was added" (it answered differently than at setup), send **L**
 and **R** of the enrolled card.
 
@@ -817,11 +831,71 @@ to `<receiver>`". The balance drops by 1.5 and `<receiver>` receives it. A
 sponsor-funded wallet may not have enough left; top it up first (Home →
 Receive shows the account to send testnet NEAR to).
 
-#### 15. Finish
+#### 15. Hold card to sign
+
+The hold timer is on by default (5 s): after the card is read and recognised,
+a ring counts down and the card signs only at zero. It is a pause in the app,
+and the sheet says so.
+
+1. Send `0.1` to `<receiver>`, approve the prompt, hold the enrolled card.
+   Expect "Hold your card", the card's name ("`<network>` •••• `<last4>`
+   found"), a ring counting 5, 4, 3, 2, 1 with a light tick each second, then
+   "Signing" and **Sent 0.1 NEAR**.
+2. Again, and lift the card at about 2 seconds left. Expect the sheet to come
+   back with "Card moved, hold it again. The timer starts over." Hold it
+   again: the count restarts at 5. Exactly one payment goes out.
+3. Again, and tap **Cancel** during the countdown: "Card tap cancelled", then
+   the "Payment #`<n>` is saved …" text. Nothing was signed; cancel the
+   payment in Activity.
+4. Settings → Security Center → **Hold card to sign** → `3 s`: a fingerprint
+   prompt "Set the card hold timer to 3 s"; the row then shows `3 s`. Try
+   `Off`: the next payment signs without a countdown. Set it back to `5 s`.
+5. **Freeze** never waits (no countdown); skip it here, step 9 covers it.
+
+Record: the countdown seen, the reset, Log lines "`<card>` identified (signer
+1)". On failure: **S** (a photo), **L**.
+
+#### 16. Add a backup card
+
+Needs a second contactless card that showed **Can sign** in step 2.
+
+1. Home: the pill under the balance reads "No backup card · add one"
+   (amber). Tap it: Security Center opens. Check the rows match the
+   wallet: Keys "2 of 2 needed", This phone, the main card; Protection
+   instant and daily limit, waits 1 h / 1 h / 24 h, Hold card to sign 5 s.
+2. **Add backup card** → **Hold the new card** → hold the **enrolled** card
+   first: "That card is already one of this wallet's cards. Hold a different
+   card to add it as a backup."
+3. Again with the second card: the review sheet shows its network and last
+   four digits, "Takes effect in 1 h", "Approvals needed Stay 2", "Test
+   signature Verified on this phone", and, if anything is waiting in
+   Activity, "Waiting requests will be voided".
+4. **Slide to add** → fingerprint ("Add `<card>` as a backup card (takes
+   effect after 1 h)") → the tap sheet asks for a card already in this
+   wallet. Hold the **new** card first: "That card isn't one of this
+   wallet's cards" (it isn't a signer yet). Then the main card: countdown,
+   then **Backup card added in 1 h**.
+5. Security Center shows "Adding `<card>`" with a countdown; Activity shows
+   "Add backup card". After 1 h: Activity → **Execute** → **Done**. Security
+   Center now lists the backup card; Keys "2 of 3 needed"; the Home pill
+   reads "Protected · 2 cards · phone" (green).
+
+Record: the messages, the explorer link of the execute. On failure: **S**,
+**L**, **R** of the new card.
+
+#### 17. Pay with the backup card
+
+1. Send `0.1` to `<receiver>` and hold the **backup** card: countdown with
+   the backup card's name, then **Sent 0.1 NEAR**. Log: "`<card>` identified
+   (signer 2)".
+2. Send `0.1` again with the **main** card: it still works (signer 1).
+
+#### 18. Finish
 
 - Leave the app installed; don't clear its data.
-- Send the test report (template below) with every card report, the
-  screenshots and the wallet account name.
+- Send the test report (template below) with every card report, the photos
+  of the screen and the wallet account name. Screenshots come out black on
+  purpose (`FLAG_SECURE`), so photograph the screen with another device.
 
 ## Acceptance checklist
 
@@ -847,6 +921,11 @@ Receive shows the account to send testnet NEAR to).
 | 18 | Airplane mode | Readable error, no crash, at most one payment, recovers afterwards | |
 | 19 | Delayed payment (optional) | "Done" after 1 h; `<receiver>` got the amount | |
 | 20 | No crashes | The app never closed by itself | |
+| 21 | Hold timer | Countdown seen; lifting the card restarts it; one payment only; cancel signs nothing | |
+| 22 | Wrong card before signing | A different card is refused with "isn't one of this wallet's cards" before any countdown | |
+| 23 | Add backup card | Enrolled card refused as already a signer; new card verified, proposed, approved by the main card; executed after 1 h; pill turns green | |
+| 24 | Pay with backup card | "Sent 0.1 NEAR" with the backup card; the main card still pays | |
+| 25 | Screen privacy | A screenshot of the app comes out black | |
 
 ## Test report template
 

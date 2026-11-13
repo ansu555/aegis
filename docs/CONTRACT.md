@@ -509,9 +509,10 @@ pub fn approve_p256(&mut self, id: U64, signer_index: u8, sig: P256Sig)
   it needs, `ready_ts = now` (once).
 - **Events:** `approved` `{"id": "4", "signer_index": 0}`, then `ready`
   `{"id": "4"}` if it became ready.
-- **Client note:** `TapvaultWallet.approvePhone` signs the `intent_hash`
-  that `get_proposal` returns. A client that doesn't trust its RPC should
-  recompute the intent from the action it shows (`Domain.intentHash`). See
+- **Client note:** `TapvaultWallet.approvePhone` doesn't sign the
+  `intent_hash` that `get_proposal` returns as is: it recomputes it from the
+  view's action (`ProposalInfo.verifiedAction`) and refuses a mismatch. Any
+  client that doesn't trust its RPC should do the same. See
   [DESIGN.md](DESIGN.md) section 7.
 - **Gas:** not measured; dominated by the ~32 Tgas P-256 check.
 
