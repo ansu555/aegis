@@ -76,6 +76,13 @@ data class WalletState(
     /** The first card signer (setup's card while no card has been removed). */
     fun card() = signers.firstOrNull { it.isCard }
 
+    /**
+     * Contract v0.3: a wallet set up without a card. Its one signer, the
+     * phone key, approves alone (threshold 1) until a card is added together
+     * with `SetThreshold(2)`.
+     */
+    val phoneOnly get() = threshold == 1 && cards().isEmpty()
+
     /** Every card signer. Indices move down when a signer is removed, so look cards up by key hash. */
     fun cards() = signers.filter { it.isCard }
 

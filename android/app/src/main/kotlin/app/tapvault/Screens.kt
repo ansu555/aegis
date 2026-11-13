@@ -315,8 +315,16 @@ private fun Home(vm: AppViewModel, ui: HomeUi) {
 
     if (frozen) {
         Spacer(Modifier.height(24.dp))
-        Notice(Ic.Freeze, "Wallet frozen", "No transfers can go out. Unfreezing needs your phone and your card, then waits ${hoursLabel(w!!.delays.config)}.", Tv.Ice) {
+        Notice(Ic.Freeze, "Wallet frozen", "No transfers can go out. Unfreezing needs your phone" + (if (w!!.phoneOnly) "" else " and your card") + ", then waits ${hoursLabel(w.delays.config)}.", Tv.Ice) {
             TvButton("Request unfreeze", Modifier.fillMaxWidth(), Btn.Secondary, icon = Ic.Key, height = 48.dp, enabled = idle) { vm.requestUnfreeze() }
+        }
+    }
+
+    // Phone-only wallet (set up without a card): invite the card until it's added or being added.
+    if (w?.phoneOnly == true && !frozen && vm.pendingCardAdds.isEmpty()) {
+        Spacer(Modifier.height(24.dp))
+        Notice(Ic.Card, "Add your card", "Your phone key alone approves payments for now. Add your bank card so every payment needs both.", Tv.Warn) {
+            TvButton("Set up my card", Modifier.fillMaxWidth(), Btn.Secondary, icon = Ic.Plus, height = 48.dp, enabled = idle) { vm.go(Screen.Security) }
         }
     }
 
@@ -353,11 +361,15 @@ private fun Home(vm: AppViewModel, ui: HomeUi) {
 
     if (ui.picker) WalletPicker(vm) { ui.picker = false }
     if (ui.receive) ReceiveSheet(vm) { ui.receive = false }
-    if (confirmFreeze) ConfirmDialog(
-        "Freeze the wallet?",
-        "One card tap stops every transfer. Unfreezing needs your phone and card, then waits ${hoursLabel(w?.delays?.config ?: 3600)}.",
-        "Freeze", { confirmFreeze = false; vm.freezeWithCard() }, { confirmFreeze = false }, icon = Ic.Freeze,
-    )
+    if (confirmFreeze) {
+        val phoneOnly = w?.phoneOnly == true
+        ConfirmDialog(
+            "Freeze the wallet?",
+            if (phoneOnly) "Your fingerprint stops every transfer. Unfreezing needs your phone, then waits ${hoursLabel(w?.delays?.config ?: 3600)}."
+            else "One card tap stops every transfer. Unfreezing needs your phone and card, then waits ${hoursLabel(w?.delays?.config ?: 3600)}.",
+            "Freeze", { confirmFreeze = false; if (phoneOnly) vm.freezeWithPhone() else vm.freezeWithCard() }, { confirmFreeze = false }, icon = Ic.Freeze,
+        )
+    }
 }
 
 /** Home's sheets, opened from its pinned header. */
@@ -403,6 +415,7 @@ private fun securityPill(vm: AppViewModel): Triple<String, Color, Screen>? {
         w.frozen -> Triple("Frozen · tap to unfreeze", Tv.Ice, Screen.Security)
         vm.proposals.any { !it.stale && (phoneIdx == null || !it.approvedBy(phoneIdx)) } -> Triple("Unknown request · review", Tv.Danger, Screen.Activity)
         vm.integrity?.ok == false -> Triple("Wallet check failed", Tv.Danger, Screen.Security)
+        w.phoneOnly -> Triple(if (vm.pendingCardAdds.isEmpty()) "Phone only · add your card" else "Card being added", Tv.Warn, Screen.Security)
         cards < 2 -> Triple("No backup card · add one", Tv.Warn, Screen.Security)
         else -> Triple("Protected · $cards cards · phone", Tv.Positive, Screen.Security)
     }
@@ -521,7 +534,7 @@ private fun ColumnScope.Send(vm: AppViewModel) {
             }
             Spacer(Modifier.height(14.dp))
             when {
-                parsed == null -> Caption("You'll approve with your fingerprint, a card tap and your security key", color = Tv.Text3)
+                parsed == null -> Caption(if (w?.phoneOnly == true) "You'll approve with your security key and your fingerprint" else "You'll approve with your fingerprint, a card tap and your security key", color = Tv.Text3)
                 instant -> StatusPill("Goes out instantly", Tv.Positive, Ic.CheckCircle)
                 else -> StatusPill("Waits ${hoursLabel(w?.delays?.transfer ?: 3600)} · you can cancel it", Tv.Warn, Ic.Timer)
             }
@@ -574,16 +587,14 @@ private fun ColumnScope.Send(vm: AppViewModel) {
             }
             Spacer(Modifier.height(16.dp))
             Text("Next", style = Type.CaptionStrong, color = Tv.Text2, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp)) {
-                StepNum(1); Spacer(Modifier.width(10.dp)); Text("Confirm with your fingerprint", style = Type.Body)
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp)) {
-                StepNum(2); Spacer(Modifier.width(10.dp)); Text("Tap your bank card on the phone", style = Type.Body)
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp)) {
-                StepNum(3); Spacer(Modifier.width(10.dp)); Text("Type your security key", style = Type.Body)
+            // Phone-only wallet: security key first, then the fingerprint; no card tap.
+            val steps = if (w?.phoneOnly == true) listOf("Type your security key", "Confirm with your fingerprint")
+            else listOf("Confirm with your fingerprint", "Tap your bank card on the phone", "Type your security key")
+            steps.forEachIndexed { i, step ->
+                if (i > 0) Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp)) {
+                    StepNum(i + 1); Spacer(Modifier.width(10.dp)); Text(step, style = Type.Body)
+                }
             }
             Spacer(Modifier.height(22.dp))
             SlideToConfirm("Slide to approve") { review = false; vm.send(to, amount) }
@@ -902,7 +913,8 @@ private fun SettingsScreen(vm: AppViewModel) {
             )
             w?.let {
                 GroupDivider()
-                Row_(Ic.ShieldCheck, "Approvals", "${it.threshold} of ${it.signers.size} signers for every payment; neither key alone can move funds", tint = Tv.Positive, iconBg = Tv.PositiveSoft)
+                if (it.phoneOnly) Row_(Ic.ShieldCheck, "Approvals", "This phone alone, until you add your card in Security", tint = Tv.Warn, iconBg = Tv.Warn.copy(alpha = 0.13f))
+                else Row_(Ic.ShieldCheck, "Approvals", "${it.threshold} of ${it.signers.size} signers for every payment; neither key alone can move funds", tint = Tv.Positive, iconBg = Tv.PositiveSoft)
                 GroupDivider()
                 Row_(Ic.Timer, "Delays", "Transfers ${hoursLabel(it.delays.transfer)} · changes ${hoursLabel(it.delays.config)} · recovery ${hoursLabel(it.delays.recovery)}")
                 it.nearLimit?.let { l ->

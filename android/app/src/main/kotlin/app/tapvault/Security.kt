@@ -68,7 +68,7 @@ fun SecurityScreen(vm: AppViewModel) {
     Group {
         Row_(
             Ic.Shield, "Protection score", listOfNotNull(
-                "backup card".takeIf { !points[0] }, "alerts".takeIf { !points[1] },
+                (if (w.phoneOnly) "a card" else "backup card").takeIf { !points[0] }, "alerts".takeIf { !points[1] },
                 "instant limit ≤ 10% of balance".takeIf { !points[2] }, "wallet check in the last 24 h".takeIf { !points[3] },
                 "unfreeze".takeIf { !points[4] },
             ).let { if (it.isEmpty()) "Everything on this list is done" else "Missing: " + it.joinToString(", ") },
@@ -86,8 +86,17 @@ fun SecurityScreen(vm: AppViewModel) {
 
     if (w.frozen) {
         Spacer(Modifier.height(8.dp))
-        Notice(Ic.Freeze, "Wallet frozen", "No transfers can go out. Unfreezing needs your phone and a card, then waits ${hoursLabel(w.delays.config)}.", Tv.Ice) {
+        Notice(Ic.Freeze, "Wallet frozen", "No transfers can go out. Unfreezing needs your phone" + (if (w.phoneOnly) "" else " and a card") + ", then waits ${hoursLabel(w.delays.config)}.", Tv.Ice) {
             TvButton("Request unfreeze", Modifier.fillMaxWidth(), Btn.Secondary, icon = Ic.Key, height = 48.dp, enabled = idle) { vm.requestUnfreeze() }
+        }
+    } else if (w.phoneOnly) {
+        Spacer(Modifier.height(8.dp))
+        Notice(
+            Ic.Card, "No card yet",
+            "Right now this phone's key alone approves payments. Add your bank card so every payment needs both: then a stolen, unlocked phone can't pay on its own.",
+            Tv.Warn,
+        ) {
+            if (vm.pendingCardAdds.isEmpty()) TvButton("Add your card", Modifier.fillMaxWidth(), Btn.Secondary, icon = Ic.Plus, height = 48.dp, enabled = idle && vm.hasNfc) { addOpen = true }
         }
     } else if (cards.size < 2) {
         Spacer(Modifier.height(8.dp))
@@ -125,18 +134,19 @@ fun SecurityScreen(vm: AppViewModel) {
         }
         Spacer(Modifier.height(14.dp))
         TvButton(
-            "Add backup card", Modifier.fillMaxWidth(), Btn.Secondary, icon = Ic.Plus,
-            enabled = idle && vm.hasNfc && w.signers.size < 8,
+            if (w.phoneOnly) "Add your card" else "Add backup card", Modifier.fillMaxWidth(), Btn.Secondary, icon = Ic.Plus,
+            enabled = idle && vm.hasNfc && w.signers.size < 8 && !(w.phoneOnly && vm.pendingCardAdds.isNotEmpty()),
         ) { addOpen = true }
         Caption(
-            "One backup is enough: keep it at home, not with your main card. Every extra card is one more card that can be skimmed.",
+            if (w.phoneOnly) "Your card becomes the wallet's second key: after the ${hoursLabel(w.delays.config)} wait, every payment needs this phone and a tap of the card."
+            else "One backup is enough: keep it at home, not with your main card. Every extra card is one more card that can be skimmed.",
             Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp), color = Tv.Text3,
         )
         Spacer(Modifier.height(12.dp))
         Group {
             Row_(
-                Ic.Phone, "Add a guardian phone", "Someone you trust can cancel and freeze, and co-sign with a card",
-                chevron = true, onClick = { if (idle && w.signers.size < 8) guardianOpen = true },
+                Ic.Phone, "Add a guardian phone", if (w.phoneOnly) "Add your card first" else "Someone you trust can cancel and freeze, and co-sign with a card",
+                chevron = !w.phoneOnly, onClick = if (w.phoneOnly) null else ({ if (idle && w.signers.size < 8) guardianOpen = true }),
             )
             if (vm.isV02 == true) {
                 GroupDivider()
@@ -259,16 +269,18 @@ private fun PendingAddRow(vm: AppViewModel, p: ProposalInfo) {
 @Composable
 private fun AddBackupIntro(vm: AppViewModel, onDismiss: () -> Unit) {
     val w = vm.wallet
+    val first = w?.phoneOnly == true
     GlassSheet(onDismiss) {
-        Text("Add a backup card", style = Type.H2, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+        Text(if (first) "Add your card" else "Add a backup card", style = Type.H2, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
         Text(
-            "A second bank card that can co-sign with this phone. Keep it at home, not in the same wallet as your main card.",
+            if (first) "Your contactless bank card becomes this wallet's second key. After that, every payment needs this phone and a tap of the card."
+            else "A second bank card that can co-sign with this phone. Keep it at home, not in the same wallet as your main card.",
             style = Type.Body, color = Tv.Text2, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 18.dp),
         )
         Group {
             Row_(Ic.Nfc, "Hold the new card", "The phone reads its certificate and makes it sign a test challenge")
             GroupDivider()
-            Row_(Ic.Fingerprint, "Approve", "Your fingerprint, then a tap of a card already in this wallet")
+            Row_(Ic.Fingerprint, "Approve", if (first) "Your fingerprint" else "Your fingerprint, then a tap of a card already in this wallet")
             GroupDivider()
             Row_(Ic.Timer, "Wait ${hoursLabel(w?.delays?.config ?: 3600)}", "Then tap Execute in Activity; until then you can cancel")
         }
@@ -294,8 +306,9 @@ private fun BackupReview(vm: AppViewModel, b: BackupCandidate, onDone: () -> Uni
     val w = vm.wallet
     val open = vm.proposals.count { !it.stale }
     val wait = hoursLabel(w?.delays?.config ?: 3600)
+    val first = w?.phoneOnly == true
     GlassSheet({ vm.discardBackup(); onDone() }) {
-        Text("Add backup card", style = Type.H2, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+        Text(if (first) "Add your card" else "Add backup card", style = Type.H2, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
         Spacer(Modifier.height(16.dp))
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             CardArt(Modifier.width(240.dp), last4 = b.last4, network = b.network)
@@ -303,9 +316,9 @@ private fun BackupReview(vm: AppViewModel, b: BackupCandidate, onDone: () -> Uni
         Spacer(Modifier.height(16.dp))
         Column(Modifier.fillMaxWidth().surface(20.dp).padding(horizontal = 16.dp, vertical = 8.dp)) {
             InfoRow("Card", b.name)
-            InfoRow("Role", "Backup card")
+            InfoRow("Role", if (first) "Second key for every payment" else "Backup card")
             InfoRow("Takes effect", "in $wait")
-            InfoRow("Approvals needed", "Stay ${w?.threshold ?: 2}")
+            InfoRow("Approvals needed", if (first) "1 → 2 (phone + card)" else "Stay ${w?.threshold ?: 2}")
             InfoRow("Test signature", "Verified on this phone", Tv.Positive)
         }
         Spacer(Modifier.height(14.dp))
@@ -318,9 +331,11 @@ private fun BackupReview(vm: AppViewModel, b: BackupCandidate, onDone: () -> Uni
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(start = 4.dp)) {
             Text("1", style = Type.CaptionStrong, color = Tv.Text2); Text("Confirm with your fingerprint", style = Type.Body)
         }
-        Spacer(Modifier.height(8.dp))
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(start = 4.dp)) {
-            Text("2", style = Type.CaptionStrong, color = Tv.Text2); Text("Tap a card already in this wallet", style = Type.Body)
+        if (!first) {
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(start = 4.dp)) {
+                Text("2", style = Type.CaptionStrong, color = Tv.Text2); Text("Tap a card already in this wallet", style = Type.Body)
+            }
         }
         Spacer(Modifier.height(20.dp))
         SlideToConfirm("Slide to add") { onDone(); vm.addBackupCard() }

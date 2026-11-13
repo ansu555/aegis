@@ -381,7 +381,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun resetSecurityKey() = run("Resetting security key") {
         requireNfc()
         val st = walletClient().state()
-        if (st.cards().isEmpty()) throw IllegalStateException("This wallet has no card yet. Start over to set up again.")
+        if (st.cards().isEmpty()) throw IllegalStateException("This wallet has no card yet, so a card can't confirm the reset. Add a card in Security first.")
         val challenge = sha256("tapvault/reset-security-key".toByteArray() + ByteArray(32).also { java.security.SecureRandom().nextBytes(it) })
         val t = tapWalletCard("Tap one of this wallet's cards to reset your security key", st, challenge, hold = false)
         if (!provesPossession(t.signer.cardKey()!!, t.sig, challenge)) {
@@ -656,6 +656,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!act.nfcEnabled) throw IllegalStateException("Turn on NFC in Android settings (Connected devices → NFC), then try again.")
     }
 
+    /** "Create wallet" → with my card / without a card for now (phone-only, contract v0.3). */
+    fun chooseSetup(withCard: Boolean) {
+        store.withCard = withCard
+        if (!withCard) { store.wantBackup = false; store.pendingCard2 = null }
+        go(Screen.Limits)
+    }
+
     fun beginSetup(limitsOn: Boolean, instant: String, daily: String) {
         val i = runCatching { Near.parse(instant.trim().replace(',', '.')) }.getOrNull()
         val d = runCatching { Near.parse(daily.trim().replace(',', '.')) }.getOrNull()
@@ -665,7 +672,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             i > d -> "The per-day limit must be at least the at-once limit."
             else -> null
         }
-        val nfcProblem = when {
+        val nfcProblem = if (!store.withCard) null else when {
             !hasNfc -> "This phone has no NFC, so it can't read a bank card."
             !nfcEnabled -> "Turn on NFC in Android settings (Connected devices → NFC) first."
             else -> null
@@ -685,7 +692,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun continueSetup() = run("Setting up") {
-        if (PendingCard.decode(store.pendingCard) == null && store.setupStep < 3) requireNfc()
+        // Without a card (phone-only wallet), setup never reads one, so it needs no NFC.
+        val withCard = store.withCard
+        if (withCard && PendingCard.decode(store.pendingCard) == null && store.setupStep < 3) requireNfc()
         val ob = Onboarding(near)
         if (store.securityKey == null) {
             progress("Set your security key")
@@ -731,7 +740,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Read the card before deploying anything: a card that can't sign
         // stops setup while undoing it is still cheap (Start over).
         var pending = PendingCard.decode(store.pendingCard)
-        if (pending == null && store.setupStep < 3 && onChain?.card() == null) {
+        if (withCard && pending == null && store.setupStep < 3 && onChain?.card() == null) {
             progress("Tap your card")
             val svc = cards()
             val enrol = try {
@@ -761,6 +770,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             setStep(2)
         }
+        if (store.setupStep < 3 && !withCard) {
+            note("no card: phone-only wallet, the card can be added later from Security")
+            setStep(3)
+        }
         if (store.setupStep < 3) {
             if (onChain?.card() != null) {
                 note("card already added")
@@ -775,7 +788,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             setStep(3)
         }
         // Optional backup card (plan phase 3): a second setup_add_signer, no delay, before the wallet is locked.
-        if (store.setupStep < 4 && store.wantBackup && onChain?.setupMode != false) {
+        if (store.setupStep < 4 && withCard && store.wantBackup && onChain?.setupMode != false) {
             val now = TapvaultWallet(near, accounts.wallet, accounts.gas, accounts.gasKey).state()
             if (now.cards().size < 2) {
                 var p2 = PendingCard.decode(store.pendingCard2)
@@ -814,14 +827,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 note("wallet already locked")
             } else {
                 progress("Approve your limits to lock the wallet")
+                // Contract v0.3: a wallet with no card on chain (set up without one) is phone-only, threshold 1,
+                // until a card is added. Read from the chain, so a card that already landed always gets 2.
+                val cardOnChain = TapvaultWallet(near, accounts.wallet, accounts.gas, accounts.gasKey).state().cards().isNotEmpty()
                 val args = FinalizeArgs(
-                    threshold = 2,
+                    threshold = if (cardOnChain) 2 else 1,
                     delays = Delays.SHORTEST,
                     // No limit: the contract treats every transfer as over the limit, so each one waits the transfer delay.
                     limits = if (store.limitsOn) listOf(LimitInit(Asset.Near, Near.parse(store.instantNear), Near.parse(store.dailyNear))) else emptyList(),
                 )
-                phone.reason = if (store.limitsOn) "Lock the wallet: up to ${store.instantNear} NEAR at once, ${store.dailyNear} NEAR a day"
-                else "Lock the wallet: no instant payments, every payment waits ${Delays.SHORTEST.transfer / 3600} hour"
+                phone.reason = (if (store.limitsOn) "Lock the wallet: up to ${store.instantNear} NEAR at once, ${store.dailyNear} NEAR a day"
+                else "Lock the wallet: no instant payments, every payment waits ${Delays.SHORTEST.transfer / 3600} hour") +
+                    (if (cardOnChain) "" else "; this phone alone approves until you add a card")
                 ob.finalize(accounts, phone, args)
             }
             val keys = near.accessKeys(accounts.wallet)
@@ -833,7 +850,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         withContext(Dispatchers.Main) { screen = Screen.Home; reloadWalletList() }
         refresh()
-        outcome = Outcome(true, "Your wallet is ready", "Funds now move only with your phone and your card.", near.explorerAccount(accounts.wallet))
+        outcome = if (withCard) Outcome(true, "Your wallet is ready", "Funds now move only with your phone and your card.", near.explorerAccount(accounts.wallet))
+        else Outcome(true, "Your wallet is ready", "For now your phone key alone approves payments. Add your card in Security so every payment needs both.", near.explorerAccount(accounts.wallet))
     }
 
     /**
@@ -881,12 +899,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         require(amount.signum() > 0) { "Amount must be more than zero" }
         val to = receiver.trim().lowercase()
         require(to.matches(Regex("^(([a-z\\d]+[-_])*[a-z\\d]+\\.)*([a-z\\d]+[-_])*[a-z\\d]+$")) && to.length in 2..64) { "That isn't a NEAR account id" }
-        requireNfc()
 
         val w = walletClient()
         val st = w.state()
         if (st.frozen) throw IllegalStateException("The wallet is frozen. Request an unfreeze first.")
         val phoneIdx = st.phoneIndexOf(phone.publicKey) ?: throw IllegalStateException("This phone isn't a signer of the wallet")
+        if (st.phoneOnly) return@run sendPhoneOnly(w, st, phoneIdx, to, amount)
+        requireNfc()
         if (st.cards().isEmpty()) throw IllegalStateException("No card enrolled")
         require(to != w.account) { "That's this wallet's own account" }
         val (available, _) = near.spendable(w.account)
@@ -947,6 +966,48 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     else -> "This is over your instant limit."
                 }) + " In $hours h, open Activity and tap Execute. Until then you can cancel it or freeze the wallet.",
                 near.explorerTx(r.hash),
+            )
+        }
+        refresh()
+    }
+
+    /**
+     * Contract v0.3, a wallet without a card yet: the phone's proposal is its
+     * only approval (threshold 1), so a payment within the limits executes
+     * right after it; a bigger one waits the transfer delay like any other.
+     */
+    private suspend fun sendPhoneOnly(w: TapvaultWallet, st: WalletState, phoneIdx: Int, to: String, amount: java.math.BigInteger) {
+        require(to != w.account) { "That's this wallet's own account" }
+        val (available, _) = near.spendable(w.account)
+        require(amount <= available) { "The wallet only has ${Near.format(available, 4)} NEAR available to send" }
+        require(to.matches(Regex("^[0-9a-f]{64}$")) || near.accountExists(to)) { "$to doesn't exist on NEAR testnet" }
+        requireSecurityKey("To send ${Near.format(amount)} NEAR to $to.")
+        progress("Approve on your phone")
+        phone.reason = "Send ${Near.format(amount)} NEAR to $to"
+        val id = w.proposeByPhone(Action.Transfer(Asset.Near, amount, to), phone, phoneIdx).also { note("proposal #$it created (phone only)") }
+        rememberReceiver(to)
+        val sent = if (st.isInstantTo(to, amount)) {
+            progress("Submitting")
+            try {
+                w.execute(id)
+            } catch (e: app.tapvault.core.TapvaultException) {
+                // The contract decides "instant" with its own clock and allowance.
+                if ("Delay has not elapsed" in (e.message ?: "")) null else throw e
+            }
+        } else null
+        val hours = st.delays.transfer / 3600
+        outcome = if (sent != null) {
+            note("sent: ${near.explorerTx(sent.hash)}")
+            Outcome(true, "Sent ${Near.format(amount)} NEAR", "to $to", near.explorerTx(sent.hash))
+        } else {
+            note("proposal #$id waits $hours h")
+            Outcome(
+                true, "Approved, waiting $hours h",
+                (when {
+                    st.nearLimit == null -> "Spending limits are off, so every payment waits."
+                    st.nearLimit?.isInstant(amount) == true -> "$to isn't one of your instant receivers."
+                    else -> "This is over your instant limit."
+                }) + " In $hours h, open Activity and tap Execute. Until then you can cancel it or freeze the wallet.",
             )
         }
         refresh()
@@ -1045,6 +1106,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val w = walletClient()
         val st = w.state()
         val idx = phoneIndex(st)
+        if (st.phoneOnly) {
+            // No card yet: the phone's proposal is the only approval needed; it waits the config delay.
+            phone.reason = "Unfreeze the wallet (takes effect after ${st.delays.config / 3600} h)"
+            val id = w.proposeByPhone(Action.Config(listOf(ConfigOp.Unfreeze)), phone, idx)
+            outcome = Outcome(true, "Unfreeze requested", "Request #$id can execute in ${st.delays.config / 3600} h (Activity tab). Until then you can cancel it.")
+            refresh()
+            return@run
+        }
         requireNfc()
         val now = System.currentTimeMillis() / 1000
         val open = w.proposals().firstOrNull { p ->
@@ -1117,12 +1186,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun addBackupCard() = run("Adding backup card") {
         val b = backup ?: throw IllegalStateException("Read the new card first.")
-        requireNfc()
         val w = walletClient()
         val st = w.state()
         if (st.signerByKeyHash(b.keyHash) != null) throw IllegalStateException("${b.name} is already a signer of this wallet.")
         val idx = phoneIndex(st)
         val hours = hoursText(st.delays.config)
+        if (st.phoneOnly) return@run addFirstCard(w, st, b, idx, hours)
+        requireNfc()
         val now = System.currentTimeMillis() / 1000
         // A request for this card that the phone approved but no card has yet is finished instead of made again.
         val open = w.proposals().firstOrNull { p ->
@@ -1152,6 +1222,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             true, "Backup card added in $hours",
             "${b.name} becomes a signer after the $hours wait. Then open Activity and tap Execute. Until then you can cancel it.",
             near.explorerTx(r.hash),
+        )
+        refresh()
+    }
+
+    /**
+     * Contract v0.3: the first card of a wallet set up without one. One change
+     * adds the card and raises the approvals needed to 2 (the contract refuses
+     * a card on a threshold-1 wallet). The phone's proposal is the only
+     * approval it needs; it executes after the config delay.
+     */
+    private suspend fun addFirstCard(w: TapvaultWallet, st: WalletState, b: BackupCandidate, idx: Int, hours: String) {
+        val proof = b.possession ?: throw IllegalStateException("This wallet's code can't check the card. Read the card again.")
+        val open = w.proposals().firstOrNull { p -> !p.stale && b.keyHash in p.addedCardKeyHashes() && p.approvedBy(idx) }
+        withContext(Dispatchers.Main) { saveCards(store.cards.put(KnownCard(b.keyHash, b.recipe, b.network, b.last4))) }
+        val id = open?.id ?: run {
+            progress("Approve on your phone")
+            phone.reason = "Add ${b.name} as this wallet's card; then every payment needs phone + card (takes effect after $hours)"
+            val action = Action.Config(listOf(ConfigOp.AddSigner(b.key), ConfigOp.SetThreshold(2)))
+            w.proposeByPhone(action, phone, idx, mapOf(0 to PossessionProof.Card(proof))).also { note("proposal #$it: add ${b.name}, approvals 2") }
+        }
+        withContext(Dispatchers.Main) { backup = null }
+        outcome = Outcome(
+            true, "${b.name} added in $hours",
+            "After the $hours wait, open Activity and tap Execute. From then on every payment needs your phone and ${b.name}. Until then you can cancel it.",
         )
         refresh()
     }
@@ -1220,6 +1314,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setSetupOptions(backupCard: Boolean, strict: Boolean) {
         store.wantBackup = backupCard
         store.strictKey = strict
+    }
+
+    /** Setup: go on without any card (a phone-only wallet); the card can be added later from Security. */
+    fun continueWithoutCard() {
+        store.withCard = false
+        store.wantBackup = false
+        store.pendingCard = null
+        store.pendingCard2 = null
+        cardReport = null
+        continueSetup()
     }
 
     /** Setup: go on without the backup card (it can be added later from Security Center). */

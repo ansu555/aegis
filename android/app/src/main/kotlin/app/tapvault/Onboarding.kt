@@ -77,6 +77,7 @@ fun Welcome(vm: AppViewModel) {
     val pager = rememberPagerState { slides.size }
     val scope = rememberCoroutineScope()
     var more by remember { mutableStateOf(false) }
+    var create by remember { mutableStateOf(false) }
     // Story style: the current segment fills up, then the next slide comes in. A swipe restarts the timer.
     val fill = remember { Animatable(0f) }
     LaunchedEffect(pager.settledPage, pager.isScrollInProgress) {
@@ -123,7 +124,7 @@ fun Welcome(vm: AppViewModel) {
         Spacer(Modifier.height(14.dp))
         NfcChip(vm)
         // Full-width pills of the tab bar's liquid glass: milky white for the call to action, clear for the other.
-        LiquidGlassButton("Create wallet", Modifier.fillMaxWidth(), light = true) { vm.go(Screen.Limits) }
+        LiquidGlassButton("Create wallet", Modifier.fillMaxWidth(), light = true) { create = true }
         Spacer(Modifier.height(12.dp))
         LiquidGlassButton("I have a wallet", Modifier.fillMaxWidth()) { more = true }
         Row(
@@ -134,6 +135,7 @@ fun Welcome(vm: AppViewModel) {
             Text("Check my card", style = Type.CaptionStrong, color = Mint, maxLines = 1)
         }
     }
+    if (create) CreateChoiceSheet(vm) { create = false }
     if (more) GlassSheet({ more = false }) {
         Text("I have a wallet", style = Type.H2, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
         Spacer(Modifier.height(18.dp))
@@ -146,6 +148,40 @@ fun Welcome(vm: AppViewModel) {
                 Row_(Ic.Wallet, "Back to my wallets", if (others == 1) "1 wallet on this phone" else "$others wallets on this phone", chevron = true, onClick = { more = false; vm.cancelNewWallet() })
             }
         }
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+/**
+ * "Create wallet": with the card from the start, or without one for now
+ * (a phone-only wallet, contract v0.3) whose card is added later from Security.
+ */
+@Composable
+private fun CreateChoiceSheet(vm: AppViewModel, onDismiss: () -> Unit) {
+    GlassSheet(onDismiss) {
+        Text("Create a wallet", style = Type.H2, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+        Text(
+            "Set it up with your bank card now, or start without one.",
+            style = Type.Body, color = Tv.Text2, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 18.dp),
+        )
+        Group {
+            Row_(
+                Ic.Card, "With my card", if (vm.hasNfc) "Every payment needs your phone and a card tap" else "Needs a phone with NFC",
+                chevron = true, tint = Tv.Positive, iconBg = Tv.PositiveSoft,
+                onClick = { onDismiss(); vm.chooseSetup(withCard = true) },
+            )
+            GroupDivider()
+            Row_(
+                Ic.Fingerprint, "Without a card for now", "Your phone and fingerprint approve payments",
+                chevron = true, onClick = { onDismiss(); vm.chooseSetup(withCard = false) },
+            )
+        }
+        Spacer(Modifier.height(14.dp))
+        Notice(
+            Ic.Info, "You can add your card later",
+            "If you start without a card, set it up any time after the wallet is created: Security → Add your card. Until then your phone key alone approves payments, so a card makes the wallet safer.",
+            Tv.Text2,
+        )
         Spacer(Modifier.height(8.dp))
     }
 }
@@ -215,6 +251,7 @@ fun ColumnScope.LimitsScreen(vm: AppViewModel) {
         else -> null
     }
     val limitsOk = !limitsOn || (err == null && i != null && d != null)
+    var withCard by remember { mutableStateOf(vm.store.withCard) }
     PinnedTopBar("New wallet", onBack = { vm.go(Screen.Welcome) })
     Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
     Text("Spending limits", style = Type.H1, modifier = Modifier.padding(top = 8.dp))
@@ -240,12 +277,22 @@ fun ColumnScope.LimitsScreen(vm: AppViewModel) {
     var strict by remember { mutableStateOf(vm.store.strictKey) }
     SectionHeader("Extra protection")
     Group {
+        // The choice made on "Create wallet", changeable here: a card now, or later from Security.
         Row_(
-            Ic.Card, "Backup card", "Add a second card now. Keep it at home.",
-            value = if (backup) "On" else "Off", chevron = true, tint = if (backup) Tv.Positive else Tv.Text,
-            iconBg = if (backup) Tv.PositiveSoft else Tv.GlassStrong,
-            onClick = { backup = !backup; vm.setSetupOptions(backup, strict) },
+            Ic.Card, "Bank card", if (withCard) "Tap it during setup" else "Add it later in Security",
+            value = if (withCard) "Now" else "Later", chevron = true, tint = if (withCard) Tv.Positive else Tv.Text,
+            iconBg = if (withCard) Tv.PositiveSoft else Tv.GlassStrong,
+            onClick = { withCard = !withCard; vm.store.withCard = withCard; if (!withCard) { backup = false; vm.setSetupOptions(false, strict) } },
         )
+        if (withCard) {
+            GroupDivider()
+            Row_(
+                Ic.Card, "Backup card", "Add a second card now. Keep it at home.",
+                value = if (backup) "On" else "Off", chevron = true, tint = if (backup) Tv.Positive else Tv.Text,
+                iconBg = if (backup) Tv.PositiveSoft else Tv.GlassStrong,
+                onClick = { backup = !backup; vm.setSetupOptions(backup, strict) },
+            )
+        }
         if (android.os.Build.VERSION.SDK_INT >= 30) {
             GroupDivider()
             Row_(
@@ -257,9 +304,10 @@ fun ColumnScope.LimitsScreen(vm: AppViewModel) {
         }
     }
     Spacer(Modifier.height(22.dp))
-    NfcNotice(vm)
+    if (withCard) NfcNotice(vm)
+    else Notice(Ic.Info, "No card for now", "Your phone key alone will approve payments. Add your card later in Security; from then on every payment needs both.", Tv.Text2, Modifier.padding(bottom = 14.dp))
     }
-    TvButton("Continue", Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), enabled = vm.hasNfc && limitsOk, icon = Ic.Chevron) { vm.beginSetup(limitsOn, instant, daily) }
+    TvButton("Continue", Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), enabled = (vm.hasNfc || !withCard) && limitsOk, icon = Ic.Chevron) { vm.beginSetup(limitsOn, instant, daily) }
 }
 
 @Composable
@@ -286,15 +334,17 @@ fun SetupProgress(vm: AppViewModel) {
     var confirmStartOver by remember { mutableStateOf(false) }
     var showPicker by remember { mutableStateOf(false) }
     val cardRead = vm.store.pendingCard != null || vm.setupStep >= 3
-    val steps = listOf(
+    // Without a card (phone-only wallet) the card steps aren't part of setup.
+    val withCard = vm.store.withCard
+    val steps = listOfNotNull(
         Triple(Ic.Lock, "Security key set", vm.hasSecurityKey),
         Triple(Ic.Key, "Phone key in secure hardware", vm.phoneKeyExists),
         Triple(Ic.Wallet, "Wallet account on NEAR", vm.setupStep >= 1),
-        Triple(Ic.Card, "Card read and signed", cardRead),
+        Triple(Ic.Card, "Card read and signed", cardRead).takeIf { withCard },
         Triple(Ic.Layers, "Wallet contract deployed", vm.setupStep >= 2),
-        Triple(Ic.ShieldCheck, "Card added as a signer", vm.setupStep >= 3),
+        Triple(Ic.ShieldCheck, "Card added as a signer", vm.setupStep >= 3).takeIf { withCard },
     ) + listOfNotNull(
-        Triple(Ic.Card, "Backup card added", vm.setupStep >= 4).takeIf { vm.store.wantBackup },
+        Triple(Ic.Card, "Backup card added", vm.setupStep >= 4).takeIf { withCard && vm.store.wantBackup },
     ) + listOf(
         Triple(Ic.Lock, "Limits set, account locked", vm.setupStep >= 4),
     )
@@ -340,7 +390,12 @@ fun SetupProgress(vm: AppViewModel) {
             Spacer(Modifier.height(20.dp))
             TvButton("Continue setup", Modifier.fillMaxWidth(), icon = Ic.Chevron) { vm.continueSetup() }
             Spacer(Modifier.height(8.dp))
-            if (vm.store.wantBackup && vm.setupStep >= 3) {
+            // A card that won't sign (or no card at hand) needn't stop setup: the card can be added later.
+            if (withCard && vm.setupStep < 3) {
+                TvButton("Continue without a card", Modifier.fillMaxWidth(), Btn.Secondary) { vm.continueWithoutCard() }
+                Spacer(Modifier.height(8.dp))
+            }
+            if (withCard && vm.store.wantBackup && vm.setupStep >= 3) {
                 TvButton("Skip the backup card", Modifier.fillMaxWidth(), Btn.Secondary) { vm.skipBackupCard() }
                 Spacer(Modifier.height(8.dp))
             }

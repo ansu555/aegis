@@ -96,6 +96,15 @@ class Store(context: Context, file: String = WalletIndex.prefsFile(WalletIndex.F
         get() = p.getLong("key_last_fail", 0)
         set(v) { p.edit().putLong("key_last_fail", v).commit() }
 
+    /**
+     * Setup choice from "Create wallet": true = phone + card from the start;
+     * false = a phone-only wallet (contract v0.3, threshold 1) whose card is
+     * added later from Security. Wallets set up before this choice existed had a card.
+     */
+    var withCard: Boolean
+        get() = p.getBoolean("with_card", true)
+        set(v) { p.edit().putBoolean("with_card", v).commit() }
+
     /** Setup option: read and add a second (backup) card before the wallet is locked. */
     var wantBackup: Boolean
         get() = p.getBoolean("want_backup", false)
