@@ -55,9 +55,19 @@ data class WalletState(
     val delays: Delays,
     val signers: List<SignerInfo>,
     val limits: List<LimitInfo>,
+    /** Bumped by every executed config change (0 if the view doesn't say). */
+    val signerEpoch: Long = 0,
 ) {
     val nearLimit get() = limits.firstOrNull { it.asset == Asset.Near.json() }
+
+    /** The first card signer (setup's card while no card has been removed). */
     fun card() = signers.firstOrNull { it.isCard }
+
+    /** Every card signer. Indices move down when a signer is removed, so look cards up by key hash. */
+    fun cards() = signers.filter { it.isCard }
+
+    fun signerByKeyHash(keyHash: String) = signers.firstOrNull { it.keyHash.equals(keyHash, ignoreCase = true) }
+
     fun phoneIndexOf(pub: ByteArray) = signers.firstOrNull { it.phonePublicKey()?.contentEquals(pub) == true }?.index
 }
 
@@ -84,13 +94,41 @@ data class ProposalInfo(
             val what = if (asset == Asset.Near.json()) "${Near.format(amount)} NEAR" else "$amount of ${asset.jsonObject["Ft"]!!.jsonObject["token"]!!.jsonPrimitive.content}"
             return "Send $what to ${t["receiver"]!!.jsonPrimitive.content}"
         }
-        val ops = action.jsonObject["Config"]!!.jsonObject["ops"]!!.jsonArray
-        return "Change settings: " + ops.joinToString(", ") {
+        return "Change settings: " + configOps().joinToString(", ") {
             if (it is JsonObject) it.keys.first() else it.jsonPrimitive.content
         }
     }
 
+    private fun configOps() = action.jsonObject["Config"]?.jsonObject?.get("ops")?.jsonArray ?: emptyList()
+
+    /** Key hashes (hex) of the cards this config proposal adds. */
+    fun addedCardKeyHashes(): List<String> = configOps().mapNotNull { op ->
+        val c = (op as? JsonObject)?.get("AddSigner")?.jsonObject?.get("EmvCard")?.jsonObject ?: return@mapNotNull null
+        Domain.keyHashEmv(c["modulus"]!!.jsonPrimitive.content.unb64(), c["exponent"]!!.jsonPrimitive.int).hex()
+    }
+
+    /** Key hashes (hex) of the signers this config proposal removes. */
+    fun removedKeyHashes(): List<String> = configOps().mapNotNull { op ->
+        (op as? JsonObject)?.get("RemoveSigner")?.jsonObject?.get("key_hash")?.jsonPrimitive?.content?.unb64()?.hex()
+    }
+
     val isTransfer get() = action.jsonObject.containsKey("Transfer")
+
+    /**
+     * The action, parsed, after checking that its intent hash recomputed on
+     * the phone equals the one the view reports. The phone signs only what it
+     * computed itself (invariant 10); a view that lies about either is refused.
+     */
+    fun verifiedAction(account: String): Pair<Action, ByteArray> {
+        val a = try { ActionJson.parse(action) } catch (e: Exception) {
+            throw TapvaultException("This request's action can't be read by this app version, so it won't be signed (${e.message})")
+        }
+        val intent = Domain.intentHash(account, id, a.borshBytes())
+        if (!intent.contentEquals(intentHash)) {
+            throw TapvaultException("The network's copy of request #$id doesn't match what it says it does, so the phone won't sign it. Try again later or from another network.")
+        }
+        return a to intent
+    }
 
     /** A transfer of NEAR (not a token). */
     val isNearTransfer get() = action.jsonObject["Transfer"]?.jsonObject?.get("asset") == Asset.Near.json()
@@ -131,6 +169,7 @@ class TapvaultWallet(
                 val key = o["key"]!!
                 SignerInfo(o["index"]!!.jsonPrimitive.int, key.jsonObject.containsKey("EmvCard"), o["key_hash"]!!.jsonPrimitive.content, key)
             },
+            signerEpoch = w["signer_epoch"]?.jsonPrimitive?.longOrNull ?: 0,
             limits = w["limits"]!!.jsonArray.map {
                 val o = it.jsonObject
                 LimitInfo(
@@ -196,6 +235,22 @@ class TapvaultWallet(
         return r.returnValue!!.trim('"').toLong()
     }
 
+    /**
+     * Card proposes when the phone doesn't know yet which card will be
+     * tapped (recovery on a new phone): the challenge depends only on the
+     * action and the next proposal id, so [tap] gets it first and returns
+     * the signer index of the card it identified together with its signature.
+     */
+    fun proposeWithCard(action: Action, tap: (challenge: ByteArray) -> Pair<Int, CardSig>): Long {
+        val id = state().nextProposalId
+        val intent = Domain.intentHash(account, id, action.borshBytes())
+        val (cardIndex, sig) = tap(Domain.cardProposeChallenge(intent))
+        val r = call(NearAction.FunctionCall("propose", jsonArgs {
+            put("action", action.json()); put("proof", SignerProof.Card(cardIndex, sig).json())
+        }))
+        return r.returnValue!!.trim('"').toLong()
+    }
+
     /** Wait for the contract to seal the card challenge (one block after propose). */
     fun awaitCardChallenge(id: Long, timeoutMs: Long = 20_000): ByteArray {
         val until = System.currentTimeMillis() + timeoutMs
@@ -218,18 +273,35 @@ class TapvaultWallet(
         NearAction.FunctionCall("execute", jsonArgs { put("id", id.toString()) }, gasTgas = 150),
     )
 
-    fun approvePhone(id: Long, phone: P256Signer, phoneIndex: Int): TxResult {
+    /**
+     * Phone approval of proposal [id]: the action is read from the view, its
+     * intent hash recomputed here ([ProposalInfo.verifiedAction]), [beforeSign]
+     * sees the parsed action (to build the prompt text from it), and the phone
+     * signs the hash it computed.
+     */
+    fun approvePhone(id: Long, phone: P256Signer, phoneIndex: Int, beforeSign: (Action) -> Unit = {}): TxResult {
         val p = proposal(id) ?: throw TapvaultException("no proposal $id")
+        val (action, intent) = p.verifiedAction(account)
+        beforeSign(action)
         return call(NearAction.FunctionCall("approve_p256", jsonArgs {
-            put("id", id.toString()); put("signer_index", phoneIndex); put("sig", phone.sign(p.intentHash).json())
+            put("id", id.toString()); put("signer_index", phoneIndex); put("sig", phone.sign(intent).json())
         }))
     }
 
     fun execute(id: Long) = call(NearAction.FunctionCall("execute", jsonArgs { put("id", id.toString()) }, gasTgas = 150))
 
-    fun cancelByPhone(id: Long, phone: P256Signer, phoneIndex: Int): TxResult {
+    /**
+     * Phone cancel of proposal [id]. [beforeSign] gets the parsed action when
+     * it checks out ([ProposalInfo.verifiedAction]), or null when the app
+     * can't read it or it doesn't match: cancelling is still allowed then
+     * (the safe direction: at worst a different request is cancelled), over
+     * the view's intent hash, and the prompt must say the details are unknown.
+     */
+    fun cancelByPhone(id: Long, phone: P256Signer, phoneIndex: Int, beforeSign: (Action?) -> Unit = {}): TxResult {
         val p = proposal(id) ?: throw TapvaultException("no proposal $id")
-        val sig = phone.sign(Domain.cancelMessage(p.intentHash))
+        val checked = runCatching { p.verifiedAction(account) }.getOrNull()
+        beforeSign(checked?.first)
+        val sig = phone.sign(Domain.cancelMessage(checked?.second ?: p.intentHash))
         return call(NearAction.FunctionCall("cancel", jsonArgs { put("id", id.toString()); put("proof", SignerProof.P256(phoneIndex, sig).json()) }))
     }
 
@@ -238,10 +310,14 @@ class TapvaultWallet(
         return call(NearAction.FunctionCall("freeze", jsonArgs { put("proof", SignerProof.P256(phoneIndex, sig).json()) }))
     }
 
-    fun freezeByCard(cardIndex: Int, tap: (challenge: ByteArray) -> CardSig): TxResult {
-        val sig = tap(Domain.cardFreezeChallenge(account, state().freezeNonce))
-        return call(NearAction.FunctionCall("freeze", jsonArgs { put("proof", SignerProof.Card(cardIndex, sig).json()) }))
-    }
+    fun freezeByCard(cardIndex: Int, tap: (challenge: ByteArray) -> CardSig): TxResult =
+        freezeByCard(cardIndex, tap(cardFreezeChallenge()))
+
+    /** What a card signs to freeze the wallet now (public: the nonce is in `get_wallet`). */
+    fun cardFreezeChallenge(): ByteArray = Domain.cardFreezeChallenge(account, state().freezeNonce)
+
+    fun freezeByCard(cardIndex: Int, sig: CardSig): TxResult =
+        call(NearAction.FunctionCall("freeze", jsonArgs { put("proof", SignerProof.Card(cardIndex, sig).json()) }))
 
     fun closeStale(id: Long) = call(NearAction.FunctionCall("close_stale", jsonArgs { put("id", id.toString()) }))
 }
@@ -293,7 +369,21 @@ class Onboarding(private val near: NearClient) {
         sponsor: Sponsor? = null,
         plan: Plan = Plan.random(),
         onFallback: (String) -> Unit = {},
-    ): Accounts {
+    ): Accounts = createAccounts(prefix, sponsor, plan, onFallback, walletToo = true)
+
+    /**
+     * Only a fee account, for a phone that joins an existing wallet
+     * (recovery, guardian): "$prefix-<tag>-gas" with [Plan.gasKey]; the
+     * plan's wallet key is unused. Returns the account name.
+     */
+    fun createFeeAccount(
+        prefix: String = "tv",
+        sponsor: Sponsor? = null,
+        plan: Plan = Plan.random(),
+        onFallback: (String) -> Unit = {},
+    ): String = createAccounts(prefix, sponsor, plan, onFallback, walletToo = false).gas
+
+    private fun createAccounts(prefix: String, sponsor: Sponsor?, plan: Plan, onFallback: (String) -> Unit, walletToo: Boolean): Accounts {
         var faucetError: String? = if (sponsor != null && System.getenv("TAPVAULT_FORCE_SPONSOR") == "1") "skipped" else null
 
         fun ours(account: String, key: NearKey) =
@@ -317,7 +407,7 @@ class Onboarding(private val near: NearClient) {
             return account
         }
 
-        val wallet = create("$prefix-${plan.tag}", plan.walletKey, Sponsor.WALLET_FUNDING)
+        val wallet = if (walletToo) create("$prefix-${plan.tag}", plan.walletKey, Sponsor.WALLET_FUNDING) else ""
         val gas = create("$prefix-${plan.tag}-gas", plan.gasKey, Sponsor.GAS_FUNDING)
         return Accounts(wallet, plan.walletKey, gas, plan.gasKey)
     }

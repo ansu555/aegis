@@ -15,9 +15,35 @@ import kotlin.test.fail
  * DDA, VISA_FDDA or MASTERCARD_CDA). Creates fresh testnet accounts.
  *
  *   TAPVAULT_TESTNET=1 ./gradlew :core:test --tests '*TestnetE2E*'
+ *
+ * A second simulated card (its own key and card number) is added as a backup
+ * card through a config proposal. The config delay is at least 1 h (the
+ * contract's minimum), so by default the run stops after checking the
+ * proposal is approved and refused early. With TAPVAULT_WAIT_DELAYS=1 it
+ * waits out the delays (about 2 h 10 min): the card becomes a signer, a
+ * payment goes out with phone + card 2, and card 1 is removed.
  */
 class TestnetE2ETest {
     private fun step(s: String) = println("[e2e] $s")
+
+    /** Tap [card] like the app does: identify it among the wallet's card signers by key hash, then sign. */
+    private fun tap(cards: CardService, w: TapvaultWallet, card: CardTransceiver, challenge: ByteArray, recipes: Map<String, CardRecipe>): Pair<Int, CardSig> {
+        val st = w.state()
+        val held = cards.identify(card, st.cards().map { CardCandidate(it.keyHash, it.cardKey()!!, recipes[it.keyHash]) })
+        repeat(2) { held.stillThere() } // the app's hold timer: presence checks before signing
+        return st.signerByKeyHash(held.card.keyHash)!!.index to held.sign(challenge)
+    }
+
+    /** Wait until [id] can execute (its ready time plus [delay]), then a little more for block time. */
+    private fun waitUntilExecutable(w: TapvaultWallet, id: Long, delay: Long) {
+        val ready = w.proposal(id)!!.readyTs!!
+        while (true) {
+            val left = ready + delay + 20 - System.currentTimeMillis() / 1000
+            if (left <= 0) return
+            step("  waiting ${left / 60} min ${left % 60} s for proposal #$id")
+            Thread.sleep(minOf(left, 600) * 1000)
+        }
+    }
 
     @Test
     fun walletLifecycleOnTestnet() {
@@ -96,8 +122,86 @@ class TestnetE2ETest {
         assertTrue(replay.exceptionOrNull()?.message?.contains("Card signature verification failed") == true, "got ${replay.exceptionOrNull()?.message}")
         step("refused: ${replay.exceptionOrNull()?.message}")
 
+        // ---- backup card (plan 5.3) ----
+        val profile = SimCard.Profile.valueOf(System.getenv("TAPVAULT_CARD_PROFILE") ?: "DDA")
+        val card2 = SimCard(profile, TestCards.random(), SimCard.PAN2)
+        val recipes = mutableMapOf(cardKey.keyHash().hex() to recipe)
+        step("backup card: card 1 is refused because it's already a signer")
+        val signerHashes = w.state().signers.map { it.keyHash }.toSet()
+        val count = w.state().signers.size
+        val enrolFor = { c: CardTransceiver ->
+            cards.enrol(c) { k ->
+                if (k.keyHash().hex() in signerHashes) throw AlreadySignerException("already a signer")
+                Domain.cardEnrollChallenge(a.wallet, count, k.keyHash())
+            }
+        }
+        assertTrue(runCatching { enrolFor(card) }.exceptionOrNull() is AlreadySignerException)
+        step("backup card: card 2 signs a test challenge, verified on the phone (the contract checks none for AddSigner)")
+        val e2 = enrolFor(card2)
+        assertTrue(provesPossession(e2.key, e2.proof, Domain.cardEnrollChallenge(a.wallet, count, e2.key.keyHash())))
+        val hash2 = e2.key.keyHash().hex()
+        recipes[hash2] = e2.recipe
+        step("  card 2 ****${e2.report.panLast4}, ${e2.recipe.method}, key hash ${hash2.take(12)}…")
+        val add = w.proposeByPhone(Action.Config(listOf(ConfigOp.AddSigner(e2.key))), phone, phoneIdx)
+        step("phone proposed AddSigner(card 2) as #$add")
+        val addCh = w.awaitCardChallenge(add)
+        val notYet = runCatching { tap(cards, w, card2, addCh, recipes) }.exceptionOrNull()
+        assertTrue(notYet is WrongCardException, "card 2 isn't a signer yet, so it must be refused before signing; got $notYet")
+        step("card 2 refused before signing: not a signer yet")
+        val (idx1, sig1) = tap(cards, w, card, addCh, recipes)
+        assertEquals(cardIdx, idx1)
+        w.approveCard(add, idx1, sig1)
+        assertTrue(w.proposal(add)!!.readyTs != null)
+        val tooEarly = runCatching { w.execute(add) }.exceptionOrNull()?.message
+        assertTrue(tooEarly?.contains("Delay has not elapsed") == true, "got $tooEarly")
+        step("card 1 approved it; executing now is refused: $tooEarly")
+
+        var freezeCard: CardTransceiver = card
+        if (System.getenv("TAPVAULT_WAIT_DELAYS") == "1") {
+            val delay = w.state().delays.config
+            waitUntilExecutable(w, add, delay)
+            near.explorerTx(w.execute(add).hash).let { step("AddSigner executed: $it") }
+            val after = w.state()
+            val s2 = after.signerByKeyHash(hash2)
+            assertTrue(s2 != null && s2.isCard, "card 2 is a signer")
+            assertEquals(3, after.signers.size)
+            assertTrue(w.proposal(p2)?.stale == true, "the config change voided the open payment")
+            step("card 2 is signer ${s2!!.index}; open proposal #$p2 is now void")
+
+            step("pay 0.2 NEAR with phone + card 2")
+            val before = near.balance(receiver)
+            val pay = w.proposeByPhone(Action.Transfer(Asset.Near, Near.parse("0.2"), receiver), phone, phoneIdx)
+            val (i2, sig2) = tap(cards, w, card2, w.awaitCardChallenge(pay), recipes)
+            assertEquals(s2.index, i2, "signer index from card 2's key hash")
+            near.explorerTx(w.approveCardAndExecute(pay, i2, sig2).hash).let { step("paid with card 2: $it") }
+            assertEquals(before + Near.parse("0.2"), near.balance(receiver))
+
+            step("remove card 1: phone proposes, card 2 approves")
+            val rm = w.proposeByPhone(Action.Config(listOf(ConfigOp.RemoveSigner(cardKey.keyHash()))), phone, phoneIdx)
+            val (ri, rsig) = tap(cards, w, card2, w.awaitCardChallenge(rm), recipes)
+            w.approveCard(rm, ri, rsig)
+            waitUntilExecutable(w, rm, delay)
+            near.explorerTx(w.execute(rm).hash).let { step("RemoveSigner executed: $it") }
+            val last = w.state()
+            assertEquals(null, last.signerByKeyHash(cardKey.keyHash().hex()), "card 1 is gone")
+            assertEquals(1, last.signerByKeyHash(hash2)!!.index, "card 2 moved down to index 1")
+            step("card 1 removed; card 2 is now signer 1")
+
+            step("card 1 can no longer sign; card 2 pays with its new index")
+            val pay2 = w.proposeByPhone(Action.Transfer(Asset.Near, Near.parse("0.1"), receiver), phone, phoneIdx)
+            val ch2 = w.awaitCardChallenge(pay2)
+            assertTrue(runCatching { tap(cards, w, card, ch2, recipes) }.exceptionOrNull() is WrongCardException)
+            val (j, s) = tap(cards, w, card2, ch2, recipes)
+            assertEquals(1, j)
+            w.approveCardAndExecute(pay2, j, s)
+            freezeCard = card2
+        } else {
+            step("set TAPVAULT_WAIT_DELAYS=1 to wait out the 1 h delays: pay with card 2, then remove card 1")
+        }
+
         step("freeze with a card tap")
-        w.freezeByCard(cardIdx) { c -> cards.sign(card, cardKey, c, recipe) }
+        val (fi, fsig) = tap(cards, w, freezeCard, w.cardFreezeChallenge(), recipes)
+        w.freezeByCard(fi, fsig)
         assertTrue(w.state().frozen)
         val frozen = runCatching { w.proposeByPhone(Action.Transfer(Asset.Near, Near.parse("0.1"), receiver), phone, phoneIdx) }
         assertTrue(frozen.exceptionOrNull()?.message?.contains("frozen") == true)

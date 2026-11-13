@@ -3,7 +3,13 @@ package app.tapvault.core
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.math.BigInteger
@@ -197,6 +203,89 @@ sealed interface SignerProof {
     class Card(val signerIndex: Int, val sig: CardSig) : SignerProof {
         override fun json() = buildJsonObject {
             put("Card", buildJsonObject { put("signer_index", signerIndex); put("sig", sig.json()) })
+        }
+    }
+}
+
+/**
+ * Parse an action from its JSON form (`get_proposal` / `list_proposals`
+ * views, the same form [Action.json] writes). Used to recompute the intent
+ * hash locally before the phone signs (invariant 10, DESIGN gap 6b) and to
+ * build the prompt text from the same values. Throws on anything unknown.
+ */
+object ActionJson {
+    fun parse(j: JsonElement): Action {
+        val o = j.jsonObject
+        o["Transfer"]?.jsonObject?.let { t ->
+            return Action.Transfer(asset(t["asset"]!!), BigInteger(t["amount"]!!.jsonPrimitive.content), t["receiver"]!!.jsonPrimitive.content)
+        }
+        val ops = o["Config"]?.jsonObject?.get("ops")?.jsonArray ?: throw IllegalArgumentException("unknown action")
+        return Action.Config(ops.map { op(it) })
+    }
+
+    private fun asset(j: JsonElement): Asset = when {
+        j is JsonPrimitive && j.content == "Near" -> Asset.Near
+        else -> Asset.Ft(j.jsonObject["Ft"]!!.jsonObject["token"]!!.jsonPrimitive.content)
+    }
+
+    private fun delays(j: JsonElement) = j.jsonObject.let {
+        Delays(it["transfer"]!!.jsonPrimitive.long, it["config"]!!.jsonPrimitive.long, it["recovery"]!!.jsonPrimitive.long)
+    }
+
+    fun signerKey(j: JsonElement): SignerKey {
+        val o = j.jsonObject
+        o["P256"]?.jsonObject?.let { p ->
+            val w = p["webauthn"]?.takeIf { it != JsonNull }?.jsonObject
+            return SignerKey.P256(
+                p["pubkey"]!!.jsonPrimitive.content.unb64(),
+                w?.let { WebAuthnConfig(it["rp_id_hash"]!!.jsonPrimitive.content.unb64(), it["require_uv"]!!.jsonPrimitive.boolean) },
+            )
+        }
+        val c = o["EmvCard"]?.jsonObject ?: throw IllegalArgumentException("unknown signer key")
+        return SignerKey.EmvCard(
+            c["modulus"]!!.jsonPrimitive.content.unb64(), c["exponent"]!!.jsonPrimitive.int,
+            c["un_offset"]!!.jsonPrimitive.int, c["un_len"]!!.jsonPrimitive.int, c["terminal_data_len"]!!.jsonPrimitive.int,
+        )
+    }
+
+    private fun op(j: JsonElement): ConfigOp {
+        if (j is JsonPrimitive) {
+            require(j.content == "Unfreeze") { "unknown config op ${j.content}" }
+            return ConfigOp.Unfreeze
+        }
+        val (name, v) = j.jsonObject.entries.single()
+        return when (name) {
+            "AddSigner" -> ConfigOp.AddSigner(signerKey(v))
+            "RemoveSigner" -> ConfigOp.RemoveSigner(v.jsonObject["key_hash"]!!.jsonPrimitive.content.unb64())
+            "SetThreshold" -> ConfigOp.SetThreshold(v.jsonPrimitive.int)
+            "SetLimit" -> v.jsonObject.let {
+                ConfigOp.SetLimit(LimitInit(asset(it["asset"]!!), BigInteger(it["instant_max"]!!.jsonPrimitive.content), BigInteger(it["daily_max"]!!.jsonPrimitive.content)))
+            }
+            "RemoveLimit" -> ConfigOp.RemoveLimit(asset(v.jsonObject["asset"]!!))
+            "SetDelays" -> ConfigOp.SetDelays(delays(v))
+            else -> throw IllegalArgumentException("unknown config op $name")
+        }
+    }
+}
+
+/** What the phone's prompt says an action does, built from the action itself (the values that get hashed). */
+fun Action.describe(): String = when (this) {
+    is Action.Transfer -> {
+        val what = when (asset) {
+            Asset.Near -> "${Near.format(amount)} NEAR"
+            is Asset.Ft -> "$amount of ${asset.token}"
+        }
+        "Send $what to $receiver"
+    }
+    is Action.Config -> "Change settings: " + ops.joinToString(", ") { op ->
+        when (op) {
+            is ConfigOp.AddSigner -> if (op.key is SignerKey.EmvCard) "add a card" else "add a phone key"
+            is ConfigOp.RemoveSigner -> "remove signer ${op.keyHash.hex().take(8)}"
+            is ConfigOp.SetThreshold -> "approvals needed ${op.threshold}"
+            is ConfigOp.SetLimit -> "limit ${Near.format(op.limit.instantMax)} at once, ${Near.format(op.limit.dailyMax)} a day"
+            is ConfigOp.RemoveLimit -> "remove a limit"
+            is ConfigOp.SetDelays -> "waits ${op.delays.transfer / 60} / ${op.delays.config / 60} / ${op.delays.recovery / 60} min"
+            ConfigOp.Unfreeze -> "unfreeze"
         }
     }
 }

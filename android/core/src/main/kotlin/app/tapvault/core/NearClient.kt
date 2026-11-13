@@ -223,6 +223,14 @@ class NearClient(
         if (e.rpcCause == "UNKNOWN_ACCOUNT" || e.message?.contains("does not exist") == true) false else throw e
     }
 
+    /** The base58 SHA-256 of the account's contract code (`11111111111111111111111111111111` if none). */
+    fun codeHash(account: String): String {
+        val r = rpc("query", buildJsonObject {
+            put("request_type", "view_account"); put("finality", "final"); put("account_id", account)
+        }).jsonObject
+        return r["code_hash"]!!.jsonPrimitive.content
+    }
+
     fun accessKeys(account: String): List<String> {
         val r = rpc("query", buildJsonObject {
             put("request_type", "view_access_key_list"); put("finality", "optimistic"); put("account_id", account)

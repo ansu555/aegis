@@ -715,10 +715,13 @@ class CardService(private val capks: CapkStore) {
      * layout stored on-chain. Uses [recipe] (how it signed at enrolment) first,
      * then any other method that gives the same layout.
      */
-    fun sign(card: CardTransceiver, key: SignerKey.EmvCard, challenge: ByteArray, recipe: CardRecipe? = null): CardSig {
-        val s = EmvSession(card, capks)
-        val aid = recipe?.aid ?: s.applications().first().first.hex().uppercase()
-        val plans = (listOfNotNull(recipe) + fallbacks(key, aid))
+    fun sign(card: CardTransceiver, key: SignerKey.EmvCard, challenge: ByteArray, recipe: CardRecipe? = null): CardSig =
+        signWith(EmvSession(card, capks), key, challenge, recipe, null)
+
+    /** [sign] in an open session; [aidHint] is the application a previous [identify] matched. */
+    private fun signWith(s: EmvSession, key: SignerKey.EmvCard, challenge: ByteArray, recipe: CardRecipe?, aidHint: String?): CardSig {
+        val aid = aidHint ?: recipe?.aid ?: s.applications().first().first.hex().uppercase()
+        val plans = (listOfNotNull(recipe?.takeIf { it.aid.equals(aid, ignoreCase = true) }) + fallbacks(key, aid))
             .distinctBy { listOf(it.method, it.amount, if (it.method == SignMethod.CDA) it.variant else 0, it.ttq) }
         var otherKey = false
         var otherLayout = false
@@ -762,6 +765,60 @@ class CardService(private val capks: CapkStore) {
             CardRecipe(aid, SignMethod.DDA),
         )
 
+    /**
+     * One tap, first half: read the card's certificate chain, recover its key
+     * and match it against [candidates] (the wallet's card signers) by key hash.
+     * Nothing is signed for the wallet yet, so a card that isn't one of the
+     * wallet's is refused ([WrongCardException]) before it signs anything.
+     * (A Visa-style card puts a signature over a random number, useless to
+     * anyone, in every GET PROCESSING OPTIONS answer; that is all it gives.)
+     *
+     * The returned [HeldCard] keeps the session open: [HeldCard.stillThere]
+     * checks the card hasn't moved away, [HeldCard.sign] makes it sign.
+     * Losing the card throws the link's IOException (TagLostException on Android).
+     */
+    fun identify(card: CardTransceiver, candidates: List<CardCandidate>): HeldCard {
+        val s = EmvSession(card, capks)
+        val known = candidates.mapNotNull { it.recipe?.aid?.uppercase() }.toSet()
+        val apps = s.applications().take(5).sortedBy { if (it.first.hex().uppercase() in known) 0 else 1 }
+        var otherKey = false
+        var problem = "no payment application"
+        for ((aid, _) in apps) {
+            try {
+                s.select(aid)
+                s.gpo(EmvSession.randomUn(), 0)
+                s.readRecords()
+                val (modulus, exponent) = s.recoverCardKey()
+                val hash = Domain.keyHashEmv(modulus, exponent).hex()
+                val match = candidates.firstOrNull { it.keyHash.equals(hash, ignoreCase = true) }
+                if (match != null) return HeldCard(this, s, s.aidHex, match)
+                otherKey = true
+            } catch (e: EmvException) {
+                problem = e.message ?: "card error"
+            } catch (e: IllegalArgumentException) {
+                problem = "unreadable answer (${e.message})"
+            } catch (e: IllegalStateException) {
+                problem = "certificate check failed"
+            }
+        }
+        if (otherKey) throw WrongCardException()
+        throw EmvException("couldn't read the card's key ($problem)")
+    }
+
+    /** A card that [identify] matched to one of the wallet's signers, still in the field. */
+    class HeldCard internal constructor(
+        private val service: CardService,
+        private val session: EmvSession,
+        private val aid: String,
+        val card: CardCandidate,
+    ) {
+        /** A harmless re-SELECT of the application: throws if the card has gone. */
+        fun stillThere() = session.select(aid.unhex())
+
+        /** Make the card sign [challenge] with the layout stored on-chain (see [CardService.sign]). */
+        fun sign(challenge: ByteArray): CardSig = service.signWith(session, card.key, challenge, card.recipe, aid)
+    }
+
     /** Read-only check: what kind of card is this, and can it be a signer? */
     fun inspect(card: CardTransceiver): CardReport = try {
         enrol(card) { EmvSession.randomUn() }.report
@@ -771,6 +828,26 @@ class CardService(private val capks: CapkStore) {
 }
 
 class CardCheckFailed(message: String, val report: CardReport) : Exception(message)
+
+/** A card signer of the wallet that may be tapped: its key hash (hex, as `get_wallet` lists it), its on-chain key, and how it signed when added (if this phone knows). */
+class CardCandidate(val keyHash: String, val key: SignerKey.EmvCard, val recipe: CardRecipe?)
+
+/** The card tapped to be added is already one of the wallet's signers. */
+class AlreadySignerException(message: String) : Exception(message)
+
+/**
+ * Proof of possession, checked on the phone, for a card added after setup.
+ * The contract checks none for `AddSigner` in a config proposal (DESIGN gap 8),
+ * so the app makes the new card sign [challenge] first and keeps the card only
+ * if the signature verifies under the key it recovered from the card's
+ * certificate, with the challenge at the place the key's layout says.
+ */
+fun provesPossession(key: SignerKey.EmvCard, proof: CardSig, challenge: ByteArray): Boolean {
+    val td = proof.terminalData
+    if (td.size != key.terminalDataLen || key.unLen !in 4..8 || key.unOffset + key.unLen > td.size) return false
+    if (!td.copyOfRange(key.unOffset, key.unOffset + key.unLen).contentEquals(challenge.copyOf(key.unLen))) return false
+    return Rsa.verifySdad(key.modulus, key.exponent, proof.sdad, td)
+}
 
 /** The card signed, but not with the key enrolled in the wallet: probably a different card. */
 class WrongCardException : EmvException("this isn't the card enrolled in the wallet")

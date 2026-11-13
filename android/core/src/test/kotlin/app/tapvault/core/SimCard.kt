@@ -16,6 +16,14 @@ class TestRsaKey(val modulus: ByteArray, val exponent: Int, private val d: BigIn
 object TestCards {
     /** The card key shared with the Rust TestCard (1024-bit, e = 3). */
     val SMALL = TestRsaKey.of(SimKeys.ICC_N, SimKeys.ICC_D)
+
+    /** A fresh 1024-bit, e = 3 card key: a second card that isn't [SMALL]. */
+    fun random(): TestRsaKey {
+        val g = java.security.KeyPairGenerator.getInstance("RSA")
+        g.initialize(java.security.spec.RSAKeyGenParameterSpec(1024, BigInteger.valueOf(3)))
+        val k = g.generateKeyPair().private as java.security.interfaces.RSAPrivateKey
+        return TestRsaKey(k.modulus.toFixed(128), 3, k.privateExponent)
+    }
 }
 
 /**
@@ -25,7 +33,11 @@ object TestCards {
  * certificate chain), and signs the way one real card family does ([Profile]).
  * Its keys are public test keys.
  */
-class SimCard(val profile: Profile = Profile.DDA) : CardTransceiver {
+class SimCard(
+    val profile: Profile = Profile.DDA,
+    private val icc: TestRsaKey = TestCards.SMALL,
+    private val pan: ByteArray = PAN,
+) : CardTransceiver {
     enum class Profile {
         /** Classic DDA: signs on INTERNAL AUTHENTICATE. */
         DDA,
@@ -44,13 +56,16 @@ class SimCard(val profile: Profile = Profile.DDA) : CardTransceiver {
 
     private val ca = TestRsaKey.of(SimKeys.CA_N, SimKeys.CA_D)
     private val issuer = TestRsaKey.of(SimKeys.ISSUER_N, SimKeys.ISSUER_D)
-    private val icc = TestCards.SMALL
     private var gpoDone = false
     private var acDone = false
     /** 9F69 of the current transaction, served from the last AFL record (Visa profile). */
     private var cardData = ByteArray(0)
     private var atc = 0
     var taps = 0
+        private set
+
+    /** Signatures the card has made (SDADs), whatever they covered. */
+    var signatures = 0
         private set
 
     private val aip = when (profile) {
@@ -77,7 +92,7 @@ class SimCard(val profile: Profile = Profile.DDA) : CardTransceiver {
         record1 = Tlv.encode(
             0x70,
             *listOfNotNull(
-                Tlv.encode(0x5A, PAN),
+                Tlv.encode(0x5A, pan),
                 Tlv.encode(0x5F24, "301231".unhex()),
                 if (profile == Profile.DDA) Tlv.encode(0x9F49, "9F3704".unhex()) else null,
                 if (profile == Profile.MASTERCARD_CDA) Tlv.encode(0x8C, CDOL1) else null,
@@ -92,7 +107,7 @@ class SimCard(val profile: Profile = Profile.DDA) : CardTransceiver {
         val staticData = Tlv.parse(record1)[0].value + aip
         val iccCert = cert(
             signer = issuer,
-            header = byteArrayOf(0x04) + PAN + byteArrayOf(0xFF.toByte(), 0xFF.toByte()) + EXPIRY + "000001".unhex() + byteArrayOf(0x01, 0x01),
+            header = byteArrayOf(0x04) + pan + byteArrayOf(0xFF.toByte(), 0xFF.toByte()) + EXPIRY + "000001".unhex() + byteArrayOf(0x01, 0x01),
             key = icc.modulus,
             extra = staticData,
             leftmostRoom = issuer.modulus.size - 42,
@@ -218,6 +233,7 @@ class SimCard(val profile: Profile = Profile.DDA) : CardTransceiver {
     private fun iccDynamic() = byteArrayOf(8) + sha1(atcBytes(), byteArrayOf(0x11)).copyOf(8)
 
     private fun sdad(iccDyn: ByteArray, terminalData: ByteArray, format: Int = 0x05): ByteArray {
+        signatures++
         val n = icc.modulus.size
         val body = byteArrayOf(format.toByte(), 0x01, iccDyn.size.toByte()) + iccDyn
         val padded = body + ByteArray(n - 22 - body.size) { 0xBB.toByte() }
@@ -246,6 +262,8 @@ class SimCard(val profile: Profile = Profile.DDA) : CardTransceiver {
         val AID = "F0544150560001".unhex()
         val LABEL = "TAPVAULT TEST".toByteArray()
         val PAN = "5999990000001234".unhex()
+        /** A second test card number (same test issuer). */
+        val PAN2 = "5999990000005678".unhex()
         val ISSUER_ID = "599999FF".unhex()
         val EXPIRY = "1230".unhex()
         val AFL = "08010201".unhex() // SFI 1, records 1-2, record 1 used for offline auth
