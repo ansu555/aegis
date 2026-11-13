@@ -8,7 +8,7 @@ The first file to read if you are a coding agent or a new contributor.
 - A Rust contract (`contract/`, security logic in `crates/tapvault-core/`) is deployed to each wallet's own account; it verifies both signatures on-chain and enforces limits, delays and freeze. The account's key is deleted at the end of setup.
 - The Android app (`android/app`) creates the wallet, reads the card over NFC and sends every transaction. Its client logic lives in `android/core`: plain Kotlin with no Android APIs, so the same code is tested on the JVM and against live testnet.
 - NEAR testnet only. Hackathon project: NEAR HACKATHON, submission deadline 14 Nov 2026, 23:59 UTC.
-- Status (14 Nov 2026): all offline tests pass with simulated cards; **nothing has run against a real bank card or a real phone's NFC yet**. The 14 Nov contract build (v0.3: wallets without a card) hasn't run on live testnet yet (docs/STATUS.md).
+- Status (14 Nov 2026): all offline tests pass with simulated cards; **nothing has run against a real bank card or a real phone's NFC yet**. The 14 Nov contract build (v0.3: wallets without a card) passes the live testnet tests (`PhoneOnlyE2ETest`, `TestnetE2ETest` ×3); adding the card after the 1 h delay hasn't run live (docs/STATUS.md).
 
 ## Read first
 

@@ -171,7 +171,7 @@ Wallets created before this build keep their code (invariant 4).
 | `sandbox.rs` (compiled wasm, nearcore 2.6.5) | Pass: `full_flow_and_gas` unchanged; new `phone_only_wallet_then_add_the_card`: finalize with threshold 1 35.0 Tgas, the phone alone pays (propose 34.9, execute 2.7), propose `AddSigner(card)` + `SetThreshold(2)` with possession 35.7, refused before the delay, executed after it (`ready_ts` moved back in state), then the phone alone is refused |
 | `./gradlew :core:test` | Pass: 56 tests (`Phase5Test` 3 new; the new live `PhoneOnlyE2ETest` returns at once offline); `Phase2Test` checks the new shipped hash |
 | `android/build-apk.sh` | Pass, `verifyWasm` with the new hash |
-| Live testnet (`PhoneOnlyE2ETest`, `TestnetE2ETest` ×3 with the new build) | **Not run**: the faucet answered HTTP 429 ("retry in 6 hours") and no sponsor was set. Run them before the demo (commands in AGENTS.md) |
+| Live testnet (`PhoneOnlyE2ETest`, `TestnetE2ETest` ×3 with the new build) | **Pass** (14 Nov, faucet): `PhoneOnlyE2ETest` `tv-e2e-65a192a6a2.testnet` (code hash `DdhpDh3c…RcS7`, no access keys; the phone alone paid 0.5 NEAR; the card add was proposed with possession and refused before the 1 h delay; not executed, `TAPVAULT_WAIT_DELAYS` unset). `TestnetE2ETest` DDA `tv-e2e-020039fe7e`, VISA_FDDA `tv-e2e-c18b95e7aa`, MASTERCARD_CDA `tv-e2e-b6209b5022` |
 | On a phone | Not yet |
 
 ## What is not verified
