@@ -113,8 +113,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (log.size > 200) log.removeAt(log.size - 1)
     }
 
+    /** The tab a pushed screen (Your card) was opened from, so Back returns there. */
+    var cameFrom by mutableStateOf(Screen.Home)
+        private set
+
     fun go(s: Screen) {
         outcome = null
+        if (screen in setOf(Screen.Home, Screen.Activity, Screen.Settings)) cameFrom = screen
         screen = s
     }
 

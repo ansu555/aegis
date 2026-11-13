@@ -2,12 +2,14 @@
     xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
+    <!-- brushed titanium, light from the top-left -->
     <path android:pathData="M0,0h108v108h-108z">
         <aapt:attr name="android:fillColor">
             <gradient android:type="linear" android:startX="0" android:startY="0" android:endX="108" android:endY="108">
-                <item android:offset="0" android:color="#FF8AF3CB" />
-                <item android:offset="0.55" android:color="#FF5EE6AE" />
-                <item android:offset="1" android:color="#FF28B57E" />
+                <item android:offset="0" android:color="#FFFAFAFC" />
+                <item android:offset="0.4" android:color="#FFC9C9CF" />
+                <item android:offset="0.75" android:color="#FF9C9CA4" />
+                <item android:offset="1" android:color="#FFE6E6EA" />
             </gradient>
         </aapt:attr>
     </path>

@@ -1,13 +1,23 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="240dp" android:height="240dp"
     android:viewportWidth="216" android:viewportHeight="216">
-    <path android:fillColor="#FF5EE6AE" android:pathData="M78,54h60a24,24 0,0 1,24 24v60a24,24 0,0 1,-24 24h-60a24,24 0,0 1,-24 -24v-60a24,24 0,0 1,24 -24z" />
+    <path android:pathData="M78,54h60a24,24 0,0 1,24 24v60a24,24 0,0 1,-24 24h-60a24,24 0,0 1,-24 -24v-60a24,24 0,0 1,24 -24z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="54" android:startY="54" android:endX="162" android:endY="162">
+                <item android:offset="0" android:color="#FFFAFAFC" />
+                <item android:offset="0.4" android:color="#FFC9C9CF" />
+                <item android:offset="0.75" android:color="#FF9C9CA4" />
+                <item android:offset="1" android:color="#FFE6E6EA" />
+            </gradient>
+        </aapt:attr>
+    </path>
     <group android:translateX="54" android:translateY="54">
-    <path android:strokeColor="#FF03140C" android:strokeWidth="5" android:strokeLineJoin="round" android:fillColor="#00000000"
+    <path android:strokeColor="#FF0A0A0B" android:strokeWidth="5" android:strokeLineJoin="round" android:fillColor="#00000000"
         android:pathData="M36,40h26a5,5 0,0 1,5 5v18a5,5 0,0 1,-5 5h-26a5,5 0,0 1,-5 -5v-18a5,5 0,0 1,5 -5z" />
-    <path android:strokeColor="#FF03140C" android:strokeWidth="5" android:strokeLineCap="round"
+    <path android:strokeColor="#FF0A0A0B" android:strokeWidth="5" android:strokeLineCap="round"
         android:pathData="M31,50.5h36" />
-    <path android:strokeColor="#FF03140C" android:strokeWidth="5" android:strokeLineCap="round" android:fillColor="#00000000"
+    <path android:strokeColor="#FF0A0A0B" android:strokeWidth="5" android:strokeLineCap="round" android:fillColor="#00000000"
         android:pathData="M72.7,45.8A10,10 0,0 1,72.7 62.2M76.7,40.1A17,17 0,0 1,76.7 67.9" />
     </group>
 </vector>

@@ -79,6 +79,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("com.google.zxing:core:3.5.3") // Receive QR code
+    implementation("dev.chrisbanes.haze:haze:1.5.4") // backdrop blur for the glass tab bar, sheets and banners (Compose 1.7 / Kotlin 2.1 build)
     implementation("androidx.fragment:fragment-ktx:1.8.5")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 }

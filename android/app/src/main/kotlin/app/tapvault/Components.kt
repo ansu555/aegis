@@ -22,7 +22,12 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.semantics.onClick
+import kotlin.math.roundToInt
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -49,6 +54,22 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.ImageShader
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathMeasure
+import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -145,15 +166,23 @@ fun TvButton(
 ) {
     val (bg, fg) = when (kind) {
         Btn.Primary -> Tv.Accent to Tv.OnAccent
-        Btn.Secondary -> Tv.Surface2 to Tv.Text
+        Btn.Secondary -> Tv.GlassStrong to Tv.Text
         Btn.Danger -> Tv.DangerSoft to Tv.Danger
         Btn.Ghost -> Color.Transparent to Tv.Text2
     }
-    val bgC by animateColorAsState(if (enabled) bg else if (kind == Btn.Primary) Tv.Surface2 else bg, label = "bg")
+    val bgC by animateColorAsState(if (enabled) bg else if (kind == Btn.Primary) Tv.Glass else bg, label = "bg")
     val fgC by animateColorAsState(if (enabled) fg else Tv.Text3, label = "fg")
+    val shape = RoundedCornerShape(height / 2)
     Row(
-        modifier.height(height).clip(RoundedCornerShape(height / 2)).background(bgC)
-            .let { if (kind == Btn.Secondary) it.border(1.dp, Tv.Stroke, RoundedCornerShape(height / 2)) else it }
+        modifier.height(height).clip(shape).background(bgC)
+            .let {
+                when {
+                    // platinum: a brushed-metal sheen over the fill, brightest at the top
+                    kind == Btn.Primary && enabled -> it.background(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.9f), Color.Transparent, Color.Black.copy(alpha = 0.10f))), shape)
+                    kind == Btn.Secondary || (kind == Btn.Primary && !enabled) -> it.glassRim(height / 2, shape = shape)
+                    else -> it
+                }
+            }
             .pressable(enabled && !loading, haptic = kind == Btn.Primary, onClick = onClick)
             .semantics { role = Role.Button }
             .padding(horizontal = 22.dp),
@@ -171,10 +200,15 @@ fun TvButton(
 @Composable
 fun ActionButton(icon: Ic, label: String, modifier: Modifier = Modifier, primary: Boolean = false, enabled: Boolean = true, tint: Color? = null, onClick: () -> Unit) {
     Column(modifier.pressable(enabled, haptic = true, onClick = onClick).semantics { contentDescription = label; role = Role.Button }, horizontalAlignment = Alignment.CenterHorizontally) {
-        val bg = when { !enabled -> Tv.Surface; primary -> Tv.Accent; else -> Tv.Surface2 }
         val fg = when { !enabled -> Tv.Text3; primary -> Tv.OnAccent; else -> tint ?: Tv.Text }
         Box(
-            Modifier.size(58.dp).background(bg, CircleShape).let { if (!primary) it.border(1.dp, Tv.Stroke, CircleShape) else it },
+            Modifier.size(62.dp)
+                .let {
+                    if (primary && enabled) it.shadow(18.dp, CircleShape, ambientColor = Color.White.copy(alpha = 0.25f), spotColor = Color.White.copy(alpha = 0.25f))
+                        .background(Tv.titanium(), CircleShape)
+                        .border(1.dp, Brush.linearGradient(listOf(Color.White, Color.White.copy(alpha = 0.2f))), CircleShape)
+                    else it.background(if (enabled) Tv.GlassStrong else Tv.Glass, CircleShape).glassRim(31.dp, shape = CircleShape)
+                },
             contentAlignment = Alignment.Center,
         ) { TvIcon(icon, 24.dp, fg) }
         Spacer(Modifier.height(8.dp))
@@ -184,10 +218,10 @@ fun ActionButton(icon: Ic, label: String, modifier: Modifier = Modifier, primary
 
 /** Small round icon button (back, close, header actions). */
 @Composable
-fun RoundIcon(icon: Ic, label: String, size: Dp = 44.dp, tint: Color = Tv.Text, bg: Color = Tv.Surface2, dot: Boolean = false, onClick: () -> Unit) {
+fun RoundIcon(icon: Ic, label: String, size: Dp = 44.dp, tint: Color = Tv.Text, bg: Color = Tv.GlassStrong, dot: Boolean = false, onClick: () -> Unit) {
     Box {
         Box(
-            Modifier.size(size).clip(CircleShape).background(bg).border(1.dp, Tv.Stroke, CircleShape)
+            Modifier.size(size).clip(CircleShape).background(bg).glassRim(size / 2, shape = CircleShape)
                 .pressable(onClick = onClick).semantics { contentDescription = label; role = Role.Button },
             contentAlignment = Alignment.Center,
         ) { TvIcon(icon, size * 0.46f, tint) }
@@ -198,11 +232,12 @@ fun RoundIcon(icon: Ic, label: String, size: Dp = 44.dp, tint: Color = Tv.Text, 
 /** Small selectable chip ("Half", "Max", presets). */
 @Composable
 fun Chip(text: String, selected: Boolean = false, onClick: () -> Unit) {
-    val bg by animateColorAsState(if (selected) Tv.AccentSoft else Tv.Surface2, label = "chip")
+    val bg by animateColorAsState(if (selected) Tv.Accent else Tv.GlassStrong, label = "chip")
+    val fg by animateColorAsState(if (selected) Tv.OnAccent else Tv.Text, label = "chipFg")
     Box(
-        Modifier.clip(RoundedCornerShape(50)).background(bg).border(1.dp, if (selected) Tv.Accent.copy(alpha = 0.5f) else Tv.Stroke, RoundedCornerShape(50))
-            .pressable(onClick = onClick).padding(horizontal = 14.dp, vertical = 8.dp),
-    ) { Text(text, style = Type.CaptionStrong, color = if (selected) Tv.Accent else Tv.Text) }
+        Modifier.clip(RoundedCornerShape(50)).background(bg).let { if (selected) it else it.glassRim(18.dp, shape = RoundedCornerShape(50)) }
+            .pressable(haptic = true, onClick = onClick).padding(horizontal = 14.dp, vertical = 8.dp),
+    ) { Text(text, style = Type.CaptionStrong, color = fg) }
 }
 
 /** Status pill: tinted background, coloured text, optional leading icon. */
@@ -265,8 +300,8 @@ fun GroupDivider() = HorizontalDivider(Modifier.padding(start = 68.dp), thicknes
 
 /** Icon in a tinted rounded square, used at the start of rows. */
 @Composable
-fun IconTile(icon: Ic, tint: Color = Tv.Text, bg: Color = Tv.Surface3, size: Dp = 40.dp) {
-    Box(Modifier.size(size).background(bg, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) { TvIcon(icon, size * 0.5f, tint) }
+fun IconTile(icon: Ic, tint: Color = Tv.Text, bg: Color = Tv.GlassStrong, size: Dp = 40.dp) {
+    Box(Modifier.size(size).background(bg, RoundedCornerShape(13.dp)).let { if (bg == Tv.GlassStrong) it.glassRim(13.dp) else it }, contentAlignment = Alignment.Center) { TvIcon(icon, size * 0.5f, tint) }
 }
 
 /** A row in a [Group]: icon, title and subtitle, trailing value and chevron if tappable. */
@@ -277,7 +312,7 @@ fun Row_(
     subtitle: String? = null,
     value: String? = null,
     tint: Color = Tv.Text,
-    iconBg: Color = Tv.Surface3,
+    iconBg: Color = Tv.GlassStrong,
     titleColor: Color = Tv.Text,
     chevron: Boolean = false,
     trailingIcon: Ic? = null,
@@ -329,8 +364,8 @@ fun Notice(icon: Ic, title: String, body: String? = null, color: Color = Tv.Warn
 @Composable
 fun Meter(fraction: Float, color: Color = Tv.Accent, modifier: Modifier = Modifier) {
     val f by animateFloatAsState(fraction.coerceIn(0f, 1f), tween(700, easing = FastOutSlowInEasing), label = "meter")
-    Box(modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(Tv.Surface3)) {
-        Box(Modifier.fillMaxWidth(f).height(6.dp).clip(RoundedCornerShape(3.dp)).background(color))
+    Box(modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(Tv.GlassStrong)) {
+        Box(Modifier.fillMaxWidth(f).height(6.dp).clip(RoundedCornerShape(3.dp)).background(if (color == Tv.Accent) Tv.titanium() else androidx.compose.ui.graphics.SolidColor(color)))
     }
 }
 
@@ -338,23 +373,42 @@ fun Meter(fraction: Float, color: Color = Tv.Accent, modifier: Modifier = Modifi
 @Composable
 fun Avatar(name: String, size: Dp = 40.dp) {
     Box(
-        Modifier.size(size).background(Brush.linearGradient(listOf(Color(0xFF2E3A36), Color(0xFF1B2422))), CircleShape).border(1.dp, Tv.Accent.copy(alpha = 0.35f), CircleShape),
+        Modifier.size(size).background(Tv.titanium(), CircleShape).border(1.dp, Brush.linearGradient(listOf(Color.White, Color.White.copy(alpha = 0.15f))), CircleShape),
         contentAlignment = Alignment.Center,
-    ) { Text(name.trim().firstOrNull()?.uppercase() ?: "W", style = Type.Title.copy(fontSize = (size.value * 0.42f).sp), color = Tv.Accent) }
+    ) { Text(name.trim().firstOrNull()?.uppercase() ?: "W", style = Type.Title.copy(fontSize = (size.value * 0.42f).sp), color = Tv.OnAccent) }
 }
 
-/** An amount with the decimals dimmer than the whole part: 6.133 NEAR. */
+/** An amount with the decimals dimmer than the whole part: 6.133 NEAR. [metal] paints the whole part in titanium. */
 @Composable
-fun Amount(yocto: BigInteger?, decimals: Int = 4, style: TextStyle = Type.Balance, unit: String? = "NEAR", modifier: Modifier = Modifier) {
+fun Amount(yocto: BigInteger?, decimals: Int = 4, style: TextStyle = Type.Balance, unit: String? = "NEAR", modifier: Modifier = Modifier, metal: Boolean = false) {
     val s = yocto?.let { Near.format(it, decimals) } ?: "–"
     val whole = s.substringBefore('.')
     val frac = if ('.' in s) "." + s.substringAfter('.') else ""
     Row(modifier, verticalAlignment = Alignment.Bottom) {
-        Text(whole, style = style, color = Tv.Text)
+        Text(whole, style = if (metal) style.copy(brush = Tv.titanium()) else style, color = Tv.Text)
         if (frac.isNotEmpty()) Text(frac, style = style, color = Tv.Text2)
         unit?.let { Text(" $it", style = style.copy(fontSize = style.fontSize * 0.42f, letterSpacing = 0.sp), color = Tv.Text2, modifier = Modifier.padding(bottom = (style.fontSize.value * 0.16f).dp)) }
     }
 }
+
+/** [Amount] that counts from its previous value to a new one, so a balance change is seen, not just swapped. */
+@Composable
+fun CountingAmount(yocto: BigInteger, decimals: Int = 4, style: TextStyle = Type.Balance, modifier: Modifier = Modifier, metal: Boolean = false) {
+    var from by remember { mutableStateOf(BigInteger.ZERO) }
+    var to by remember { mutableStateOf(BigInteger.ZERO) }
+    val p = remember { Animatable(1f) }
+    LaunchedEffect(yocto) {
+        if (yocto == to) return@LaunchedEffect
+        from = if (p.value < 1f) lerp(from, to, p.value) else to
+        to = yocto
+        p.snapTo(0f)
+        p.animateTo(1f, tween(900, easing = FastOutSlowInEasing))
+    }
+    Amount(lerp(from, to, p.value), decimals, style, modifier = modifier, metal = metal)
+}
+
+private fun lerp(a: BigInteger, b: BigInteger, t: Float): BigInteger =
+    a + (b - a) * BigInteger.valueOf((t.coerceIn(0f, 1f) * 1_000_000).toLong()) / BigInteger.valueOf(1_000_000)
 
 // ---------------------------------------------------------------- inputs
 
@@ -378,7 +432,7 @@ fun TvField(
             keyboardOptions = KeyboardOptions(keyboardType = if (number) KeyboardType.Decimal else KeyboardType.Ascii, autoCorrectEnabled = false),
             decorationBox = { inner ->
                 Row(
-                    Modifier.fillMaxWidth().heightIn(min = 56.dp).surface(16.dp, Tv.Surface, if (error != null) Tv.Danger.copy(alpha = 0.6f) else Tv.StrokeStrong).padding(start = 16.dp, end = 8.dp),
+                    Modifier.fillMaxWidth().heightIn(min = 56.dp).surface(18.dp, Tv.Glass, if (error != null) Tv.Danger.copy(alpha = 0.6f) else Tv.Stroke).padding(start = 16.dp, end = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Box(Modifier.weight(1f).padding(vertical = 14.dp)) {
@@ -418,48 +472,18 @@ fun AmountField(value: String, onChange: (String) -> Unit, unit: String = "NEAR"
 
 data class NavItem(val screen: Screen, val icon: Ic, val label: String)
 
+/** The tab bar: everyday screens only. Card check lives under Settings › Your card. */
 val navItems = listOf(
     NavItem(Screen.Home, Ic.Wallet, "Wallet"),
     NavItem(Screen.Activity, Ic.History, "Activity"),
-    NavItem(Screen.CardCheck, Ic.Card, "Card"),
     NavItem(Screen.Settings, Ic.Settings, "Settings"),
 )
-
-/** Solid bottom tab bar: icon and label, the current tab in accent with a soft pill behind its icon. */
-@Composable
-fun BottomNav(current: Screen, badge: Int, go: (Screen) -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxWidth().background(Tv.BgRaised)) {
-        HorizontalDivider(thickness = 1.dp, color = Tv.Stroke)
-        Row(Modifier.fillMaxWidth().navigationBarsPadding().height(68.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            navItems.forEach { item ->
-                val sel = item.screen == current
-                val tint by animateColorAsState(if (sel) Tv.Accent else Tv.Text3, label = "nav")
-                val pill by animateColorAsState(if (sel) Tv.AccentSoft else Color.Transparent, label = "pill")
-                Column(
-                    Modifier.weight(1f).fillMaxSize().clip(RoundedCornerShape(16.dp)).pressable(haptic = true) { go(item.screen) }
-                        .semantics { contentDescription = item.label; role = Role.Tab },
-                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
-                ) {
-                    Box {
-                        Box(Modifier.size(52.dp, 30.dp).background(pill, RoundedCornerShape(15.dp)), contentAlignment = Alignment.Center) { TvIcon(item.icon, 22.dp, tint) }
-                        if (item.screen == Screen.Activity && badge > 0) Box(
-                            Modifier.align(Alignment.TopEnd).offset(x = (-6).dp, y = (-3).dp).size(17.dp).background(Tv.Warn, CircleShape).border(2.dp, Tv.BgRaised, CircleShape),
-                            contentAlignment = Alignment.Center,
-                        ) { Text(if (badge > 9) "9+" else "$badge", style = TextStyle(fontFamily = Inter, fontWeight = FontWeight.SemiBold, fontSize = 9.sp), color = Tv.OnAccent) }
-                    }
-                    Spacer(Modifier.height(3.dp))
-                    Text(item.label, style = Type.Overline.copy(fontSize = 11.sp, letterSpacing = 0.2.sp), color = tint)
-                }
-            }
-        }
-    }
-}
 
 // ---------------------------------------------------------------- feedback
 
 /**
- * Result banner, pinned at the top. Solid (never see-through), slides in,
- * swipe up or tap × to dismiss; successes leave on their own after a few seconds.
+ * Result banner, pinned at the top. Frosted glass, slides in, swipe up or
+ * tap × to dismiss; successes draw their check and leave on their own after a few seconds.
  */
 @Composable
 fun OutcomeBanner(o: Outcome?, openLink: (String) -> Unit, dismiss: () -> Unit, modifier: Modifier = Modifier) {
@@ -470,14 +494,14 @@ fun OutcomeBanner(o: Outcome?, openLink: (String) -> Unit, dismiss: () -> Unit, 
         if (o != null && o.ok) { delay(if (o.link != null) 7_000 else 5_000); dismiss() }
     }
     val h = LocalHapticFeedback.current
-    LaunchedEffect(o) { if (o != null && !o.ok) h.performHapticFeedback(HapticFeedbackType.LongPress) }
+    LaunchedEffect(o) { if (o != null) h.performHapticFeedback(if (o.ok) HapticFeedbackType.TextHandleMove else HapticFeedbackType.LongPress) }
     AnimatedVisibility(
         o != null, modifier,
-        enter = slideInVertically(spring(dampingRatio = 0.8f, stiffness = 500f)) { -it } + fadeIn(),
+        enter = slideInVertically(spring(dampingRatio = 0.78f, stiffness = 480f)) { -it } + fadeIn(),
         exit = slideOutVertically(tween(220)) { -it } + fadeOut(tween(220)),
     ) {
         val b = last ?: return@AnimatedVisibility
-        val accent = if (b.ok) Tv.Accent else Tv.Danger
+        val shape = RoundedCornerShape(24.dp)
         var drag by remember { mutableStateOf(0f) }
         Row(
             Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp)
@@ -485,15 +509,14 @@ fun OutcomeBanner(o: Outcome?, openLink: (String) -> Unit, dismiss: () -> Unit, 
                 .pointerInput(Unit) {
                     detectVerticalDragGestures(onDragEnd = { if (drag < -60f) dismiss(); drag = 0f }) { _, dy -> drag += dy }
                 }
-                .shadow(24.dp, RoundedCornerShape(20.dp), ambientColor = Color.Black, spotColor = Color.Black)
-                .background(Tv.Surface2, RoundedCornerShape(20.dp))
-                .border(1.dp, accent.copy(alpha = 0.28f), RoundedCornerShape(20.dp))
+                .shadow(26.dp, shape, ambientColor = Color.Black, spotColor = Color.Black)
+                .frosted(shape, strength = 0.72f)
+                .glassRim(24.dp, if (b.ok) Tv.Stroke else Tv.Danger.copy(alpha = 0.35f))
                 .padding(start = 14.dp, end = 6.dp, top = 14.dp, bottom = 14.dp),
             verticalAlignment = Alignment.Top,
         ) {
-            Box(Modifier.size(36.dp).background(accent.copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
-                TvIcon(if (b.ok) Ic.Check else Ic.Alert, 20.dp, accent)
-            }
+            if (b.ok) AnimatedCheck(38.dp)
+            else Box(Modifier.size(38.dp).background(Tv.DangerSoft, CircleShape), contentAlignment = Alignment.Center) { TvIcon(Ic.Alert, 20.dp, Tv.Danger) }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f).padding(top = 1.dp)) {
                 Text(b.title, style = Type.BodyStrong, color = Tv.Text)
@@ -503,9 +526,9 @@ fun OutcomeBanner(o: Outcome?, openLink: (String) -> Unit, dismiss: () -> Unit, 
                 )
                 b.link?.let { l ->
                     Row(Modifier.padding(top = 8.dp).clip(RoundedCornerShape(8.dp)).clickable { openLink(l) }.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("View on explorer", style = Type.CaptionStrong, color = Tv.Accent)
+                        Text("View on explorer", style = Type.CaptionStrong, color = Tv.Text)
                         Spacer(Modifier.width(4.dp))
-                        TvIcon(Ic.External, 14.dp, Tv.Accent)
+                        TvIcon(Ic.External, 14.dp, Tv.Text2)
                     }
                 }
             }
@@ -516,15 +539,40 @@ fun OutcomeBanner(o: Outcome?, openLink: (String) -> Unit, dismiss: () -> Unit, 
     }
 }
 
+/** A check that draws itself inside a soft disc that pops in: success, seen rather than read. */
+@Composable
+fun AnimatedCheck(size: Dp, color: Color = Tv.Positive) {
+    val ring = remember { Animatable(0f) }
+    val stroke = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        launch { ring.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 320f)) }
+        delay(140)
+        stroke.animateTo(1f, tween(420, easing = FastOutSlowInEasing))
+    }
+    Canvas(Modifier.size(size)) {
+        val s = this.size.minDimension
+        drawCircle(color.copy(alpha = 0.16f), radius = s / 2 * ring.value)
+        val path = Path().apply { moveTo(s * 0.29f, s * 0.53f); lineTo(s * 0.44f, s * 0.67f); lineTo(s * 0.72f, s * 0.37f) }
+        val pm = PathMeasure().apply { setPath(path, false) }
+        val seg = Path()
+        pm.getSegment(0f, pm.length * stroke.value, seg, true)
+        drawPath(seg, color, style = Stroke(s * 0.085f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+}
+
 /** Blocks input while something runs and says what. */
 @Composable
 fun BusyOverlay(text: String) {
+    val appear = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { appear.animateTo(1f, spring(dampingRatio = 0.8f, stiffness = 420f)) }
     Box(
-        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).clickable(remember { MutableInteractionSource() }, indication = null) {},
+        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f * appear.value)).clickable(remember { MutableInteractionSource() }, indication = null) {},
         contentAlignment = Alignment.Center,
     ) {
+        val shape = RoundedCornerShape(30.dp)
         Column(
-            Modifier.padding(40.dp).shadow(30.dp, RoundedCornerShape(28.dp)).surface(28.dp, Tv.Surface2, Tv.StrokeStrong).padding(horizontal = 28.dp, vertical = 26.dp),
+            Modifier.padding(40.dp).graphicsLayer { val s = 0.9f + 0.1f * appear.value; scaleX = s; scaleY = s; alpha = appear.value.coerceIn(0f, 1f) }
+                .shadow(30.dp, shape).frosted(shape, strength = 0.7f).glassRim(30.dp).padding(horizontal = 30.dp, vertical = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Spinner(44.dp)
@@ -535,15 +583,43 @@ fun BusyOverlay(text: String) {
     }
 }
 
-/** An arc spinner in the accent colour. */
+/** An arc spinner: a bright head on a faint track. */
 @Composable
 fun Spinner(size: Dp = 28.dp, color: Color = Tv.Accent) {
     val t = rememberInfiniteTransition(label = "spin")
     val a by t.animateFloat(0f, 360f, infiniteRepeatable(tween(900, easing = LinearEasing)), label = "a")
     Canvas(Modifier.size(size).rotate(a)) {
         val w = this.size.minDimension * 0.09f
-        drawArc(color.copy(alpha = 0.15f), 0f, 360f, false, Offset(w / 2, w / 2), Size(this.size.width - w, this.size.height - w), style = Stroke(w))
-        drawArc(color, 0f, 100f, false, Offset(w / 2, w / 2), Size(this.size.width - w, this.size.height - w), style = Stroke(w, cap = StrokeCap.Round))
+        drawArc(color.copy(alpha = 0.12f), 0f, 360f, false, Offset(w / 2, w / 2), Size(this.size.width - w, this.size.height - w), style = Stroke(w))
+        drawArc(Brush.sweepGradient(listOf(Color.Transparent, color)), 0f, 110f, false, Offset(w / 2, w / 2), Size(this.size.width - w, this.size.height - w), style = Stroke(w, cap = StrokeCap.Round))
+    }
+}
+
+/**
+ * A centred glass dialog. On Android 12+ the screen behind it is blurred by the
+ * system (where the device allows cross-window blur); elsewhere it is dimmed.
+ */
+@Composable
+fun GlassDialog(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    Dialog(onDismiss, DialogProperties(usePlatformDefaultWidth = false)) {
+        val window = (LocalView.current.parent as? DialogWindowProvider)?.window
+        LaunchedEffect(window) {
+            if (window != null && android.os.Build.VERSION.SDK_INT >= 31) {
+                window.addFlags(android.view.WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
+                window.attributes = window.attributes.apply { blurBehindRadius = 48 }
+                window.setDimAmount(0.45f)
+            }
+        }
+        val appear = remember { Animatable(0f) }
+        LaunchedEffect(Unit) { appear.animateTo(1f, spring(dampingRatio = 0.72f, stiffness = 420f)) }
+        val shape = RoundedCornerShape(32.dp)
+        Column(
+            Modifier.padding(horizontal = 26.dp).fillMaxWidth()
+                .graphicsLayer { val s = 0.9f + 0.1f * appear.value; scaleX = s; scaleY = s; alpha = appear.value.coerceIn(0f, 1f) }
+                .shadow(40.dp, shape).background(Tv.Sheet, shape).glassRim(32.dp).padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            content = content,
+        )
     }
 }
 
@@ -559,63 +635,95 @@ fun ConfirmDialog(
     danger: Boolean = false,
     icon: Ic? = null,
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = Tv.Surface2,
-        shape = RoundedCornerShape(28.dp),
-        icon = icon?.let { { Box(Modifier.size(48.dp).background((if (danger) Tv.Danger else Tv.Accent).copy(alpha = 0.14f), CircleShape), contentAlignment = Alignment.Center) { TvIcon(it, 24.dp, if (danger) Tv.Danger else Tv.Accent) } } },
-        title = { Text(title, style = Type.H2, textAlign = TextAlign.Center) },
-        text = { Text(text, style = Type.Body, color = Tv.Text2) },
-        confirmButton = { TextButton(onClick = onConfirm) { Text(confirm, style = Type.Button, color = if (danger) Tv.Danger else Tv.Accent) } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(dismiss, style = Type.Button, color = Tv.Text2) } },
-    )
+    GlassDialog(onDismiss) {
+        icon?.let {
+            val c = if (danger) Tv.Danger else if (it == Ic.Freeze) Tv.Ice else Tv.Text
+            Box(Modifier.size(58.dp).background(c.copy(alpha = 0.13f), CircleShape).glassRim(29.dp, shape = CircleShape), contentAlignment = Alignment.Center) { TvIcon(it, 26.dp, c) }
+            Spacer(Modifier.height(16.dp))
+        }
+        Text(title, style = Type.H2, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(8.dp))
+        Text(text, style = Type.Body, color = Tv.Text2, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(22.dp))
+        TvButton(confirm, Modifier.fillMaxWidth(), if (danger) Btn.Danger else Btn.Primary, height = 52.dp, onClick = onConfirm)
+        Spacer(Modifier.height(6.dp))
+        TvButton(dismiss, Modifier.fillMaxWidth(), Btn.Ghost, height = 46.dp, onClick = onDismiss)
+    }
+}
+
+/** A bottom sheet in dark glass (sheets are their own window, so they can't blur what's behind). */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GlassSheet(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    val shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)
+    ModalBottomSheet(
+        onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = Tv.Sheet, shape = shape, scrimColor = Color.Black.copy(alpha = 0.6f),
+        dragHandle = { Box(Modifier.padding(top = 12.dp, bottom = 10.dp).size(40.dp, 4.dp).background(Tv.StrokeStrong, RoundedCornerShape(2.dp))) },
+        modifier = Modifier.glassRim(32.dp, shape = shape),
+    ) { SheetColumn(content) }
 }
 
 // ---------------------------------------------------------------- the card
 
 /**
- * A bank card in graphite with a mint sheen: chip, contactless mark, last
- * four digits. [frozen] frosts it over in ice blue.
+ * The card, in brushed dark titanium: chip, contactless mark, last four digits.
+ * [tilt] (−1…1 on each axis, from the phone's motion) leans it and slides the
+ * sheen across; [frozen] frosts it over in ice.
  */
 @Composable
-fun CardArt(modifier: Modifier = Modifier, last4: String? = null, network: String? = null, frozen: Boolean = false, compact: Boolean = false) {
-    val r = if (compact) 14.dp else 22.dp
+fun CardArt(modifier: Modifier = Modifier, last4: String? = null, network: String? = null, frozen: Boolean = false, compact: Boolean = false, tilt: Offset = Offset.Zero) {
+    val r = if (compact) 14.dp else 24.dp
+    val shape = RoundedCornerShape(r)
+    val grain = rememberGrain()
+    val brushed = rememberBrushed()
+    val frost by animateFloatAsState(if (frozen) 1f else 0f, tween(800), label = "frost")
     Box(
-        modifier.aspectRatio(1.586f).shadow(if (compact) 8.dp else 26.dp, RoundedCornerShape(r), spotColor = Color.Black)
-            .clip(RoundedCornerShape(r))
-            .background(Brush.linearGradient(listOf(Color(0xFF2B313A), Color(0xFF181B21), Color(0xFF0E1013))))
+        modifier.aspectRatio(1.586f)
+            .graphicsLayer { rotationX = -tilt.y * 8f; rotationY = tilt.x * 8f; cameraDistance = 16f * density }
+            .shadow(if (compact) 10.dp else 32.dp, shape, ambientColor = Color.Black, spotColor = Color.Black)
+            .clip(shape)
+            .background(Brush.linearGradient(listOf(Color(0xFF3E3E44), Color(0xFF202024), Color(0xFF2C2C31), Color(0xFF141417))))
             .drawBehind {
-                // mint glow and a diagonal sheen
-                drawCircle(Brush.radialGradient(listOf((if (frozen) Tv.Ice else Tv.Accent).copy(alpha = 0.32f), Color.Transparent), center = Offset(size.width * 1.0f, size.height * 1.05f), radius = size.width * 0.75f), radius = size.width * 0.75f, center = Offset(size.width, size.height * 1.05f))
-                drawRect(Brush.linearGradient(listOf(Color.Transparent, Color.White.copy(alpha = 0.06f), Color.Transparent), start = Offset(size.width * 0.15f, 0f), end = Offset(size.width * 0.75f, size.height)))
-                // fine guilloché-like arcs
-                for (i in 1..6) {
-                    val rr = size.width * (0.16f + i * 0.09f)
-                    drawCircle(Color.White.copy(alpha = 0.025f), rr, Offset(size.width * 1.02f, size.height * 1.05f), style = Stroke(1.2f))
+                // brushed metal: fine horizontal grain, lighter and darker than the base
+                drawImage(brushed, dstSize = IntSize(size.width.toInt(), size.height.toInt()), alpha = 0.22f, blendMode = androidx.compose.ui.graphics.BlendMode.Overlay)
+                // light pool at the top-left and a sheen that follows the tilt
+                val lp = Offset(size.width * (0.18f + tilt.x * 0.12f), -size.height * 0.25f)
+                drawCircle(Brush.radialGradient(listOf(Color.White.copy(alpha = 0.13f), Color.Transparent), lp, size.width * 0.75f), size.width * 0.75f, lp)
+                val sx = size.width * (0.4f + tilt.x * 0.35f)
+                drawRect(Brush.linearGradient(listOf(Color.Transparent, Color.White.copy(alpha = 0.09f), Color.White.copy(alpha = 0.02f), Color.Transparent), start = Offset(sx - size.width * 0.45f, 0f), end = Offset(sx + size.width * 0.3f, size.height)))
+                // fine guilloché arcs
+                for (i in 1..7) drawCircle(Color.White.copy(alpha = 0.03f), size.width * (0.14f + i * 0.08f), Offset(size.width * 1.02f, size.height * 1.08f), style = Stroke(1.2f))
+            }
+            .drawWithContent {
+                drawContent()
+                if (frost > 0f) {
+                    drawRect(Brush.verticalGradient(listOf(Tv.Ice.copy(alpha = 0.30f * frost), Color.White.copy(alpha = 0.08f * frost), Tv.Ice.copy(alpha = 0.20f * frost))))
+                    drawRect(ShaderBrush(ImageShader(grain, TileMode.Repeated, TileMode.Repeated)), alpha = 0.10f * frost)
                 }
             }
-            .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(r))
-            .padding(if (compact) 10.dp else 20.dp),
+            .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(alpha = 0.38f), Color.White.copy(alpha = 0.06f), Color.White.copy(alpha = 0.16f))), shape)
+            .padding(if (compact) 10.dp else 22.dp),
     ) {
-        if (!compact) Text("tapvault", Modifier.align(Alignment.TopStart), style = Type.BodyStrong.copy(letterSpacing = 0.5.sp), color = Tv.Text.copy(alpha = 0.9f))
-        TvIcon(Ic.Nfc, if (compact) 14.dp else 22.dp, Tv.Text.copy(alpha = 0.75f), Modifier.align(Alignment.TopEnd))
+        if (!compact) Text("tapvault", Modifier.align(Alignment.TopStart), style = Type.BodyStrong.copy(letterSpacing = 0.6.sp, brush = Tv.titanium()))
+        TvIcon(Ic.Nfc, if (compact) 14.dp else 22.dp, Tv.Text.copy(alpha = 0.7f), Modifier.align(Alignment.TopEnd))
         // EMV chip
         Box(
-            Modifier.align(if (compact) Alignment.CenterStart else Alignment.CenterStart).offset(y = if (compact) 0.dp else (-4).dp)
-                .size(if (compact) 18.dp else 42.dp, if (compact) 13.dp else 31.dp)
-                .background(Brush.linearGradient(listOf(Color(0xFFEAD9A6), Color(0xFFB99A55), Color(0xFFE2CC8E))), RoundedCornerShape(if (compact) 3.dp else 7.dp))
+            Modifier.align(Alignment.CenterStart).offset(y = if (compact) 0.dp else (-4).dp)
+                .size(if (compact) 18.dp else 44.dp, if (compact) 13.dp else 33.dp)
+                .background(Brush.linearGradient(listOf(Color(0xFFEFE2BC), Color(0xFFB9A169), Color(0xFFE6D3A0), Color(0xFFA8905A))), RoundedCornerShape(if (compact) 3.dp else 8.dp))
                 .drawBehind {
-                    val c = Color(0x55705A26); val w = 1.2f
+                    val c = Color(0x66705A26); val w = 1.2f
                     drawLine(c, Offset(size.width * 0.33f, 0f), Offset(size.width * 0.33f, size.height), w)
                     drawLine(c, Offset(size.width * 0.67f, 0f), Offset(size.width * 0.67f, size.height), w)
                     drawLine(c, Offset(0f, size.height * 0.5f), Offset(size.width, size.height * 0.5f), w)
                 },
         )
         if (!compact) {
-            Text(last4?.let { "••••  $it" } ?: "••••  ••••", Modifier.align(Alignment.BottomStart), style = Type.Mono.copy(fontSize = 16.sp, letterSpacing = 1.5.sp), color = Tv.Text.copy(alpha = 0.92f))
-            network?.let { Text(it.uppercase(), Modifier.align(Alignment.BottomEnd), style = Type.Title.copy(fontSize = 15.sp, letterSpacing = 1.sp), color = Tv.Text.copy(alpha = 0.92f)) }
+            Text(last4?.let { "••••  $it" } ?: "••••  ••••", Modifier.align(Alignment.BottomStart), style = Type.Mono.copy(fontSize = 17.sp, letterSpacing = 1.6.sp), color = Tv.Text.copy(alpha = 0.92f))
+            network?.let { Text(it.uppercase(), Modifier.align(Alignment.BottomEnd), style = Type.Title.copy(fontSize = 15.sp, letterSpacing = 1.4.sp, brush = Tv.titanium())) }
         }
-        if (frozen) Box(Modifier.fillMaxSize().background(Tv.Ice.copy(alpha = 0.10f)))
+        if (frozen && !compact) TvIcon(Ic.Freeze, 22.dp, Tv.Ice.copy(alpha = frost), Modifier.align(Alignment.TopEnd).offset(x = (-34).dp))
     }
 }
 
@@ -632,40 +740,43 @@ fun TapSheet(t: TapRequest, onCancel: () -> Unit) {
     val wave by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(1600, easing = LinearEasing)), label = "wave")
     val appear = remember { Animatable(0f) }
     LaunchedEffect(Unit) { appear.animateTo(1f, spring(dampingRatio = 0.85f, stiffness = 380f)) }
+    val shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp)
     Box(
-        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f * appear.value)).clickable(remember { MutableInteractionSource() }, indication = null) {},
+        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f * appear.value)).clickable(remember { MutableInteractionSource() }, indication = null) {},
         contentAlignment = Alignment.BottomCenter,
     ) {
         Column(
-            Modifier.fillMaxWidth().graphicsLayer { translationY = (1f - appear.value) * 600f }
-                .background(Tv.Surface, RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp))
-                .border(1.dp, Tv.Stroke, RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp))
+            Modifier.fillMaxWidth().offset { IntOffset(0, ((1f - appear.value) * 700f).toInt()) }
+                .shadow(30.dp, shape).frosted(shape, strength = 0.78f).glassRim(34.dp, shape = shape)
                 .navigationBarsPadding().padding(horizontal = 24.dp).padding(top = 12.dp, bottom = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Box(Modifier.size(40.dp, 4.dp).background(Tv.Surface3, RoundedCornerShape(2.dp)))
+            Box(Modifier.size(40.dp, 4.dp).background(Tv.StrokeStrong, RoundedCornerShape(2.dp)))
             Spacer(Modifier.height(18.dp))
-            Text(if (t.reading) "Reading card" else "Ready to scan", style = Type.Title, color = Tv.Text2)
-            Spacer(Modifier.height(16.dp))
-            Box(Modifier.size(230.dp), contentAlignment = Alignment.Center) {
+            Text(if (t.reading) "Reading card" else "Ready to scan", style = Type.CaptionStrong.copy(letterSpacing = 0.4.sp), color = Tv.Text2)
+            Spacer(Modifier.height(14.dp))
+            Box(Modifier.size(240.dp), contentAlignment = Alignment.Center) {
                 // NFC waves
                 Canvas(Modifier.fillMaxSize()) {
+                    drawCircle(Brush.radialGradient(listOf(Color.White.copy(alpha = 0.07f), Color.Transparent)), radius = size.minDimension * 0.5f)
                     for (i in 0..2) {
                         val p = ((wave + i / 3f) % 1f)
-                        drawCircle(Tv.Accent.copy(alpha = (1f - p) * if (t.reading) 0.5f else 0.35f), radius = size.minDimension * (0.25f + 0.25f * p), style = Stroke(2.dp.toPx()))
+                        drawCircle(Color.White.copy(alpha = (1f - p) * if (t.reading) 0.45f else 0.28f), radius = size.minDimension * (0.25f + 0.25f * p), style = Stroke(1.5.dp.toPx()))
                     }
                 }
-                if (t.reading) Spinner(170.dp)
-                // phone, seen from the back
+                if (t.reading) Spinner(176.dp)
+                // phone, seen from the back: titanium frame, glass back, camera island
                 Box(
-                    Modifier.size(96.dp, 172.dp).background(Tv.Surface2, RoundedCornerShape(20.dp)).border(1.5.dp, Tv.StrokeStrong, RoundedCornerShape(20.dp)),
+                    Modifier.size(98.dp, 176.dp).shadow(18.dp, RoundedCornerShape(22.dp))
+                        .background(Brush.linearGradient(listOf(Color(0xFF2E2E33), Color(0xFF151518))), RoundedCornerShape(22.dp))
+                        .border(1.5.dp, Brush.linearGradient(listOf(Color.White.copy(alpha = 0.45f), Color.White.copy(alpha = 0.08f), Color.White.copy(alpha = 0.25f))), RoundedCornerShape(22.dp)),
                 ) {
-                    Box(Modifier.padding(10.dp).size(22.dp, 34.dp).background(Tv.Surface3, RoundedCornerShape(8.dp)))
+                    Box(Modifier.padding(10.dp).size(24.dp, 38.dp).background(Color(0xFF0C0C0E), RoundedCornerShape(9.dp)).border(1.dp, Tv.Stroke, RoundedCornerShape(9.dp)))
                 }
                 // card gliding up onto the phone's back
-                val y = if (t.reading) 8f else 110f - 102f * FastOutSlowInEasing.transform((glide / 0.7f).coerceAtMost(1f))
+                val y = if (t.reading) 8f else 112f - 104f * FastOutSlowInEasing.transform((glide / 0.7f).coerceAtMost(1f))
                 val alpha = if (t.reading) 1f else (1f - ((glide - 0.85f) / 0.15f).coerceIn(0f, 1f))
-                CardArt(Modifier.width(150.dp).offset(y = y.dp).graphicsLayer { this.alpha = alpha; rotationZ = if (t.reading) 0f else -6f + 6f * glide }, compact = true)
+                CardArt(Modifier.width(152.dp).offset(y = y.dp).graphicsLayer { this.alpha = alpha; rotationZ = if (t.reading) 0f else -6f + 6f * glide }, compact = true)
             }
             Spacer(Modifier.height(18.dp))
             Text(if (t.reading) "Keep holding the card…" else t.title, style = Type.H2, textAlign = TextAlign.Center)
@@ -711,7 +822,7 @@ fun QrCode(text: String, modifier: Modifier = Modifier) {
 @Composable
 fun LogoMark(size: Dp = 40.dp) {
     Box(
-        Modifier.size(size).background(Brush.linearGradient(listOf(Color(0xFF7BF0C2), Tv.Accent, Color(0xFF2BBF86))), RoundedCornerShape(size * 0.3f)),
+        Modifier.size(size).background(Tv.titanium(), RoundedCornerShape(size * 0.3f)).border(1.dp, Brush.linearGradient(listOf(Color.White, Color.White.copy(alpha = 0.15f))), RoundedCornerShape(size * 0.3f)),
         contentAlignment = Alignment.Center,
     ) {
         Canvas(Modifier.size(size * 0.62f)) {
@@ -740,4 +851,61 @@ fun Wordmark(size: Dp = 32.dp) {
 @Composable
 fun SheetColumn(content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 16.dp), content = content)
+}
+
+// ---------------------------------------------------------------- slide to confirm
+
+/**
+ * A deliberate confirm: drag the platinum knob to the end of the track. Let go
+ * early and it springs back. Accessibility services get a plain click action.
+ */
+@Composable
+fun SlideToConfirm(label: String, modifier: Modifier = Modifier, icon: Ic = Ic.Fingerprint, onConfirm: () -> Unit) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val haptic = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
+    val knob = 54.dp
+    val pad = 5.dp
+    var width by remember { mutableStateOf(0f) }
+    val max = with(density) { (width - knob.toPx() - pad.toPx() * 2).coerceAtLeast(1f) }
+    val x = remember { Animatable(0f) }
+    var done by remember { mutableStateOf(false) }
+    val shim by rememberInfiniteTransition(label = "shim").animateFloat(0f, 1f, infiniteRepeatable(tween(1800, easing = LinearEasing)), label = "s")
+    val shape = RoundedCornerShape(50)
+    Box(
+        modifier.fillMaxWidth().height(64.dp).onSizeChanged { width = it.width.toFloat() }
+            .clip(shape).background(Tv.GlassStrong).glassRim(32.dp, shape = shape)
+            .semantics {
+                role = Role.Button; contentDescription = label
+                onClick(label) { if (!done) { done = true; onConfirm() }; true }
+            },
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        // the trail behind the knob
+        Box(Modifier.fillMaxHeight().width(with(density) { (x.value + knob.toPx() + pad.toPx() * 2).toDp() }).background(Color.White.copy(alpha = 0.07f), shape))
+        Text(
+            label, Modifier.align(Alignment.Center).graphicsLayer { alpha = 1f - (x.value / max).coerceIn(0f, 1f) },
+            style = Type.Button.copy(brush = Brush.linearGradient(listOf(Tv.Text3, Tv.Text, Tv.Text3), start = Offset(width * (shim * 1.6f - 0.6f), 0f), end = Offset(width * (shim * 1.6f - 0.6f) + 260f, 0f))),
+        )
+        Box(
+            Modifier.padding(pad).offset { IntOffset(x.value.roundToInt(), 0) }.size(knob)
+                .shadow(12.dp, CircleShape, ambientColor = Color.Black, spotColor = Color.Black)
+                .background(Tv.titanium(), CircleShape).border(1.dp, Brush.linearGradient(listOf(Color.White, Color.White.copy(alpha = 0.2f))), CircleShape)
+                .pointerInput(max) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            scope.launch {
+                                if (x.value > max * 0.82f && !done) {
+                                    x.animateTo(max, spring(stiffness = 800f))
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    done = true
+                                    onConfirm()
+                                } else x.animateTo(0f, spring(dampingRatio = 0.6f, stiffness = 420f))
+                            }
+                        },
+                    ) { change, dx -> change.consume(); if (!done) scope.launch { x.snapTo((x.value + dx).coerceIn(0f, max)) } }
+                },
+            contentAlignment = Alignment.Center,
+        ) { TvIcon(if (done) Ic.Check else icon, 24.dp, Tv.OnAccent) }
+    }
 }

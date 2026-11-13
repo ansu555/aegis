@@ -68,35 +68,50 @@ fun Welcome(vm: AppViewModel) {
             StatusPill("Testnet", Tv.Warn)
         }
         HorizontalPager(pager, Modifier.fillMaxWidth().weight(1f)) { i ->
+            // parallax: the art moves further than the text, and fades as it leaves
+            val off = (pager.currentPage - i) + pager.currentPageOffsetFraction
             Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                Box(
+                    Modifier.fillMaxWidth().weight(1f).graphicsLayer {
+                        translationX = off * size.width * 0.45f
+                        alpha = 1f - kotlin.math.abs(off).coerceAtMost(1f) * 0.7f
+                        val sc = 1f - kotlin.math.abs(off).coerceAtMost(1f) * 0.12f
+                        scaleX = sc; scaleY = sc
+                    },
+                    contentAlignment = Alignment.Center,
+                ) {
                     when (i) {
                         0 -> CardHeroArt()
                         1 -> TwoKeysArt()
                         else -> LimitsArt()
                     }
                 }
-                Text(slides[i].title, style = Type.Hero, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 8.dp))
-                Spacer(Modifier.height(12.dp))
-                Text(slides[i].body, style = Type.Body, color = Tv.Text2, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 12.dp))
+                Column(Modifier.graphicsLayer { translationX = off * size.width * 0.12f }, horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(slides[i].title, style = Type.Hero.copy(brush = Tv.titanium()), textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 8.dp))
+                    Spacer(Modifier.height(12.dp))
+                    Text(slides[i].body, style = Type.Body, color = Tv.Text2, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 12.dp))
+                }
             }
         }
         Spacer(Modifier.height(22.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
             repeat(slides.size) { i ->
                 val w by animateDpAsState(if (pager.currentPage == i) 22.dp else 7.dp, label = "dot")
-                val c by animateColorAsState(if (pager.currentPage == i) Tv.Accent else Tv.Surface3, label = "dotc")
+                val c by animateColorAsState(if (pager.currentPage == i) Tv.Accent else Tv.GlassStrong, label = "dotc")
                 Box(Modifier.padding(horizontal = 3.dp).size(w, 7.dp).background(c, CircleShape))
             }
         }
-        Spacer(Modifier.height(26.dp))
+        Spacer(Modifier.height(22.dp))
         NfcNotice(vm)
-        TvButton("Create a new wallet", Modifier.fillMaxWidth(), icon = Ic.Plus) { vm.go(Screen.Limits) }
-        Spacer(Modifier.height(10.dp))
-        TvButton("Check my card first", Modifier.fillMaxWidth(), Btn.Secondary, icon = Ic.Scan) { vm.go(Screen.CardCheck) }
-        if (others > 0) {
-            Spacer(Modifier.height(4.dp))
-            TvButton("Back to my wallets", Modifier.fillMaxWidth(), Btn.Ghost) { vm.cancelNewWallet() }
+        // the actions sit on one glass panel
+        Column(Modifier.fillMaxWidth().surface(30.dp).padding(10.dp)) {
+            TvButton("Create a new wallet", Modifier.fillMaxWidth(), icon = Ic.Plus) { vm.go(Screen.Limits) }
+            Spacer(Modifier.height(8.dp))
+            TvButton("Check my card first", Modifier.fillMaxWidth(), Btn.Secondary, icon = Ic.Scan) { vm.go(Screen.CardCheck) }
+            if (others > 0) {
+                Spacer(Modifier.height(2.dp))
+                TvButton("Back to my wallets", Modifier.fillMaxWidth(), Btn.Ghost, height = 48.dp) { vm.cancelNewWallet() }
+            }
         }
         Caption("Self-custody on NEAR testnet. Only test NEAR, no real money.", Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 8.dp), Tv.Text3, TextAlign.Center)
     }
@@ -140,11 +155,11 @@ fun ColumnScope.LimitsScreen(vm: AppViewModel) {
     LimitInput("Daily limit", "Most that can go out instantly in 24 hours", daily, { daily = clean(it) }, listOf("2", "5", "20"), err)
     SectionHeader("What you'll need")
     Group {
-        Row_(Ic.Card, "Your contactless bank card", "Visa, Mastercard, RuPay and others with a chip", tint = Tv.Accent, iconBg = Tv.AccentSoft)
+        Row_(Ic.Card, "Your contactless bank card", "Visa, Mastercard, RuPay and others with a chip")
         GroupDivider()
-        Row_(Ic.Fingerprint, "A screen lock on this phone", "Fingerprint, PIN, pattern or password", tint = Tv.Accent, iconBg = Tv.AccentSoft)
+        Row_(Ic.Fingerprint, "A screen lock on this phone", "Fingerprint, PIN, pattern or password")
         GroupDivider()
-        Row_(Ic.Clock, "About a minute", "Three approvals and one card tap", tint = Tv.Accent, iconBg = Tv.AccentSoft)
+        Row_(Ic.Clock, "About a minute", "Three approvals and one card tap")
     }
     Spacer(Modifier.height(22.dp))
     NfcNotice(vm)
@@ -199,14 +214,14 @@ fun SetupProgress(vm: AppViewModel) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.Top) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     StepDot(ok, running)
-                    if (i < steps.lastIndex) Box(Modifier.width(2.dp).height(30.dp).background(if (ok) Tv.Accent.copy(alpha = 0.5f) else Tv.Surface3, RoundedCornerShape(1.dp)))
+                    if (i < steps.lastIndex) Box(Modifier.width(2.dp).height(30.dp).background(if (ok) Tv.Positive.copy(alpha = 0.5f) else Tv.GlassStrong, RoundedCornerShape(1.dp)))
                 }
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f).padding(top = 4.dp)) {
                     Text(title, style = Type.BodyStrong, color = if (ok || running) Tv.Text else Tv.Text3)
                     if (running) Text(vm.busy ?: "", style = Type.Caption, color = Tv.Accent)
                 }
-                TvIcon(icon, 18.dp, if (ok) Tv.Accent else Tv.Text3, Modifier.padding(top = 5.dp))
+                TvIcon(icon, 18.dp, if (ok) Tv.Positive else Tv.Text3, Modifier.padding(top = 5.dp))
             }
         }
     }
@@ -246,9 +261,9 @@ fun SetupProgress(vm: AppViewModel) {
 private fun StepDot(done: Boolean, running: Boolean) {
     Box(Modifier.size(30.dp), contentAlignment = Alignment.Center) {
         when {
-            done -> Box(Modifier.size(28.dp).background(Tv.Accent, CircleShape), contentAlignment = Alignment.Center) { TvIcon(Ic.Check, 16.dp, Tv.OnAccent) }
+            done -> Box(Modifier.size(28.dp).background(Tv.Positive, CircleShape), contentAlignment = Alignment.Center) { TvIcon(Ic.Check, 16.dp, Tv.OnAccent) }
             running -> { Spinner(28.dp); Box(Modifier.size(8.dp).background(Tv.Accent, CircleShape)) }
-            else -> Box(Modifier.size(28.dp).border(2.dp, Tv.Surface3, CircleShape))
+            else -> Box(Modifier.size(28.dp).border(2.dp, Tv.GlassStrong, CircleShape))
         }
     }
 }
@@ -261,7 +276,7 @@ private fun ProgressRing(done: Int, total: Int, running: Boolean) {
     Box(Modifier.size(132.dp), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
             val w = 8.dp.toPx()
-            drawCircle(Tv.Surface3, radius = size.minDimension / 2 - w / 2, style = Stroke(w))
+            drawCircle(Tv.GlassStrong, radius = size.minDimension / 2 - w / 2, style = Stroke(w))
             drawArc(Brush.sweepGradient(listOf(Tv.Accent.copy(alpha = 0.5f), Tv.Accent)), -90f, 360f * frac, false, Offset(w / 2, w / 2), androidx.compose.ui.geometry.Size(size.width - w, size.height - w), style = Stroke(w, cap = StrokeCap.Round))
         }
         if (running) Canvas(Modifier.fillMaxSize().padding(16.dp).rotate(spin)) {
@@ -281,6 +296,7 @@ private fun CardHeroArt() {
     val inf = rememberInfiniteTransition(label = "hero")
     val float by inf.animateFloat(-6f, 6f, infiniteRepeatable(tween(2600, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "f")
     val wave by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(2200, easing = LinearEasing)), label = "w")
+    val tilt by rememberTilt()
     Box(Modifier.fillMaxWidth().aspectRatio(1.1f), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
             drawCircle(Brush.radialGradient(listOf(Tv.Accent.copy(alpha = 0.18f), Color.Transparent)), radius = size.minDimension * 0.5f)
@@ -289,7 +305,7 @@ private fun CardHeroArt() {
                 drawCircle(Tv.Accent.copy(alpha = (1f - p) * 0.25f), radius = size.minDimension * (0.28f + 0.22f * p), style = Stroke(1.5.dp.toPx()))
             }
         }
-        CardArt(Modifier.fillMaxWidth(0.72f).graphicsLayer { translationY = float * density; rotationZ = -8f; rotationX = 8f }, last4 = "4242", network = "Debit")
+        CardArt(Modifier.fillMaxWidth(0.74f).graphicsLayer { translationY = float * density; rotationZ = -8f; rotationX = 10f }, last4 = "4242", network = "Debit", tilt = tilt)
     }
 }
 
@@ -309,7 +325,7 @@ private fun TwoKeysArt() {
         }
         Row(Modifier.fillMaxWidth(0.86f), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             KeyBubble(Ic.Fingerprint, "Phone")
-            Box(Modifier.size(64.dp).background(Tv.Surface2, CircleShape).border(1.dp, Tv.Accent.copy(alpha = 0.4f), CircleShape), contentAlignment = Alignment.Center) { TvIcon(Ic.ShieldCheck, 30.dp, Tv.Accent) }
+            Box(Modifier.size(64.dp).background(Tv.GlassStrong, CircleShape).glassRim(32.dp, shape = CircleShape), contentAlignment = Alignment.Center) { TvIcon(Ic.ShieldCheck, 30.dp, Tv.Accent) }
             KeyBubble(Ic.Card, "Card")
         }
     }
@@ -318,7 +334,7 @@ private fun TwoKeysArt() {
 @Composable
 private fun KeyBubble(icon: Ic, label: String) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.size(84.dp).background(Brush.linearGradient(listOf(Tv.Surface3, Tv.Surface)), RoundedCornerShape(26.dp)).border(1.dp, Tv.StrokeStrong, RoundedCornerShape(26.dp)), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(84.dp).background(Tv.GlassStrong, RoundedCornerShape(26.dp)).glassRim(26.dp), contentAlignment = Alignment.Center) {
             TvIcon(icon, 38.dp, Tv.Text)
         }
         Spacer(Modifier.height(10.dp))
@@ -332,12 +348,12 @@ private fun LimitsArt() {
     val f by inf.animateFloat(0.15f, 0.62f, infiniteRepeatable(tween(2600, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "f")
     Box(Modifier.fillMaxWidth().aspectRatio(1.1f), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) { drawCircle(Brush.radialGradient(listOf(Tv.Accent.copy(alpha = 0.14f), Color.Transparent)), radius = size.minDimension * 0.5f) }
-        Column(Modifier.fillMaxWidth(0.82f).surface(26.dp, Tv.Surface2, Tv.StrokeStrong).padding(20.dp)) {
+        Column(Modifier.fillMaxWidth(0.82f).surface(26.dp, Tv.GlassStrong).padding(20.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconTile(Ic.Send, Tv.Accent, Tv.AccentSoft)
+                IconTile(Ic.Send, Tv.Positive, Tv.PositiveSoft)
                 Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) { Text("0.5 NEAR", style = Type.Amount); Text("Instant", style = Type.Caption, color = Tv.Accent) }
-                TvIcon(Ic.CheckCircle, 20.dp, Tv.Accent)
+                Column(Modifier.weight(1f)) { Text("0.5 NEAR", style = Type.Amount); Text("Instant", style = Type.Caption, color = Tv.Positive) }
+                TvIcon(Ic.CheckCircle, 20.dp, Tv.Positive)
             }
             Spacer(Modifier.height(14.dp))
             Meter(f)

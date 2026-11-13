@@ -32,33 +32,48 @@ import androidx.compose.ui.unit.sp
 
 // ---------------------------------------------------------------- colour tokens
 //
-// Graphite surfaces, one mint accent for "go / safe", ice blue reserved for the
-// frozen state, amber for "waiting", coral for danger. Dark only: a wallet is
-// opened in every light and this keeps balances calm and legible.
+// Titanium monochrome: near-black, silver and platinum, with glass surfaces.
+// Colour is kept for meaning only: green for approved/success, amber for
+// waiting, coral for danger, ice blue for the frozen state. Dark only: a
+// wallet is opened in every light and this keeps balances calm and legible.
 
 object Tv {
-    val Bg = Color(0xFF0A0B0D)
-    val BgRaised = Color(0xFF0F1115)
-    val Surface = Color(0xFF15181D)
-    val Surface2 = Color(0xFF1C2027)
-    val Surface3 = Color(0xFF252A33)
-    val Stroke = Color.White.copy(alpha = 0.07f)
-    val StrokeStrong = Color.White.copy(alpha = 0.13f)
+    val Bg = Color(0xFF050506)
+    val BgRaised = Color(0xFF0B0B0D)
+    val Surface = Color(0xFF111113)
+    val Surface2 = Color(0xFF18181B)
+    val Surface3 = Color(0xFF232327)
+    val Stroke = Color.White.copy(alpha = 0.08f)
+    val StrokeStrong = Color.White.copy(alpha = 0.14f)
 
-    val Text = Color(0xFFF3F5F7)
-    val Text2 = Color(0xFFA0A7B2)
-    val Text3 = Color(0xFF6A717C)
+    /** Glass fills: translucent white over the ambient background. */
+    val Glass = Color.White.copy(alpha = 0.055f)
+    val GlassStrong = Color.White.copy(alpha = 0.10f)
+    /** Opaque "dark glass" for system windows (sheets, dialogs) that can't blur what's behind them. */
+    val Sheet = Color(0xFF121214)
 
-    val Accent = Color(0xFF5EE6AE)
-    val OnAccent = Color(0xFF03140C)
-    val AccentSoft = Accent.copy(alpha = 0.12f)
+    val Text = Color(0xFFF5F5F7)
+    val Text2 = Color(0xFF9A9AA2)
+    val Text3 = Color(0xFF5E5E66)
 
-    val Danger = Color(0xFFFF6B6B)
-    val DangerSoft = Danger.copy(alpha = 0.12f)
-    val Warn = Color(0xFFF6B94C)
-    val WarnSoft = Warn.copy(alpha = 0.12f)
-    val Ice = Color(0xFF7CC7FF)
-    val IceSoft = Ice.copy(alpha = 0.12f)
+    /** Platinum: primary buttons, the selected tab, highlights. */
+    val Accent = Color(0xFFEDEDF0)
+    val OnAccent = Color(0xFF0A0A0B)
+    val AccentSoft = Color.White.copy(alpha = 0.10f)
+
+    /** Approved, can sign, done. */
+    val Positive = Color(0xFF7ADBA9)
+    val PositiveSoft = Positive.copy(alpha = 0.13f)
+    val Danger = Color(0xFFFF7A72)
+    val DangerSoft = Danger.copy(alpha = 0.13f)
+    val Warn = Color(0xFFF2B65A)
+    val WarnSoft = Warn.copy(alpha = 0.13f)
+    val Ice = Color(0xFF8CCBFF)
+    val IceSoft = Ice.copy(alpha = 0.13f)
+
+    /** Brushed titanium, light from the top-left: the balance, the logo, rims. */
+    val Titanium = listOf(Color(0xFFFAFAFC), Color(0xFFC9C9CF), Color(0xFF9C9CA4), Color(0xFFE6E6EA))
+    fun titanium(start: Offset = Offset.Zero, end: Offset = Offset.Infinite) = Brush.linearGradient(Titanium, start, end)
 }
 
 // ---------------------------------------------------------------- type
@@ -133,22 +148,14 @@ private fun ThemeInner(content: @Composable () -> Unit) {
     }
 }
 
-/** The app background: near-black with a faint mint glow at the top, so surfaces have something to float on. */
-@Composable
-fun AppBackground(glow: Color = Tv.Accent, content: @Composable BoxScope.() -> Unit) {
-    Box(
-        Modifier.fillMaxSize().background(Tv.Bg).drawBehind {
-            val c = Offset(size.width * 0.5f, -size.width * 0.25f)
-            drawCircle(Brush.radialGradient(listOf(glow.copy(alpha = 0.10f), Color.Transparent), center = c, radius = size.width * 1.1f), radius = size.width * 1.1f, center = c)
-        },
-        content = content,
-    )
-}
-
-/** A flat raised surface with a hairline edge. */
-fun Modifier.surface(radius: Dp = 20.dp, color: Color = Tv.Surface, stroke: Color = Tv.Stroke) = this
+/**
+ * A glass surface: translucent fill over the ambient background, a rim that
+ * catches light at the top-left, and a faint sheen across the top.
+ * [color] overrides the fill (pass an opaque colour for solid panels).
+ */
+fun Modifier.surface(radius: Dp = 20.dp, color: Color = Tv.Glass, stroke: Color = Tv.Stroke) = this
     .background(color, RoundedCornerShape(radius))
-    .border(1.dp, stroke, RoundedCornerShape(radius))
+    .glassRim(radius, stroke)
 
 // ---------------------------------------------------------------- icons
 //
