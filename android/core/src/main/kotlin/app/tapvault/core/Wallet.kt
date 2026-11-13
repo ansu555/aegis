@@ -3,7 +3,10 @@ package app.tapvault.core
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -57,8 +60,18 @@ data class WalletState(
     val limits: List<LimitInfo>,
     /** Bumped by every executed config change (0 if the view doesn't say). */
     val signerEpoch: Long = 0,
+    /** v0.2 receiver allowlist (empty: none, or an older contract). */
+    val allowlist: List<String> = emptyList(),
 ) {
     val nearLimit get() = limits.firstOrNull { it.asset == Asset.Near.json() }
+
+    /**
+     * Whether the contract pays [amount] NEAR to [receiver] at once: within the
+     * NEAR limit and, on v0.2 wallets with an allowlist, a listed receiver
+     * (`execute.rs`: instant check). [receiver] null means "not known yet".
+     */
+    fun isInstantTo(receiver: String?, amount: BigInteger, nowSecs: Long = System.currentTimeMillis() / 1000): Boolean =
+        nearLimit?.isInstant(amount, nowSecs) == true && (allowlist.isEmpty() || receiver in allowlist)
 
     /** The first card signer (setup's card while no card has been removed). */
     fun card() = signers.firstOrNull { it.isCard }
@@ -82,6 +95,10 @@ data class ProposalInfo(
     val stale: Boolean,
     val action: JsonElement,
     val cardChallenge: ByteArray?,
+    /** v0.2: the sealed seed (null before the seal, or from an older contract). */
+    val cardSeed: ByteArray? = null,
+    /** v0.2: bit i set ⇔ the key added by op i proved possession. */
+    val possessed: Int = 0,
 ) {
     fun approvedBy(index: Int) = approvals and (1 shl index) != 0
 
@@ -170,6 +187,7 @@ class TapvaultWallet(
                 SignerInfo(o["index"]!!.jsonPrimitive.int, key.jsonObject.containsKey("EmvCard"), o["key_hash"]!!.jsonPrimitive.content, key)
             },
             signerEpoch = w["signer_epoch"]?.jsonPrimitive?.longOrNull ?: 0,
+            allowlist = w["allowlist"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList(),
             limits = w["limits"]!!.jsonArray.map {
                 val o = it.jsonObject
                 LimitInfo(
@@ -194,7 +212,25 @@ class TapvaultWallet(
         stale = o["stale"]!!.jsonPrimitive.booleanOrNull!!,
         action = o["action"]!!,
         cardChallenge = o["card_challenge"]?.takeIf { it != JsonNull }?.jsonPrimitive?.content?.unhex(),
+        cardSeed = o["card_seed"]?.takeIf { it != JsonNull }?.jsonPrimitive?.content?.unhex(),
+        possessed = o["possessed"]?.jsonPrimitive?.int ?: 0,
     )
+
+    /** "0.2.0" from a v0.2 wallet; null from older code, which has no such view. */
+    /**
+     * The contract's `contract_version`, or null when the wallet's code has no
+     * such view (v0.1). A network failure is thrown, not taken for v0.1, so a
+     * flaky connection never hides v0.2 features or skips a possession proof.
+     */
+    fun contractVersion(): String? = try {
+        near.viewFunction(account, "contract_version").jsonPrimitive.content
+    } catch (e: NearRpcException) {
+        val m = e.message.orEmpty()
+        if (e.rpcCause == "VIEW_ERROR" || e.rpcCause == "CONTRACT_EXECUTION_ERROR" || "MethodNotFound" in m) null else throw e
+    }
+
+    /** True when this wallet runs contract v0.2 or later (possession proofs, allowlist, upgrade). */
+    fun isV02(): Boolean = contractVersion()?.let { v -> v.split('.').let { (it.getOrNull(0)?.toIntOrNull() ?: 0) > 0 || (it.getOrNull(1)?.toIntOrNull() ?: 0) >= 2 } } == true
 
     fun proposal(id: Long): ProposalInfo? =
         near.viewFunction(account, "get_proposal", jsonArgs { put("id", id.toString()) })
@@ -207,22 +243,43 @@ class TapvaultWallet(
 
     // ---- calls ----
 
-    private fun call(vararg calls: NearAction.FunctionCall): TxResult {
+    private fun call(vararg calls: NearAction): TxResult {
         val r = near.send(gasAccount, gasKey, account, calls.toList())
         if (!r.ok) throw TapvaultException(r.error ?: "transaction failed")
         return r
     }
 
-    /** Phone proposes (its signature over the intent is also its approval). */
-    fun proposeByPhone(action: Action, phone: P256Signer, phoneIndex: Int): Long {
+    /**
+     * Phone proposes (its signature over the intent is also its approval).
+     * [possession]: v0.2 possession proofs for the keys the action adds, by
+     * op position; leave it empty for an older contract.
+     */
+    fun proposeByPhone(action: Action, phone: P256Signer, phoneIndex: Int, possession: Map<Int, PossessionProof> = emptyMap()): Long {
         val id = state().nextProposalId
         val intent = Domain.intentHash(account, id, action.borshBytes())
         val sig = phone.sign(intent)
-        val r = call(NearAction.FunctionCall("propose", jsonArgs {
-            put("action", action.json()); put("proof", SignerProof.P256(phoneIndex, sig).json())
-        }))
+        val r = call(proposeCall(action, SignerProof.P256(phoneIndex, sig), possession))
         return r.returnValue!!.trim('"').toLong()
     }
+
+    private fun proposeCall(action: Action, proof: SignerProof, possession: Map<Int, PossessionProof>) =
+        NearAction.FunctionCall("propose", jsonArgs {
+            put("action", action.json()); put("proof", proof.json())
+            if (possession.isNotEmpty()) {
+                put("possession", buildJsonArray {
+                    possession.forEach { (op, p) -> add(buildJsonObject { put("op", op); put("proof", p.json()) }) }
+                })
+            }
+        })
+
+    /** v0.2: send the possession proof of the key that op [op] of proposal [id] adds (anyone may send it). */
+    fun provePossession(id: Long, op: Int, proof: PossessionProof) = call(NearAction.FunctionCall("prove_possession", jsonArgs {
+        put("id", id.toString()); put("op", op); put("proof", proof.json())
+    }))
+
+    /** v0.2: run an approved UpgradeCode proposal with the new wasm (Borsh args: u64 id, then the code). */
+    fun executeUpgrade(id: Long, code: ByteArray) =
+        call(NearAction.RawFunctionCall("execute_upgrade", Borsh.of { u64(id); bytes(code) }, gasTgas = 300))
 
     /** Card proposes (proof of possession only; it still needs approvals). */
     fun proposeByCard(action: Action, cardIndex: Int, tap: (challenge: ByteArray) -> CardSig): Long {
@@ -241,13 +298,11 @@ class TapvaultWallet(
      * action and the next proposal id, so [tap] gets it first and returns
      * the signer index of the card it identified together with its signature.
      */
-    fun proposeWithCard(action: Action, tap: (challenge: ByteArray) -> Pair<Int, CardSig>): Long {
+    fun proposeWithCard(action: Action, possession: Map<Int, PossessionProof> = emptyMap(), tap: (challenge: ByteArray) -> Pair<Int, CardSig>): Long {
         val id = state().nextProposalId
         val intent = Domain.intentHash(account, id, action.borshBytes())
         val (cardIndex, sig) = tap(Domain.cardProposeChallenge(intent))
-        val r = call(NearAction.FunctionCall("propose", jsonArgs {
-            put("action", action.json()); put("proof", SignerProof.Card(cardIndex, sig).json())
-        }))
+        val r = call(proposeCall(action, SignerProof.Card(cardIndex, sig), possession))
         return r.returnValue!!.trim('"').toLong()
     }
 
@@ -255,10 +310,25 @@ class TapvaultWallet(
     fun awaitCardChallenge(id: Long, timeoutMs: Long = 20_000): ByteArray {
         val until = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < until) {
-            proposal(id)?.cardChallenge?.let { return it }
+            val p = proposal(id)
+            p?.cardChallenge?.let { ch -> return checkedChallenge(p, ch) }
             Thread.sleep(700)
         }
         throw TapvaultException("card challenge for proposal $id was not sealed")
+    }
+
+    /**
+     * v0.2 (DESIGN gap 6a): with the seed in the view, recompute the card
+     * challenge from the intent this phone computes itself (from the parsed
+     * action, [ProposalInfo.verifiedAction]) and refuse a view that differs.
+     * An older contract doesn't return the seed; its challenge is used as is.
+     */
+    fun checkedChallenge(p: ProposalInfo, challenge: ByteArray): ByteArray {
+        val seed = p.cardSeed ?: return challenge
+        val (_, intent) = p.verifiedAction(account)
+        val mine = Domain.cardApproveChallenge(intent, seed)
+        if (!mine.contentEquals(challenge)) throw TapvaultException("The network's card challenge for request #${p.id} doesn't match its own seed. Nothing was signed; try another connection.")
+        return mine
     }
 
     fun approveCard(id: Long, cardIndex: Int, sig: CardSig) = call(NearAction.FunctionCall("approve_card", jsonArgs {

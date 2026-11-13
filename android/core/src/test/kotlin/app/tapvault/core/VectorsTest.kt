@@ -44,6 +44,8 @@ class VectorsTest {
                 ConfigOp.AddSigner(phone),
             )
         ),
+        "config_v02_ops" to Action.Config(listOf(ConfigOp.AllowReceiver("carol.testnet"), ConfigOp.DisallowReceiver("dave.testnet"))),
+        "config_upgrade" to Action.Config(listOf(ConfigOp.UpgradeCode(ByteArray(32) { 0x33 }))),
     )
 
     @Test
@@ -65,6 +67,8 @@ class VectorsTest {
             assertEquals(o["json"], action.json(), "json $name")
             val id = o["intent_id"]!!.jsonPrimitive.int.toLong()
             assertEquals(o["intent"]!!.jsonPrimitive.content, Domain.intentHash(account, id, action.borshBytes()).hex(), "intent $name")
+            // the parser used before signing an action read from the RPC gives the same bytes back
+            assertEquals(o["borsh"]!!.jsonPrimitive.content, ActionJson.parse(o["json"]!!).borshBytes().hex(), "parse $name")
         }
     }
 
@@ -86,5 +90,7 @@ class VectorsTest {
         assertEquals(msg("card_cancel"), Domain.cardCancelChallenge(intent).hex())
         assertEquals(msg("freeze_3"), Domain.freezeMessage(account, 3).hex())
         assertEquals(msg("card_freeze_3"), Domain.cardFreezeChallenge(account, 3).hex())
+        assertEquals(msg("possess_card"), Domain.possessionMessage(account, card.keyHash()).hex())
+        assertEquals(msg("card_possess_card"), Domain.cardPossessionChallenge(account, card.keyHash()).hex())
     }
 }

@@ -9,6 +9,8 @@ pub const MAX_SIGNERS: usize = 8;
 const _: () = assert!(MAX_SIGNERS == policy::MAX_SIGNERS);
 pub const MAX_LIMITS: usize = 8;
 pub const MAX_CONFIG_OPS: usize = 4;
+/// v0.2 receiver allowlist size.
+pub const MAX_ALLOWLIST: usize = 16;
 pub const P256_PUBKEY_LEN: usize = 33;
 pub const P256_SIG_LEN: usize = 64;
 
@@ -151,6 +153,15 @@ pub enum ConfigOp {
     RemoveLimit { asset: Asset },
     SetDelays(DelaysCfg),
     Unfreeze,
+    // ---- v0.2 (appended, so earlier variants keep their Borsh tags) ----
+    /// Receiver allowlist: once it has any entry, only listed receivers can
+    /// be paid instantly; every other transfer waits `delays.transfer`.
+    AllowReceiver { receiver: AccountId },
+    DisallowReceiver { receiver: AccountId },
+    /// Replace the contract code with the wasm whose SHA-256 is `code_hash`.
+    /// Must be the only op of its proposal; waits the recovery delay and is
+    /// run with `execute_upgrade(id, code)`.
+    UpgradeCode { code_hash: Base64VecU8 },
 }
 
 #[near(serializers = [borsh, json])]
@@ -167,11 +178,39 @@ impl Action {
             Action::Config { ops } => {
                 check(!ops.is_empty() && ops.len() <= MAX_CONFIG_OPS, ERR_INVALID_ACTION);
                 for op in ops {
-                    if let ConfigOp::AddSigner(k) = op {
-                        k.validate();
+                    match op {
+                        ConfigOp::AddSigner(k) => k.validate(),
+                        ConfigOp::UpgradeCode { code_hash } => {
+                            check(code_hash.0.len() == 32, ERR_INVALID_ACTION);
+                            check(ops.len() == 1, ERR_UPGRADE_ALONE);
+                        }
+                        _ => {}
                     }
                 }
             }
+        }
+    }
+
+    /// The code hash if this is an `UpgradeCode` proposal.
+    pub fn upgrade_hash(&self) -> Option<&[u8]> {
+        match self {
+            Action::Config { ops } => ops.iter().find_map(|op| match op {
+                ConfigOp::UpgradeCode { code_hash } => Some(code_hash.0.as_slice()),
+                _ => None,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Bitmap of the op positions that add a signer (each needs a possession proof).
+    pub fn add_signer_ops(&self) -> u8 {
+        match self {
+            Action::Config { ops } => ops
+                .iter()
+                .enumerate()
+                .filter(|(_, op)| matches!(op, ConfigOp::AddSigner(_)))
+                .fold(0u8, |m, (i, _)| m | (1 << i)),
+            _ => 0,
         }
     }
 
@@ -231,6 +270,23 @@ impl SignerProof {
     }
 }
 
+/// A key being added signs `possession_message` (P-256) or
+/// `card_possession_challenge` (card) for this wallet and its own key hash.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug)]
+pub enum PossessionProof {
+    P256(P256Sig),
+    Card(CardSig),
+}
+
+/// The possession proof for op `op` (its position in the Config's ops).
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug)]
+pub struct OpPossession {
+    pub op: u8,
+    pub proof: PossessionProof,
+}
+
 #[near(serializers = [borsh, json])]
 #[derive(Clone, Debug)]
 pub struct FinalizeArgs {
@@ -260,6 +316,8 @@ pub struct Proposal {
     /// `CARD_APPROVAL_WINDOW`.
     pub sealed_ts: Option<i64>,
     pub action: Action,
+    /// v0.2: bit i set ⇔ the key added by op i proved possession.
+    pub possessed: u8,
 }
 
 pub fn borsh_bytes<T: near_sdk::borsh::BorshSerialize>(t: &T) -> Vec<u8> {

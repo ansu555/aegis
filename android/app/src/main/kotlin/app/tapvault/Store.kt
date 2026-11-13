@@ -80,6 +80,43 @@ class Store(context: Context, file: String = WalletIndex.prefsFile(WalletIndex.F
         get() = p.getString("watch", null)
         set(v) { p.edit().putString("watch", v).commit() }
 
+    // ---- phase 3 ----
+
+    /** Setup option: read and add a second (backup) card before the wallet is locked. */
+    var wantBackup: Boolean
+        get() = p.getBoolean("want_backup", false)
+        set(v) { p.edit().putBoolean("want_backup", v).commit() }
+
+    /** The backup card read during setup but not yet added ([PendingCard], encoded). */
+    var pendingCard2: String?
+        get() = p.getString("pending_card2", null)
+        set(v) { p.edit().putString("pending_card2", v).commit() }
+
+    /** Setup option: create the phone key for fingerprint only (no screen-lock fallback; Android 11+). */
+    var strictKey: Boolean
+        get() = p.getBoolean("strict_key", false)
+        set(v) { p.edit().putBoolean("strict_key", v).commit() }
+
+    /** This phone joins an existing wallet: "recover" (new phone for a lost one) or "guardian". Null for a wallet made here. */
+    var joinMode: String?
+        get() = p.getString("join_mode", null)
+        set(v) { p.edit().putString("join_mode", v).commit() }
+
+    /** A guardian phone's code, shown until the owner has added it. */
+    var guardianCode: String?
+        get() = p.getString("guardian_code", null)
+        set(v) { p.edit().putString("guardian_code", v).commit() }
+
+    /** The Keystore alias of this wallet's phone key when it isn't the default (after a switch to a strict key). */
+    var phoneAlias: String?
+        get() = p.getString("phone_alias", null)
+        set(v) { p.edit().putString("phone_alias", v).commit() }
+
+    /** A new (strict) phone key waiting for its settings change to execute. */
+    var pendingAlias: String?
+        get() = p.getString("pending_alias", null)
+        set(v) { p.edit().putString("pending_alias", v).commit() }
+
     var instantNear: String
         get() = p.getString("instant", "1") ?: "1"
         set(v) { p.edit().putString("instant", v).commit() }
@@ -164,5 +201,8 @@ class WalletIndex(context: Context) {
         fun prefsFile(id: String) = if (id == FIRST) "tapvault" else "tapvault_w_$id"
 
         fun keyAlias(id: String) = if (id == FIRST) "tapvault_phone_p256" else "tapvault_phone_p256_$id"
+
+        /** The alias of [id]'s phone key now: [Store.phoneAlias] after a key switch, else [keyAlias]. */
+        fun aliasOf(s: Store, id: String) = s.phoneAlias ?: keyAlias(id)
     }
 }

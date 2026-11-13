@@ -4,7 +4,7 @@
 //! the relayer); these views exist so they can cross-check.
 
 use near_sdk::json_types::U64;
-use near_sdk::near;
+use near_sdk::{near, AccountId};
 use tapvault_core::domain;
 
 use crate::auth::NearSha256;
@@ -28,6 +28,8 @@ pub struct WalletView {
     pub delays: DelaysCfg,
     pub signers: Vec<SignerView>,
     pub limits: Vec<MintLimit>,
+    /// v0.2: receivers that can be paid instantly (empty: no allowlist).
+    pub allowlist: Vec<AccountId>,
 }
 
 #[near(serializers = [json])]
@@ -47,6 +49,11 @@ pub struct ProposalView {
     pub action: Action,
     /// What a card must sign to approve; `None` until the seed is sealed.
     pub card_challenge: Option<String>,
+    /// v0.2: the sealed seed, so a client can recompute `card_challenge`
+    /// from the intent it computed itself (DESIGN gap 6a).
+    pub card_seed: Option<String>,
+    /// v0.2: bit i set ⇔ the key added by op i proved possession.
+    pub possessed: u8,
 }
 
 #[near(serializers = [json])]
@@ -73,7 +80,12 @@ impl Tapvault {
                 .map(|(i, s)| SignerView { index: i as u8, key_hash: hex(&s.key_hash()), key: s.clone() })
                 .collect(),
             limits: self.limits.clone(),
+            allowlist: self.allowlist.clone(),
         }
+    }
+
+    pub fn contract_version(&self) -> String {
+        CONTRACT_VERSION.to_string()
     }
 
     pub fn get_proposal(&self, id: U64) -> Option<ProposalView> {
@@ -126,6 +138,8 @@ impl Tapvault {
             stale: p.signer_epoch != self.signer_epoch,
             action: p.action.clone(),
             card_challenge: p.seed.map(|s| hex(&domain::card_approve_challenge::<NearSha256>(&p.intent_hash, &s))),
+            card_seed: p.seed.map(|s| hex(&s)),
+            possessed: p.possessed,
         }
     }
 }

@@ -201,6 +201,98 @@ async fn full_flow_and_gas() -> anyhow::Result<()> {
         assert_eq!(after.as_yoctonear() - before.as_yoctonear(), NearToken::from_near(1).as_yoctonear());
     }
 
+    // ---- v0.2: version view, seed in the proposal view, guardian with possession, upgrade ----
+    let v: String = contract.view("contract_version").await?.json()?;
+    assert_eq!(v, "0.2.0");
+
+    let propose_config = |ops: Vec<ConfigOp>, possession: Value| {
+        let relayer = relayer.clone();
+        let contract = contract.clone();
+        let acct = acct.clone();
+        let phone = phone.clone();
+        async move {
+            let action = Action::Config { ops };
+            let state: Value = contract.view("get_wallet").await?.json()?;
+            let id: u64 = state["next_proposal_id"].as_str().unwrap().parse()?;
+            let intent = domain::intent_hash::<S>(&acct, id, &near_sdk::borsh::to_vec(&action)?);
+            let r = relayer
+                .call(contract.id(), "propose")
+                .args_json(json!({ "action": action, "proof": SignerProof::P256 { signer_index: 0, sig: phone_sign(&phone, &intent) }, "possession": possession }))
+                .max_gas()
+                .transact()
+                .await?;
+            anyhow::Ok((id, intent, r))
+        }
+    };
+
+    // a guardian key with its possession proof in the propose call
+    let guardian = SigningKey::from_slice(&[11; 32]).unwrap();
+    let gk = phone_key(&guardian);
+    let gproof = PossessionProof::P256(phone_sign(&guardian, &domain::possession_message::<S>(&acct, &key_hash(&gk))));
+    let (gid, gintent, r) = propose_config(vec![ConfigOp::AddSigner(gk)], json!([OpPossession { op: 0, proof: gproof }])).await?;
+    worst = worst.max(report("propose AddSigner + possession", &r, wallet.id()));
+    let p: Value = contract.view("get_proposal").args_json(json!({ "id": gid.to_string() })).await?.json()?;
+    assert_eq!(p["possessed"], 1);
+    let seed = unhex32(p["card_seed"].as_str().expect("seed in the view"));
+    let ch = domain::card_approve_challenge::<S>(&gintent, &seed);
+    assert_eq!(p["card_challenge"].as_str().unwrap(), ch.iter().map(|b| format!("{b:02x}")).collect::<String>());
+    let r = relayer
+        .call(contract.id(), "approve_card")
+        .args_json(json!({ "id": gid.to_string(), "signer_index": 1, "sig": card_tap(&mut small, &ch) }))
+        .max_gas()
+        .transact()
+        .await?;
+    assert!(r.is_success(), "{:?}", r.failures());
+
+    // upgrade to the same code: approved by phone + card, refused before the recovery delay
+    let code_hash = near_sdk::env::sha256(&wasm);
+    let (uid, uintent, r) = propose_config(vec![ConfigOp::UpgradeCode { code_hash: b64(code_hash) }], Value::Null).await?;
+    assert!(r.is_success(), "{:?}", r.failures());
+    let p: Value = contract.view("get_proposal").args_json(json!({ "id": uid.to_string() })).await?.json()?;
+    let ch = domain::card_approve_challenge::<S>(&uintent, &unhex32(p["card_seed"].as_str().unwrap()));
+    let r = relayer
+        .call(contract.id(), "approve_card")
+        .args_json(json!({ "id": uid.to_string(), "signer_index": 1, "sig": card_tap(&mut small, &ch) }))
+        .max_gas()
+        .transact()
+        .await?;
+    assert!(r.is_success(), "{:?}", r.failures());
+    let early = relayer.call(contract.id(), "execute_upgrade").args_borsh((uid, wasm.clone())).max_gas().transact().await?;
+    assert!(format!("{:?}", early.failures()).contains("Delay has not elapsed"), "{:?}", early.failures());
+    println!("  execute_upgrade before the delay: refused");
+    // Sandbox blocks move the clock only ~0.3 s each, so a day of blocks would
+    // take hours. Instead move this proposal's ready_ts back 25 h in the
+    // contract state (the delay rule itself is covered by flows.rs); what this
+    // checks is the real deploy + migrate on the compiled wasm.
+    {
+        use near_sdk::borsh::{self, BorshDeserialize};
+        let state = worker.view_state(contract.id()).await?;
+        let mut patched = false;
+        for (k, v) in state.iter() {
+            let mut rest: &[u8] = v;
+            let Ok(mut prop) = Proposal::deserialize(&mut rest) else { continue };
+            if prop.intent_hash != uintent {
+                continue;
+            }
+            prop.ready_ts = Some(prop.ready_ts.expect("approved") - 25 * 3600);
+            let mut bytes = borsh::to_vec(&prop)?;
+            bytes.extend_from_slice(rest); // IterableMap keeps the entry's index after the value
+            worker.patch_state(contract.id(), k, &bytes).await?;
+            patched = true;
+        }
+        assert!(patched, "upgrade proposal found in state");
+        println!("  ready_ts moved back 25 h in state (sandbox clock is too slow to wait a day)");
+    }
+    let wrong = relayer.call(contract.id(), "execute_upgrade").args_borsh((uid, b"nope".to_vec())).max_gas().transact().await?;
+    assert!(format!("{:?}", wrong.failures()).contains("doesn't match"), "{:?}", wrong.failures());
+    let r = relayer.call(contract.id(), "execute_upgrade").args_borsh((uid, wasm.clone())).max_gas().transact().await?;
+    worst = worst.max(report("execute_upgrade (deploy + migrate)", &r, wallet.id()));
+    let after: Value = contract.view("get_wallet").await?.json()?;
+    assert_eq!(after["signers"].as_array().unwrap().len(), 3, "state kept across the upgrade");
+    // the guardian proposal was voided by the upgrade's epoch bump
+    let g: Value = contract.view("get_proposal").args_json(json!({ "id": gid.to_string() })).await?.json()?;
+    assert_eq!(g["stale"], true);
+
     // ---- freeze with a card tap ----
     let ch: Value = contract.view("freeze_challenge").await?.json()?;
     let tap = card_tap(&mut small, &unhex32(ch["card_challenge"].as_str().unwrap()));

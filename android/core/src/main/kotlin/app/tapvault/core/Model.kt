@@ -141,6 +141,25 @@ sealed interface ConfigOp {
         override fun borsh(b: Borsh) { b.u8(6) }
         override fun json() = JsonPrimitive("Unfreeze")
     }
+
+    // ---- contract v0.2 only (an older wallet refuses to parse these) ----
+
+    /** Once the allowlist has an entry, only listed receivers are paid instantly. */
+    class AllowReceiver(val receiver: String) : ConfigOp {
+        override fun borsh(b: Borsh) { b.u8(7).string(receiver) }
+        override fun json() = buildJsonObject { put("AllowReceiver", buildJsonObject { put("receiver", receiver) }) }
+    }
+
+    class DisallowReceiver(val receiver: String) : ConfigOp {
+        override fun borsh(b: Borsh) { b.u8(8).string(receiver) }
+        override fun json() = buildJsonObject { put("DisallowReceiver", buildJsonObject { put("receiver", receiver) }) }
+    }
+
+    /** Replace the wallet's code with the wasm of this SHA-256; waits the recovery delay. */
+    class UpgradeCode(val codeHash: ByteArray) : ConfigOp {
+        override fun borsh(b: Borsh) { b.u8(9).bytes(codeHash) }
+        override fun json() = buildJsonObject { put("UpgradeCode", buildJsonObject { put("code_hash", codeHash.b64()) }) }
+    }
 }
 
 sealed interface Action {
@@ -189,6 +208,19 @@ class P256Sig(val signature: ByteArray) {
 
 class CardSig(val sdad: ByteArray, val terminalData: ByteArray) {
     fun json() = buildJsonObject { put("sdad", sdad.b64()); put("terminal_data", terminalData.b64()) }
+}
+
+/** v0.2: a new key's signature over [Domain.possessionMessage] / [Domain.cardPossessionChallenge]. */
+sealed interface PossessionProof {
+    fun json(): JsonElement
+
+    class P256(val sig: P256Sig) : PossessionProof {
+        override fun json() = buildJsonObject { put("P256", sig.json()) }
+    }
+
+    class Card(val sig: CardSig) : PossessionProof {
+        override fun json() = buildJsonObject { put("Card", sig.json()) }
+    }
 }
 
 sealed interface SignerProof {
@@ -263,6 +295,9 @@ object ActionJson {
             }
             "RemoveLimit" -> ConfigOp.RemoveLimit(asset(v.jsonObject["asset"]!!))
             "SetDelays" -> ConfigOp.SetDelays(delays(v))
+            "AllowReceiver" -> ConfigOp.AllowReceiver(v.jsonObject["receiver"]!!.jsonPrimitive.content)
+            "DisallowReceiver" -> ConfigOp.DisallowReceiver(v.jsonObject["receiver"]!!.jsonPrimitive.content)
+            "UpgradeCode" -> ConfigOp.UpgradeCode(v.jsonObject["code_hash"]!!.jsonPrimitive.content.unb64())
             else -> throw IllegalArgumentException("unknown config op $name")
         }
     }
@@ -286,6 +321,9 @@ fun Action.describe(): String = when (this) {
             is ConfigOp.RemoveLimit -> "remove a limit"
             is ConfigOp.SetDelays -> "waits ${op.delays.transfer / 60} / ${op.delays.config / 60} / ${op.delays.recovery / 60} min"
             ConfigOp.Unfreeze -> "unfreeze"
+            is ConfigOp.AllowReceiver -> "pay ${op.receiver} instantly"
+            is ConfigOp.DisallowReceiver -> "stop instant payments to ${op.receiver}"
+            is ConfigOp.UpgradeCode -> "REPLACE THE WALLET CODE with build ${Base58.encode(op.codeHash)}"
         }
     }
 }

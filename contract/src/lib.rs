@@ -7,7 +7,7 @@
 
 use near_sdk::json_types::U128;
 use near_sdk::store::IterableMap;
-use near_sdk::{env, near, BorshStorageKey, PanicOnDefault};
+use near_sdk::{env, near, AccountId, BorshStorageKey, PanicOnDefault};
 use tapvault_core::{domain, policy};
 
 pub mod auth;
@@ -48,7 +48,12 @@ pub struct Tapvault {
     signers: Vec<SignerKey>,
     limits: Vec<MintLimit>,
     proposals: IterableMap<u64, Proposal>,
+    /// v0.2: receivers that may be paid instantly; empty = no allowlist.
+    allowlist: Vec<AccountId>,
 }
+
+/// Reported by the `contract_version` view (absent before v0.2).
+pub const CONTRACT_VERSION: &str = "0.2.0";
 
 #[near]
 impl Tapvault {
@@ -78,7 +83,17 @@ impl Tapvault {
             signers: vec![first_signer],
             limits: vec![],
             proposals: IterableMap::new(StorageKey::Proposals),
+            allowlist: vec![],
         }
+    }
+
+    /// Called by `execute_upgrade` right after the new code is deployed, in
+    /// the same receipt: if it fails, the deploy is undone too. A later
+    /// version whose state layout differs reads the old layout here.
+    #[private]
+    #[init(ignore_state)]
+    pub fn migrate() -> Self {
+        env::state_read().unwrap_or_else(|| env::panic_str("no state to migrate"))
     }
 }
 

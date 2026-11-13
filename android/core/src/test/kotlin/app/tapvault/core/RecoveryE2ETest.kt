@@ -84,12 +84,24 @@ class RecoveryE2ETest {
         val w = TapvaultWallet(near, a.wallet, newGas, feePlan.gasKey)
         val plan = Recovery.plan(w.state(), newPhone.signerKey())
         step("recovery change: ${plan.action.describe()}")
+        val v02 = w.isV02()
+        step("contract ${w.contractVersion() ?: "0.1 (no contract_version view)"}")
+        // v0.2: the new phone's key proves possession in the propose call
+        val addAt = plan.action.ops.indexOfFirst { it is ConfigOp.AddSigner }
+        val poss = if (v02) mapOf(addAt to PossessionProof.P256(newPhone.sign(Domain.possessionMessage(a.wallet, newPhone.signerKey().keyHash())))) else emptyMap()
         var proposer = -1
-        val id = w.proposeWithCard(plan.action) { ch -> tap(cards, w.state(), card1, ch).also { proposer = it.first } }
+        val id = w.proposeWithCard(plan.action, poss) { ch -> tap(cards, w.state(), card1, ch).also { proposer = it.first } }
         step("card 1 (signer $proposer) proposed #$id from the new phone")
         val p0 = w.proposal(id)!!
         assertEquals(0, p0.approvals, "a card's propose is not an approval")
         assertTrue(Recovery.isRecovery(p0, w.state()))
+        if (v02) {
+            assertEquals(1 shl addAt, p0.possessed, "the new phone's possession proof was recorded")
+            // the client recomputes the card challenge from the seed (gap 6a)
+            val sealed = w.awaitCardChallenge(id)
+            assertTrue(w.proposal(id)!!.cardSeed != null)
+            step("seed in the view; card challenge recomputed: ${sealed.hex().take(16)}…")
+        }
         val ch = w.awaitCardChallenge(id)
         val st = w.state()
         for ((n, c) in listOf(1 to card1, 2 to card2)) {
@@ -110,9 +122,10 @@ class RecoveryE2ETest {
 
         // ---- 4. guardian ----
         val guardian = SoftP256Signer()
-        val offer = Guardian.decode(Guardian.encode(a.wallet, guardian.publicKey))
+        val offer = Guardian.decode(Guardian.offer(a.wallet, guardian))
         val add = Guardian.addAction(a.wallet, old.state(), offer)
-        val gid = old.proposeByPhone(add, oldPhone, old.state().phoneIndexOf(oldPhone.publicKey)!!)
+        val gid = old.proposeByPhone(add, oldPhone, old.state().phoneIndexOf(oldPhone.publicKey)!!, if (v02) mapOf(0 to offer.proof) else emptyMap())
+        if (v02) assertEquals(1, old.proposal(gid)!!.possessed, "the guardian code's possession proof was accepted on chain")
         val (cidx, csig) = tap(cards, old.state(), card2, old.awaitCardChallenge(gid))
         old.approveCard(gid, cidx, csig)
         step("guardian proposal #$gid approved by phone + card 2")

@@ -25,6 +25,8 @@ pub const D_CARD_ENROLL: &[u8] = b"tapvault/near/v1/card-enroll";
 pub const D_FINALIZE: &[u8] = b"tapvault/near/v1/finalize";
 pub const D_KEY_P256: &[u8] = b"tapvault/near/v1/key/p256";
 pub const D_KEY_EMV: &[u8] = b"tapvault/near/v1/key/emv";
+pub const D_POSSESS: &[u8] = b"tapvault/near/v1/possess";
+pub const D_CARD_POSSESS: &[u8] = b"tapvault/near/v1/card-possess";
 
 fn len32(b: &[u8]) -> [u8; 4] {
     (b.len() as u32).to_le_bytes()
@@ -89,6 +91,18 @@ pub fn card_enroll_challenge<H: Sha256Hasher>(account: &[u8], signer_count: u8, 
     H::hashv(&[D_CARD_ENROLL, &len32(account), account, &[signer_count], new_key_hash])
 }
 
+/// A key that a config proposal adds proves it is held by signing this
+/// (contract v0.2). It names the wallet and the key, not the proposal, so a
+/// guardian phone or a backup card can sign it before the proposal exists.
+pub fn possession_message<H: Sha256Hasher>(account: &[u8], new_key_hash: &[u8; 32]) -> [u8; 32] {
+    H::hashv(&[D_POSSESS, &len32(account), account, new_key_hash])
+}
+
+/// The card form of [`possession_message`].
+pub fn card_possession_challenge<H: Sha256Hasher>(account: &[u8], new_key_hash: &[u8; 32]) -> [u8; 32] {
+    H::hashv(&[D_CARD_POSSESS, &len32(account), account, new_key_hash])
+}
+
 pub fn finalize_message<H: Sha256Hasher>(account: &[u8], args: &[u8]) -> [u8; 32] {
     H::hashv(&[D_FINALIZE, &len32(account), account, args])
 }
@@ -102,7 +116,7 @@ mod tests {
     fn domains_are_distinct() {
         let all = [
             D_INTENT, D_CARD_APPROVE, D_CARD_PROPOSE, D_CANCEL, D_CARD_CANCEL, D_FREEZE, D_CARD_FREEZE, D_CREATE,
-            D_SETUP_ADD, D_CARD_ENROLL, D_FINALIZE, D_KEY_P256, D_KEY_EMV,
+            D_SETUP_ADD, D_CARD_ENROLL, D_FINALIZE, D_KEY_P256, D_KEY_EMV, D_POSSESS, D_CARD_POSSESS,
         ];
         for i in 0..all.len() {
             for j in 0..all.len() {
@@ -122,6 +136,8 @@ mod tests {
         assert_ne!(approve, card_propose_challenge::<S>(&i));
         assert_ne!(approve, card_cancel_challenge::<S>(&i));
         assert_ne!(cancel_message::<S>(&i), card_cancel_challenge::<S>(&i));
+        assert_ne!(possession_message::<S>(b"w", &i), card_possession_challenge::<S>(b"w", &i));
+        assert_ne!(card_possession_challenge::<S>(b"w", &i), card_enroll_challenge::<S>(b"w", 0, &i));
     }
 
     #[test]

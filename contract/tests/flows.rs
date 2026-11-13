@@ -160,7 +160,7 @@ impl Wallet {
         self.as_relayer();
         let id = self.c.get_wallet().next_proposal_id.0;
         let sig = self.phone.sign(&intent(id, &action));
-        let got = self.c.propose(action, SignerProof::P256 { signer_index: 0, sig }).0;
+        let got = self.c.propose(action, SignerProof::P256 { signer_index: 0, sig }, None).0;
         assert_eq!(got, id);
         got
     }
@@ -336,6 +336,9 @@ fn failed_transfer_gives_allowance_back() {
 fn adding_an_enrolled_key_again_is_refused() {
     let mut w = Wallet::new();
     let id = w.propose_by_phone(Action::Config { ops: vec![ConfigOp::AddSigner(w.card.key())] });
+    let ch = domain::card_possession_challenge::<S>(acct(), &key_hash(&w.card.key()));
+    let proof = PossessionProof::Card(w.card.tap(&ch));
+    w.c.prove_possession(U64(id), 0, proof);
     w.card_approves(id);
     w.advance(DAY);
     fails("Signer already enrolled", || {
@@ -349,7 +352,7 @@ fn a_card_proposal_is_not_an_approval() {
     let action = send_near(NEAR);
     let id = w.c.get_wallet().next_proposal_id.0;
     let proof = w.card.tap(&domain::card_propose_challenge::<S>(&intent(id, &action)));
-    w.c.propose(action, SignerProof::Card { signer_index: 1, sig: proof });
+    w.c.propose(action, SignerProof::Card { signer_index: 1, sig: proof }, None);
     assert_eq!(w.c.get_proposal(U64(id)).unwrap().approvals, 0);
     // even after the card's real approval, the phone is still missing
     w.card_approves(id);
@@ -440,13 +443,13 @@ fn forged_or_misdirected_phone_signatures_are_rejected() {
     let thief = Phone::new(9);
     let sig = thief.sign(&intent(id, &action));
     fails("P-256 signature invalid", || {
-        w.c.propose(action.clone(), SignerProof::P256 { signer_index: 0, sig });
+        w.c.propose(action.clone(), SignerProof::P256 { signer_index: 0, sig }, None);
     });
 
     // the right key over a different action (amount changed after signing)
     let sig = w.phone.sign(&intent(id, &send_near(2 * NEAR)));
     fails("P-256 signature invalid", || {
-        w.c.propose(action, SignerProof::P256 { signer_index: 0, sig });
+        w.c.propose(action, SignerProof::P256 { signer_index: 0, sig }, None);
     });
 }
 
@@ -495,7 +498,7 @@ fn delay_runs_from_full_approval_not_from_proposal() {
     let id = w.c.get_wallet().next_proposal_id.0;
     let i = intent(id, &action);
     let proof = w.card.tap(&domain::card_propose_challenge::<S>(&i));
-    w.c.propose(action, SignerProof::Card { signer_index: 1, sig: proof });
+    w.c.propose(action, SignerProof::Card { signer_index: 1, sig: proof }, None);
     w.card_approves(id);
     assert_eq!(w.c.get_proposal(U64(id)).unwrap().ready_ts, None);
     // ...and the phone's approval only arrives three days later
@@ -566,4 +569,159 @@ fn passkeys_must_require_user_verification() {
     fails("Invalid signer key", || {
         w.propose_by_phone(Action::Config { ops: vec![ConfigOp::AddSigner(lax)] });
     });
+}
+
+// ---- contract v0.2 ----
+
+fn new_phone_possession(p: &Phone) -> PossessionProof {
+    PossessionProof::P256(p.sign(&domain::possession_message::<S>(acct(), &key_hash(&p.key()))))
+}
+
+#[test]
+fn an_added_key_must_prove_possession() {
+    let mut w = Wallet::new();
+    let guardian = Phone::new(9);
+    let id = w.propose_by_phone(Action::Config { ops: vec![ConfigOp::AddSigner(guardian.key())] });
+    w.card_approves(id);
+    w.advance(DAY);
+    fails("hasn't proved possession", || {
+        w.c.execute(U64(id));
+    });
+    // a proof by another key, for another wallet, or for an op that adds nothing is refused
+    fails("P-256 signature invalid", || w.c.prove_possession(U64(id), 0, new_phone_possession(&Phone::new(10))));
+    let other_wallet = PossessionProof::P256(guardian.sign(&domain::possession_message::<S>(b"x.testnet", &key_hash(&guardian.key()))));
+    fails("P-256 signature invalid", || w.c.prove_possession(U64(id), 0, other_wallet));
+    fails("doesn't add a signer", || w.c.prove_possession(U64(id), 1, new_phone_possession(&guardian)));
+    // anyone may send the guardian's own proof; then it executes
+    w.c.prove_possession(U64(id), 0, new_phone_possession(&guardian));
+    assert_eq!(w.c.get_proposal(U64(id)).unwrap().possessed, 1);
+    w.c.execute(U64(id));
+    assert_eq!(w.c.get_wallet().signers.len(), 3);
+}
+
+#[test]
+fn possession_can_come_with_the_proposal() {
+    let mut w = Wallet::new();
+    let newp = Phone::new(11);
+    let old = w.phone.key();
+    // recovery-style change: remove the phone, add a new one, proposed by the card with the new key's proof
+    let action = Action::Config { ops: vec![ConfigOp::RemoveSigner { key_hash: b64(key_hash(&old).to_vec()) }, ConfigOp::AddSigner(newp.key())] };
+    w.as_relayer();
+    let id = w.c.get_wallet().next_proposal_id.0;
+    let proof = w.card.tap(&domain::card_propose_challenge::<S>(&intent(id, &action)));
+    let poss = vec![OpPossession { op: 1, proof: new_phone_possession(&newp) }];
+    w.c.propose(action, SignerProof::Card { signer_index: 1, sig: proof }, Some(poss));
+    assert_eq!(w.c.get_proposal(U64(id)).unwrap().possessed, 2);
+    // a bad proof in propose fails the whole propose
+    let action2 = Action::Config { ops: vec![ConfigOp::AddSigner(Phone::new(12).key())] };
+    let id2 = w.c.get_wallet().next_proposal_id.0;
+    let sig2 = w.phone.sign(&intent(id2, &action2));
+    fails("P-256 signature invalid", || {
+        w.c.propose(action2, SignerProof::P256 { signer_index: 0, sig: sig2 }, Some(vec![OpPossession { op: 0, proof: new_phone_possession(&newp) }]));
+    });
+}
+
+#[test]
+fn the_view_returns_the_seed_so_clients_can_check_the_card_challenge() {
+    let mut w = Wallet::new();
+    let id = w.propose_by_phone(send_near(NEAR));
+    assert!(w.c.get_proposal(U64(id)).unwrap().card_seed.is_none());
+    let ch = w.seal(id);
+    let p = w.c.get_proposal(U64(id)).unwrap();
+    let mut seed = [0u8; 32];
+    hex_into(p.card_seed.as_deref().unwrap(), &mut seed);
+    // recomputed from the intent the client computed itself, not from the view's hash
+    assert_eq!(domain::card_approve_challenge::<S>(&intent(id, &send_near(NEAR)), &seed), ch);
+    assert_eq!(w.c.contract_version(), "0.2.0");
+}
+
+#[test]
+fn with_an_allowlist_only_listed_receivers_are_instant() {
+    let mut w = Wallet::new();
+    let carol: near_sdk::AccountId = "carol.testnet".parse().unwrap();
+    let id = w.propose_by_phone(Action::Config { ops: vec![ConfigOp::AllowReceiver { receiver: carol.clone() }] });
+    w.card_approves(id);
+    w.advance(DAY);
+    w.c.execute(U64(id));
+    assert_eq!(w.c.get_wallet().allowlist, vec![carol.clone()]);
+
+    // bob isn't listed: within the limit, but it waits the transfer delay
+    let bob = w.propose_by_phone(send_near(NEAR));
+    w.card_approves(bob);
+    fails("Delay has not elapsed", || {
+        w.c.execute(U64(bob));
+    });
+    // carol is instant
+    let pay = Action::Transfer { asset: Asset::Near, amount: U128(NEAR), receiver: carol.clone() };
+    let c = w.propose_by_phone(pay);
+    w.card_approves(c);
+    assert!(matches!(w.c.execute(U64(c)), PromiseOrValue::Promise(_)));
+    // listing twice or removing an unknown receiver is refused at execute
+    for op in [ConfigOp::AllowReceiver { receiver: carol.clone() }, ConfigOp::DisallowReceiver { receiver: "dave.testnet".parse().unwrap() }] {
+        let id = w.propose_by_phone(Action::Config { ops: vec![op] });
+        w.card_approves(id);
+        w.advance(DAY);
+        fails("llowlist", || {
+            w.c.execute(U64(id));
+        });
+        w.cancel_by_phone(id);
+    }
+    let id = w.propose_by_phone(Action::Config { ops: vec![ConfigOp::DisallowReceiver { receiver: carol }] });
+    w.card_approves(id);
+    w.advance(DAY);
+    w.c.execute(U64(id));
+    assert!(w.c.get_wallet().allowlist.is_empty());
+}
+
+#[test]
+fn an_upgrade_waits_the_recovery_delay_and_needs_the_exact_code() {
+    let mut w = Wallet::new();
+    let code = b"\0asm new code".to_vec();
+    let hash = near_sdk::env::sha256(&code);
+    fails("only op", || {
+        w.propose_by_phone(Action::Config { ops: vec![ConfigOp::UpgradeCode { code_hash: b64(hash.clone()) }, ConfigOp::Unfreeze] });
+    });
+    fails("Invalid action", || {
+        w.propose_by_phone(Action::Config { ops: vec![ConfigOp::UpgradeCode { code_hash: b64(vec![1; 31]) }] });
+    });
+    let id = w.propose_by_phone(Action::Config { ops: vec![ConfigOp::UpgradeCode { code_hash: b64(hash) }] });
+    w.card_approves(id);
+    w.advance(DAY);
+    fails("execute_upgrade", || {
+        w.c.execute(U64(id));
+    });
+    // phone + card approved, but an upgrade waits the recovery delay (3 days here)
+    fails("Delay has not elapsed", || {
+        w.c.execute_upgrade(id, code.clone());
+    });
+    w.advance(2 * DAY);
+    fails("doesn't match", || {
+        w.c.execute_upgrade(id, b"other".to_vec());
+    });
+    let other = w.propose_by_phone(send_near(NEAR));
+    fails("Not an UpgradeCode", || {
+        w.c.execute_upgrade(other, code.clone());
+    });
+    // a frozen wallet runs no new code, even when the upgrade is ready
+    let ch = domain::card_freeze_challenge::<S>(acct(), w.c.get_wallet().freeze_nonce.0);
+    let tap = w.card.tap(&ch);
+    w.c.freeze(SignerProof::Card { signer_index: 1, sig: tap });
+    fails("Wallet is frozen", || {
+        w.c.execute_upgrade(id, code.clone());
+    });
+    // unfreezing is a config change, so it also voids the upgrade request
+    let un = w.propose_by_phone(Action::Config { ops: vec![ConfigOp::Unfreeze] });
+    w.card_approves(un);
+    w.advance(DAY);
+    w.c.execute(U64(un));
+    fails("Signer set changed", || {
+        w.c.execute_upgrade(id, code.clone());
+    });
+    let id = w.propose_by_phone(Action::Config { ops: vec![ConfigOp::UpgradeCode { code_hash: b64(near_sdk::env::sha256(&code)) }] });
+    w.card_approves(id);
+    w.advance(3 * DAY);
+    let epoch = w.c.get_wallet().signer_epoch;
+    w.c.execute_upgrade(id, code);
+    assert!(w.c.get_proposal(U64(id)).is_none());
+    assert_eq!(w.c.get_wallet().signer_epoch, epoch + 1, "open proposals are voided");
 }

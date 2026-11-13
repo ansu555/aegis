@@ -10,6 +10,7 @@ use crate::*;
 
 const FT_TRANSFER_GAS: Gas = Gas::from_tgas(15);
 const ON_TRANSFER_GAS: Gas = Gas::from_tgas(5);
+const MIGRATE_GAS: Gas = Gas::from_tgas(20);
 
 #[near]
 impl Tapvault {
@@ -23,7 +24,9 @@ impl Tapvault {
                     .limits
                     .iter()
                     .find(|l| l.asset == asset)
-                    .is_some_and(|l| l.core().is_instant(amount.0, now));
+                    .is_some_and(|l| l.core().is_instant(amount.0, now))
+                    // v0.2: with an allowlist, only listed receivers are instant.
+                    && (self.allowlist.is_empty() || self.allowlist.contains(&receiver));
                 self.gate(&p, ActionClass::Transfer { instant }, now);
                 if let Some(l) = self.limits.iter_mut().find(|l| l.asset == asset) {
                     let mut s = l.core();
@@ -47,6 +50,9 @@ impl Tapvault {
                 ))
             }
             Action::Config { ops } => {
+                check(p.action.upgrade_hash().is_none(), ERR_USE_EXECUTE_UPGRADE);
+                let adds = p.action.add_signer_ops();
+                check(p.possessed & adds == adds, ERR_NO_POSSESSION);
                 self.gate(&p, ActionClass::Config, now);
                 self.apply_config(ops);
                 self.proposals.remove(&id.0);
@@ -54,6 +60,31 @@ impl Tapvault {
                 PromiseOrValue::Value(true)
             }
         }
+    }
+
+    /// v0.2: run an approved `UpgradeCode` proposal. `code` is the new wasm
+    /// (Borsh arguments, so the bytes aren't base64-decoded in the contract);
+    /// it must hash to the approved code hash. The deploy and `migrate` run
+    /// in one receipt on this account: if `migrate` fails, the old code stays.
+    pub fn execute_upgrade(&mut self, #[serializer(borsh)] id: u64, #[serializer(borsh)] code: Vec<u8>) -> Promise {
+        // Freeze is the emergency stop: no new code runs on a frozen wallet
+        // (recovery never needs an upgrade; unfreeze first).
+        check(!self.frozen, ERR_FROZEN);
+        let p = self.proposal(id);
+        let hash = p.action.upgrade_hash().unwrap_or_else(|| env::panic_str(ERR_NOT_UPGRADE)).to_vec();
+        check(env::sha256_array(&code)[..] == hash[..], ERR_CODE_HASH);
+        self.gate(&p, ActionClass::Upgrade, now_secs());
+        self.proposals.remove(&id);
+        self.signer_epoch = self.signer_epoch.checked_add(1).unwrap();
+        self.proposals_in_window = [0; MAX_SIGNERS];
+        events::emit("executed", json!({ "id": U64(id) }));
+        events::emit("upgrading", json!({ "code_hash": hex(&hash) }));
+        Promise::new(env::current_account_id()).deploy_contract(code).function_call(
+            "migrate".to_string(),
+            vec![],
+            NearToken::from_yoctonear(0),
+            MIGRATE_GAS,
+        )
     }
 
     /// NEAR transfers are asynchronous. If one failed, the funds came back;
@@ -135,6 +166,20 @@ impl Tapvault {
                     self.limits.remove(pos);
                 }
                 ConfigOp::SetDelays(d) => self.delays = d,
+                ConfigOp::AllowReceiver { receiver } => {
+                    check(self.allowlist.len() < MAX_ALLOWLIST && !self.allowlist.contains(&receiver), ERR_ALLOWLIST);
+                    self.allowlist.push(receiver);
+                }
+                ConfigOp::DisallowReceiver { receiver } => {
+                    let pos = self
+                        .allowlist
+                        .iter()
+                        .position(|r| *r == receiver)
+                        .unwrap_or_else(|| env::panic_str(ERR_RECEIVER_NOT_FOUND));
+                    self.allowlist.remove(pos);
+                }
+                // Only through execute_upgrade (refused in execute).
+                ConfigOp::UpgradeCode { .. } => env::panic_str(ERR_USE_EXECUTE_UPGRADE),
                 ConfigOp::Unfreeze => {
                     check(self.frozen, ERR_NOT_FROZEN);
                     self.frozen = false;

@@ -73,6 +73,16 @@ fn actions() -> Vec<(&'static str, Action)> {
                 ],
             },
         ),
+        (
+            "config_v02_ops",
+            Action::Config {
+                ops: vec![
+                    ConfigOp::AllowReceiver { receiver: "carol.testnet".parse().unwrap() },
+                    ConfigOp::DisallowReceiver { receiver: "dave.testnet".parse().unwrap() },
+                ],
+            },
+        ),
+        ("config_upgrade", Action::Config { ops: vec![ConfigOp::UpgradeCode { code_hash: Base64VecU8(vec![0x33; 32]) }] }),
     ]
 }
 
@@ -123,6 +133,8 @@ fn build() -> Value {
             "card_cancel": hex(&domain::card_cancel_challenge::<S>(&intent)),
             "freeze_3": hex(&domain::freeze_message::<S>(acct, 3)),
             "card_freeze_3": hex(&domain::card_freeze_challenge::<S>(acct, 3)),
+            "possess_card": hex(&domain::possession_message::<S>(acct, &key_hash(&ck))),
+            "card_possess_card": hex(&domain::card_possession_challenge::<S>(acct, &key_hash(&ck))),
             "intent_input": hex(&intent),
             "seed_input": hex(&seed),
         },

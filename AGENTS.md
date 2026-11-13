@@ -28,12 +28,12 @@ The first file to read if you are a coding agent or a new contributor.
 | `crates/tapvault-core/` | Dependency-free Rust: `bigint` (RSA public op), `sha1`, `sha256`, `emv` (SDAD check, formats `05`/`95`), `webauthn`, `domain` (every signed message), `policy` (limits, delays, approvals, rate limit), `testcard` (feature `test-card`, tests only) |
 | `crates/tapvault-core/tests/` | EMV vector tests and `emv_vectors.json` (from `tools/gen_emv_vectors.py`) |
 | `contract/src/` | NEAR contract: `lib.rs` (state, `new`, constants), `types.rs`, `auth.rs` (signature checks), `setup.rs`, `proposals.rs`, `execute.rs`, `guard.rs` (cancel, freeze, close_stale), `views.rs`, `events.rs`, `error.rs` |
-| `contract/tests/` | `flows.rs` (24 tests, mocked runtime), `vectors.rs` (writes/checks the Kotlin vectors), `sandbox.rs` (compiled wasm on a local node, opt-in) |
+| `contract/tests/` | `flows.rs` (29 tests, mocked runtime; 5 for v0.2), `vectors.rs` (writes/checks the Kotlin vectors), `sandbox.rs` (compiled wasm on a local node, opt-in) |
 | `contract/res/` | The shipped contract build `tapvault_contract.wasm` and its README (hashes, how to replace it) |
-| `android/core/src/main/kotlin/app/tapvault/core/` | Kotlin client: `NearClient.kt`, `Wallet.kt` (`TapvaultWallet`, `Onboarding`), `Model.kt`, `Borsh.kt`, `Domain.kt`, `Emv.kt` (`EmvSession`, `CardService`), `CardBook.kt` (the cards a phone knows per wallet), `Integrity.kt` (wallet check), `Watch.kt` (watchtower rules), `Receivers.kt` (receivers paid before, look-alikes), `Tlv.kt`, `P256.kt`, `Bytes.kt` |
+| `android/core/src/main/kotlin/app/tapvault/core/` | Kotlin client: `NearClient.kt`, `Wallet.kt` (`TapvaultWallet`, `Onboarding`), `Model.kt`, `Borsh.kt`, `Domain.kt`, `Emv.kt` (`EmvSession`, `CardService`), `CardBook.kt` (the cards a phone knows per wallet), `Integrity.kt` (wallet check), `Watch.kt` (watchtower rules), `Receivers.kt` (receivers paid before, look-alikes), `Recovery.kt` (recover on a new phone), `Guardian.kt` (guardian codes), `Tlv.kt`, `P256.kt`, `Bytes.kt` |
 | `android/core/src/main/resources/capk.txt` | EMV CA public keys (RID, index, exponent, modulus) |
-| `android/core/src/test/` | `EmvTest`, `MultiCardTest`, `Phase2Test`, `VectorsTest`, `RpcProbeTest`, `TestnetE2ETest`, the `SimCard` fixture (any key and card number; `TestCards.random()` for a second card) and its `SimKeys`, `resources/vectors.json` |
-| `android/app/src/main/kotlin/app/tapvault/` | App: `MainActivity.kt` (NFC reader mode, `IsoDepTransceiver`, `FLAG_SECURE`, app-lock hooks, alert intents), `AppViewModel.kt` (every flow), `Keystore.kt` (`KeystoreSigner`), `Store.kt`, `PendingCard.kt`, `Screens.kt`, `Security.kt` (Security Center, lost card), `Watchtower.kt` (`Watchtower`, `WatchJob`, `AppLock`), `Onboarding.kt`, `Components.kt`, `Glass.kt` (glass, tab bar, motion), `Theme.kt` |
+| `android/core/src/test/` | `EmvTest`, `MultiCardTest`, `Phase2Test`, `Phase3Test`, `Phase4Test`, `VectorsTest`, `RpcProbeTest`, `TestnetE2ETest`, `RecoveryE2ETest`, the `SimCard` fixture (any key and card number; `TestCards.random()` for a second card) and its `SimKeys`, `resources/vectors.json` |
+| `android/app/src/main/kotlin/app/tapvault/` | App: `MainActivity.kt` (NFC reader mode, `IsoDepTransceiver`, `FLAG_SECURE`, app-lock hooks, alert intents), `AppViewModel.kt` (every flow), `Keystore.kt` (`KeystoreSigner`), `Store.kt`, `PendingCard.kt`, `Screens.kt`, `Security.kt` (Security Center, lost card), `Watchtower.kt` (`Watchtower`, `WatchJob`, `AppLock`), `Join.kt` (Recover a wallet, Be a guardian, add-guardian, fingerprint-only and allowlist sheets), `Onboarding.kt`, `Components.kt`, `Glass.kt` (glass, tab bar, motion), `Theme.kt` |
 | `android/app/build.gradle.kts` | App build: wasm hash check (`verifyWasm`, `copyWasm`), sponsor `BuildConfig` fields |
 | `android/build-apk.sh` | Finds a JDK 17 and builds the debug APK |
 | `tools/` | Python generators: EMV test vectors, the Rust test card key, the simulated card's key chain |
@@ -47,7 +47,7 @@ Run them from the repository root unless a `cd` says otherwise.
 ### Rust
 
 ```bash
-cargo test                                         # core (20 unit + 7 EMV vectors), contract flows (24) + vectors (1); no testnet needed
+cargo test                                         # core (20 unit + 7 EMV vectors), contract flows (29) + vectors (1); no testnet needed
 cargo test -p tapvault-core                        # core only
 cargo test -p tapvault-contract --test flows       # contract flows only
 cargo test -p tapvault-contract --test vectors     # fails if android/core/src/test/resources/vectors.json is stale
@@ -73,7 +73,7 @@ cd contract && cargo near build non-reproducible-wasm
 cd android
 export JAVA_HOME="$(/usr/libexec/java_home -v 17)"   # macOS; elsewhere point it at a JDK 17
 "$JAVA_HOME/bin/java" -version                       # must say 17
-./gradlew :core:test                                 # EmvTest (15), MultiCardTest (7), Phase2Test (8), VectorsTest (3); the live tests return at once and count as passed
+./gradlew :core:test                                 # EmvTest (15), MultiCardTest (7), Phase2Test (8), Phase3Test (6), Phase4Test (5), VectorsTest (3); the live tests return at once and count as passed
 ```
 
 ### Live testnet tests
@@ -86,6 +86,7 @@ TAPVAULT_TESTNET=1 ./gradlew :core:test --tests '*RpcProbe*' --rerun
 TAPVAULT_TESTNET=1 TAPVAULT_CARD_PROFILE=DDA            ./gradlew :core:test --tests '*TestnetE2E*' --rerun
 TAPVAULT_TESTNET=1 TAPVAULT_CARD_PROFILE=VISA_FDDA      ./gradlew :core:test --tests '*TestnetE2E*' --rerun
 TAPVAULT_TESTNET=1 TAPVAULT_CARD_PROFILE=MASTERCARD_CDA ./gradlew :core:test --tests '*TestnetE2E*' --rerun
+TAPVAULT_TESTNET=1 ./gradlew :core:test --tests '*RecoveryE2E*' --rerun   # setup with 2 cards, recovery on a new phone, old phone cancels, guardian
 ```
 
 | Variable | Meaning |
@@ -167,7 +168,7 @@ Don't break these. Most have a test or a build check behind them.
 7. **Testnet only.** RPCs, faucet, explorer and account names are testnet; the sponsor key sits in the APK. Don't point anything at mainnet.
 8. **Secrets never in git.** `android/local.properties`, `~/.near-credentials`, `.env` and any `ed25519:` secret stay out of code, tests, docs, logs and commit messages.
 9. **Never run two Gradle builds of the same project at once.** A concurrent run once made a test task report a false failure.
-10. **The phone signs what it shows.** Build the action on the phone, compute the hash locally (`Domain.intentHash`) and set `KeystoreSigner.reason` from the same values; don't sign hashes taken from RPC views (`contract/src/views.rs`: clients compute what they sign). `TapvaultWallet.approvePhone` and `cancelByPhone` take a proposal from the RPC, so they parse its action (`ActionJson.parse`), recompute the intent hash and refuse a mismatch (`ProposalInfo.verifiedAction`), and set the prompt from the parsed action (`beforeSign`). Known exception: the card's challenge comes from `get_proposal` (`card_challenge`; the view doesn't return the seed, so the phone can't recompute it). See [docs/DESIGN.md](docs/DESIGN.md), known gaps.
+10. **The phone signs what it shows.** Build the action on the phone, compute the hash locally (`Domain.intentHash`) and set `KeystoreSigner.reason` from the same values; don't sign hashes taken from RPC views (`contract/src/views.rs`: clients compute what they sign). `TapvaultWallet.approvePhone` and `cancelByPhone` take a proposal from the RPC, so they parse its action (`ActionJson.parse`), recompute the intent hash and refuse a mismatch (`ProposalInfo.verifiedAction`), and set the prompt from the parsed action (`beforeSign`). Known exception on v0.1 wallets: the card's challenge comes from `get_proposal` (`card_challenge`; that view doesn't return the seed). v0.2 wallets return `card_seed`, and `TapvaultWallet.checkedChallenge` (called by `awaitCardChallenge`) recomputes the challenge from the parsed action and refuses a mismatch. See [docs/DESIGN.md](docs/DESIGN.md), known gaps.
 11. **A card alone never moves funds.** Every transfer needs a P-256 approval (`policy::check_execution`, `Refusal::NeedsUserVerifiedApproval`); card approvals only count against a challenge sealed after the proposal (`seal_challenge`). Read [docs/DESIGN.md](docs/DESIGN.md) before touching `proposals.rs`, `guard.rs` or `policy.rs`.
 
 ## Making a change safely
@@ -218,6 +219,11 @@ Don't break these. Most have a test or a build check behind them.
 | Watchtower alerts | `Watch.kt`: `Watch.check`, `memoryOf`, `Memory`; `Watchtower.kt`: `Watchtower.schedule`, `runOnce`, `WatchJob` (JobScheduler, ~15 min); `AppViewModel.setAlerts`, `openFromAlert`; `Store.watchMemory`, `WalletIndex.alertsOn` |
 | Send review warnings | `Screens.kt`: `Send` (review sheet: bold last 6, first time, look-alike, pasted, over half the balance, Arrives, left today); `Receivers.kt`; `Store.receivers`, `AppViewModel.rememberReceiver` |
 | App lock | `AppViewModel.lockIfAway`, `wentToBackground`, `unlock`; `Watchtower.kt`: `AppLock`; `Screens.kt`: `LockOverlay`; `WalletIndex.backgroundAt` |
+| Backup card during setup | `AppViewModel.continueSetup` (second `Onboarding.addCard` with the signer count 2), `setSetupOptions`, `skipBackupCard`; `Store.wantBackup`, `pendingCard2`; `Onboarding.kt`: `LimitsScreen` (Extra protection), `SetupProgress` |
+| Recover on a new phone | `Recovery.kt`: `Recovery.plan`, `isRecovery`; `Wallet.kt`: `TapvaultWallet.proposeWithCard`, `Onboarding.createFeeAccount`; `AppViewModel.findWalletToRecover`, `startRecovery`, `approveRecovery`, `refreshRecovery`, `finishRecovery`, `myRecovery`; `Join.kt`: `RecoverScreen`; `Store.joinMode` |
+| Guardian phone | `Guardian.kt`: `Guardian.offer`, `decode` (checksum, curve, possession signature via `P256.verify`), `addAction`, `WARNING`; `AppViewModel.becomeGuardian`, `checkGuardianAdded`, `addGuardian`; `Join.kt`: `GuardianScreen`, `AddGuardianSheet` |
+| Fingerprint only (strict key) | `Keystore.kt`: `KeystoreSigner.create(strict)`, `isStrict`; `AppViewModel.switchToStrictKey`, `adoptPendingKey` (in `refresh`); `Store.strictKey`, `phoneAlias`, `pendingAlias`; `WalletIndex.aliasOf`; `Join.kt`: `StrictKeySheet` |
+| Contract v0.2 (possession, seed, allowlist, upgrade) | `contract/src/proposals.rs`: `propose(…, possession)`, `prove_possession`, `record_possession`; `execute.rs`: `execute_upgrade`, allowlist check; `lib.rs`: `migrate`, `CONTRACT_VERSION`; `types.rs`: `PossessionProof`, `OpPossession`, `ConfigOp::{AllowReceiver, DisallowReceiver, UpgradeCode}`; `domain.rs`: `possession_message`, `card_possession_challenge`; `policy.rs`: `ActionClass::Upgrade`. Client: `Wallet.kt`: `isV02`, `contractVersion`, `provePossession`, `executeUpgrade`, `checkedChallenge`; `Model.kt`: `PossessionProof`; `Domain.kt`: `possessionMessage`, `cardPossessionChallenge`; `NearClient.kt`: `NearAction.RawFunctionCall`. App: `AppViewModel.isV02`, `changeAllowlist`; `Join.kt`: `AllowlistSheet` (Security Center → Instant receivers, v0.2 wallets only) |
 | Approve / cancel a proposal from the RPC (gap 6b) | `Wallet.kt`: `ProposalInfo.verifiedAction`, `TapvaultWallet.approvePhone`, `cancelByPhone` (`beforeSign`); `Model.kt`: `ActionJson.parse`, `Action.describe` |
 | SDAD check in the contract | `crates/tapvault-core/src/emv.rs`: `verify_sdad`, `verify_card_challenge`, `EmvKeyLayout::validate` |
 | Signed messages | `crates/tapvault-core/src/domain.rs` and `Domain.kt` |

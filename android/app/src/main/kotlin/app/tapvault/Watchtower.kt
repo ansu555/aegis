@@ -72,7 +72,7 @@ object Watchtower {
                 val w = TapvaultWallet(near, acct, st.gasAccount!!, NearKey.fromSecret(st.gasKey!!))
                 val s = w.state()
                 val ps = w.proposals()
-                val pub = runCatching { KeystoreSigner({ WalletIndex.keyAlias(id) }) { null }.publicKey }.getOrNull()
+                val pub = runCatching { KeystoreSigner({ WalletIndex.aliasOf(st, id) }) { null }.publicKey }.getOrNull()
                 val integrityOk = Integrity.Report.decode(st.integrity)?.ok ?: true
                 val (alerts, memory) = Watch.check(Watch.Memory.decode(st.watchMemory), s, ps, pub?.let { s.phoneIndexOf(it) }, integrityOk)
                 st.watchMemory = memory.encode()

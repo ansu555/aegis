@@ -75,6 +75,43 @@ bytes changed.
 | App build | Compiles and assembles |
 | On a phone | Not yet: everything in [MANUAL-TESTS.md](MANUAL-TESTS.md), phase 2 |
 
+### 13 Nov: hardware-wallet phase 3 (app + client, same contract rules)
+
+Built: backup card during setup (a second `setup_add_signer`, no delay;
+"Add a backup card now" on the limits screen), recover on a new phone (plan
+5.5: Welcome → Recover a wallet; two cards propose and approve
+`RemoveSigner(old phone) + AddSigner(this phone)`, 24 h, the old phone can
+cancel and its watchtower says "Someone is recovering this wallet"),
+fingerprint-only keys (5.8: a setup option, and for an existing wallet a key
+switch through one settings change), and a guardian phone (Welcome → Be a
+guardian shows a signed code; the owner adds it in Security Center with a
+"full co-signer" warning).
+
+| Check | Result |
+|---|---|
+| `./gradlew :core:test` | Pass: `Phase3Test` 6 (recovery plans and refusals, recovery recognised, guardian codes) |
+| `RecoveryE2ETest` live | Partly: setup with two cards passed on testnet (`tv-e2e-ae0f9541b1.testnet`); the rest stopped at the new phone's fee account because the faucet refused (HTTP 429 for 11 h, no sponsor configured). The test now falls back to a sub-account of the first fee account. **Run it again** (MANUAL-TESTS.md, phase 3) |
+| App build | Compiles |
+| On a phone | Not yet: MANUAL-TESTS.md sections M to P |
+
+### 13 Nov: hardware-wallet phase 4 (contract v0.2)
+
+Built in the contract source: possession proofs for keys added by settings
+changes (gap 8), the sealed seed in the proposal view so the phone checks
+the card challenge (gap 6a), a receiver allowlist, and a delayed
+`UpgradeCode` (gap 12). Details: [CONTRACT.md](CONTRACT.md#contract-v02).
+The client uses each feature only when the wallet reports
+`contract_version` 0.2 or later, so wallets on older builds work as before.
+Wallets created before this build keep their code (invariant 4).
+
+| Check | Result |
+|---|---|
+| `cargo test` | Pass: core 20 + 7, flows 29 (5 new), vectors 1 |
+| `vectors.json` | Regenerated: two new actions, two new messages; `VectorsTest` passes |
+| `./gradlew :core:test` | Pass: 47 tests, `Phase4Test` 5 (card challenge recomputed from the seed and mismatches refused, P-256 verify, possession JSON, 12 Nov wallets still pass the wallet check, allowlist makes unlisted receivers wait) |
+| `sandbox.rs` (compiled wasm, nearcore 2.6.5) | Pass (13 Nov): every step; propose `AddSigner` with a possession proof 68.1 Tgas (the most expensive receipt, limit 300), `execute_upgrade` deploy + `migrate` 24.5 Tgas, state kept, open requests voided. The 24 h upgrade wait is skipped by moving `ready_ts` back in the sandbox state (sandbox blocks advance the clock ~0.3 s each); `flows.rs` covers the delay itself |
+| Live testnet with the v0.2 build | Not run yet (faucet limit): MANUAL-TESTS.md, phase 4 |
+
 ## What is not verified
 
 | Item | Why it matters | How it gets verified |

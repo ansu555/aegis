@@ -189,10 +189,110 @@ creating anything new.
 | L7 | Pay with the removed card | "That card isn't one of this wallet's cards" | |
 | L8 | Repeat L2 with Freeze **Off** | Only one prompt (removal), wallet stays active | |
 
-## Phase 3
+## Phase 3: recover on a new phone, fingerprint only, backup card in setup, guardian phone
 
-Not built yet.
+### Already tested automatically (13 Nov)
+
+| What | Where | Result |
+|---|---|---|
+| Recovery plan: removes every old phone key (and lost cards), adds this phone, unfreezes a frozen wallet; refused with one card, when a lost card leaves too few, for an existing signer, for more than 4 ops | `Phase3Test` | Pass |
+| A card-proposed request that adds a phone is recognised as a recovery; the old phone's alert says "Someone is recovering this wallet" | `Phase3Test` | Pass |
+| Guardian code: round trip, typo, cut off, key not on the curve, possession signature by another key or for another wallet, wrong wallet, already a signer, wallet full | `Phase3Test` | Pass |
+| Setup with two cards (second `setup_add_signer`, no delay) on live testnet | `RecoveryE2ETest` (first part ran 13 Nov) | Pass |
+| Live recovery: card 1 proposes from a new phone, cards 1 and 2 approve, execute refused before 24 h, old phone cancels; guardian proposal approved and refused early | `RecoveryE2ETest` | **Not run yet**: the testnet faucet refused new accounts (HTTP 429, 11 h). Run it yourself, below |
+| App compiles | Gradle | Pass |
+
+Run the live recovery test when the faucet works again (or with a sponsor, see AGENTS.md):
+
+```bash
+cd android
+TAPVAULT_TESTNET=1 ./gradlew :core:test --tests '*RecoveryE2E*' --rerun
+```
+
+It prints `[recovery] …` lines ending in `done. wallet: …`.
+
+### You need to test (phone + real cards)
+
+**M. Backup card during setup** (new wallet, two cards)
+
+| # | Do | Expect | Result |
+|---|---|---|---|
+| M1 | New wallet → limits → turn **Add a backup card now** On → Continue | Setup steps include "Backup card added" | |
+| M2 | After card 1 is added: hold card 1 again | "That's the card you already added…" | |
+| M3 | Hold card 2 | Fingerprint "Add backup card ****1234 as a signer", then "Limits set" | |
+| M4 | Security Center | Main card + Backup card, no "No backup card" warning, no 1 h wait | |
+| M5 | Another new wallet, backup On, then **Skip the backup card** at step 3 | Setup finishes with one card | |
+
+**N. Fingerprint only** (Android 11+, a fingerprint enrolled)
+
+| # | Do | Expect | Result |
+|---|---|---|---|
+| N1 | New wallet → **Fingerprint only** On → set up | Every prompt offers only the fingerprint (no "Use PIN") | |
+| N2 | Existing wallet with 2 cards: Security Center → Fingerprint only → slide | Two prompts (new key, then current key), a card tap; **Key switch in 1 h** | |
+| N3 | Wallet with 1 card: open the sheet | "Add a backup card first", no slider | |
+| N4 | After 1 h: Activity → Execute, pull to refresh | Security Center: "This phone · … · fingerprint only", row shows **On**; log "switched to the fingerprint-only phone key" | |
+| N5 | Send 0.1 NEAR | Fingerprint only, payment goes out | |
+
+**O. Recover on a new phone** (needs a second phone, or uninstall on the same phone *only with a test wallet*; two cards of the wallet; 24 h)
+
+| # | Do | Expect | Result |
+|---|---|---|---|
+| O1 | New phone: Welcome → **Recover a wallet** → type the account → Find the wallet | Approvals needed 2, Phone keys 1, Recovery wait 24 h; Card 1, Card 2 | |
+| O2 | Wallet with one card | "Can't recover with cards alone" | |
+| O3 | Slide to start recovery, hold card A | Fee account made, card A identified, then "Recovery: hold card 2 of 2" | |
+| O4 | Hold card A again | "That card already approved. Tap another…" | |
+| O5 | Hold card B | **Recovery requested**, date and time 24 h later; screen "Joins in 23 h…" | |
+| O6 | Old phone (if you have it): within 30 min with Alerts on | Notification "Someone is recovering this wallet" | |
+| O7 | Old phone: Activity → Cancel the request; new phone: Check again | "No open recovery request" + Start again | |
+| O8 | Repeat O3–O5, wait 24 h, **Finish recovery** | **Wallet recovered**; Home opens; Security Center shows "This phone", old phone key gone | |
+| O9 | Pay 0.1 NEAR from the new phone | Works (cards re-learned on first tap) | |
+
+**P. Guardian phone** (two phones)
+
+| # | Do | Expect | Result |
+|---|---|---|---|
+| P1 | Guardian phone: Welcome → **Be a guardian** → owner's account → Make my guardian code | Fingerprint prompt "Offer this phone as a guardian…", then a QR and Copy/Share | |
+| P2 | Owner: Security Center → Add a guardian phone → paste the code | Warning "A full co-signer…", slider appears | |
+| P3 | Paste a code with one character changed | "That guardian code has a typo…" | |
+| P4 | Slide, approve, tap a card | **Guardian added in 1 h** | |
+| P5 | After 1 h: owner Activity → Execute; guardian: I've been added | Guardian opens the wallet's Home: **You're a guardian** | |
+| P6 | Guardian: Freeze | Wallet frozen (the owner gets an alert if on) | |
 
 ## Phase 4 (contract v0.2)
 
-Not built yet.
+Only wallets created with an APK that ships v0.2 get it (invariant 4); older
+wallets keep their code and the app treats them as before.
+
+### Already tested automatically (13 Nov)
+
+| What | Where | Result |
+|---|---|---|
+| A key added by a settings change must prove possession (guardian, recovery phone, backup card): refused without, with another key's proof, for another wallet, for an op that adds nothing; accepted in `propose` or later via `prove_possession` | `flows.rs` | Pass |
+| The proposal view returns the sealed seed; the challenge recomputed from the client's own intent matches | `flows.rs`, `Phase4Test` | Pass |
+| Client refuses a view whose card challenge doesn't match its seed, or whose intent doesn't match its action | `Phase4Test` | Pass |
+| Receiver allowlist: unlisted receiver waits the transfer delay, listed one is instant; duplicates and unknown removals refused | `flows.rs` | Pass |
+| `UpgradeCode`: must be alone, 32-byte hash, refused by `execute`, waits the recovery delay even with a phone approval, needs the exact code, refused while frozen, voids open requests | `flows.rs`, `policy` tests | Pass |
+| Kotlin and Rust bytes for the new ops and messages | `vectors.json`, `VectorsTest` | Pass |
+| Compiled wasm on a local node: possession in `propose`, seed in view, upgrade refused early, wrong code refused, upgrade to the same code keeps the state (the 24 h wait is skipped by moving `ready_ts` back in the sandbox state: sandbox blocks advance the clock ~0.3 s each) | `sandbox.rs` | Pass (13 Nov): propose with possession 68.1 Tgas (the most expensive receipt), `execute_upgrade` deploy + `migrate` 24.5 Tgas |
+| Live testnet with the v0.2 build (all three card kinds) | `TestnetE2ETest`, `RecoveryE2ETest` | **Not run yet** (faucet limit). Run below |
+
+```bash
+cd android
+for p in DDA VISA_FDDA MASTERCARD_CDA; do TAPVAULT_TESTNET=1 TAPVAULT_CARD_PROFILE=$p ./gradlew :core:test --tests '*TestnetE2E*' --rerun; done
+TAPVAULT_TESTNET=1 ./gradlew :core:test --tests '*RecoveryE2E*' --rerun
+```
+
+Each run should print `contract 0.2.0` / `contract v0.2: card 2 signs its possession challenge`.
+
+### You need to test (phone + real cards)
+
+| # | Do | Expect | Result |
+|---|---|---|---|
+| Q1 | New wallet with the new APK; Security Center → Checks | Wallet code ✓ (the new build) | |
+| Q2 | Add backup card on that wallet | Works as before; one extra thing: the new card's tap is also its on-chain possession proof | |
+| Q3 | Old wallet (made before this APK): add backup card | Still works (no possession proof sent); wallet code shows "older build" | |
+| Q4 | Pay and approve from Activity on a v0.2 wallet | Works; nothing new to see (the card challenge is now checked on the phone) | |
+| Q5 | v0.2 wallet: Security Center → Instant receivers → add `bob.testnet` (phone + card); wait the settings delay; Activity → Execute | The row shows 1; the fingerprint prompt said "Let bob.testnet be paid instantly … other receivers always wait" | |
+| Q6 | After Q5: send a small amount to bob.testnet, then to another account | bob.testnet is instant (within the limit); the other waits the transfer delay and can be cancelled | |
+| Q7 | Tap bob.testnet in Instant receivers to remove it; execute after the delay | The list is empty again ("Off"); every receiver within the limit is instant again | |
+| Q8 | Old wallet: Security Center | No "Instant receivers" row | |

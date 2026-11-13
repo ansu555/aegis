@@ -53,7 +53,20 @@ class KeystoreSigner(private val alias: () -> String, private val activity: () -
             }
         }.getOrDefault("unknown")
 
+    /**
+     * Strict mode (plan 5.8): the key was made for a strong fingerprint only,
+     * with no screen-lock fallback. Fixed when the key is created; Android 11+.
+     */
+    val isStrict: Boolean
+        get() = Build.VERSION.SDK_INT >= 30 && runCatching {
+            val key = ks.getKey(alias(), null) as PrivateKey
+            val info = java.security.KeyFactory.getInstance(key.algorithm, ANDROID_KEYSTORE)
+                .getKeySpec(key, android.security.keystore.KeyInfo::class.java)
+            info.userAuthenticationType == KeyProperties.AUTH_BIOMETRIC_STRONG
+        }.getOrDefault(false)
+
     override fun sign(message: ByteArray): P256Sig {
+        val strict = isStrict
         val sig = try {
             Signature.getInstance("SHA256withECDSA").apply { initSign(ks.getKey(alias(), null) as PrivateKey) }
         } catch (e: android.security.keystore.KeyPermanentlyInvalidatedException) {
@@ -81,7 +94,7 @@ class KeystoreSigner(private val alias: () -> String, private val activity: () -
                     .setSubtitle(reason)
                     .setDescription("Your phone key signs only what you approve here.")
                     .apply {
-                        if (Build.VERSION.SDK_INT >= 30) setAllowedAuthenticators(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
+                        if (Build.VERSION.SDK_INT >= 30 && !strict) setAllowedAuthenticators(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
                         else setAllowedAuthenticators(BIOMETRIC_STRONG).setNegativeButtonText("Cancel")
                     }
                     .setConfirmationRequired(true)
@@ -130,11 +143,18 @@ class KeystoreSigner(private val alias: () -> String, private val activity: () -
          * StrongBox is not used: on several phones a StrongBox key is created
          * fine and then fails or stalls when it signs, which would strand the
          * wallet. The TEE is still isolated hardware.
+         *
+         * [strict]: fingerprint only (a strong biometric), no PIN or pattern
+         * fallback, so someone who watched the screen lock being typed still
+         * can't sign. Android 9/10 keys are fingerprint-only anyway.
          */
-        fun create(context: android.content.Context, alias: String) {
+        fun create(context: android.content.Context, alias: String, strict: Boolean = false) {
             val bm = androidx.biometric.BiometricManager.from(context)
-            if (Build.VERSION.SDK_INT < 30 && bm.canAuthenticate(BIOMETRIC_STRONG) != androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS) {
-                throw IllegalStateException("On this Android version Tapvault needs a fingerprint. Add one in Settings → Security, then try again.")
+            if ((strict || Build.VERSION.SDK_INT < 30) && bm.canAuthenticate(BIOMETRIC_STRONG) != androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS) {
+                throw IllegalStateException(
+                    if (strict) "Fingerprint only needs a fingerprint enrolled on this phone. Add one in Settings → Security, or turn Fingerprint only off."
+                    else "On this Android version Tapvault needs a fingerprint. Add one in Settings → Security, then try again.",
+                )
             }
             val spec = KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN)
                 .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
@@ -144,7 +164,7 @@ class KeystoreSigner(private val alias: () -> String, private val activity: () -
                 .setInvalidatedByBiometricEnrollment(false)
                 .apply {
                     if (Build.VERSION.SDK_INT >= 30) {
-                        setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL)
+                        setUserAuthenticationParameters(0, if (strict) KeyProperties.AUTH_BIOMETRIC_STRONG else KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL)
                     } else {
                         @Suppress("DEPRECATION") setUserAuthenticationValidityDurationSeconds(-1)
                     }

@@ -38,6 +38,9 @@ fun SecurityScreen(vm: AppViewModel) {
     var addOpen by remember { mutableStateOf(false) }
     var holdOpen by remember { mutableStateOf(false) }
     var lost by remember { mutableStateOf<SignerInfo?>(null) }
+    var guardianOpen by remember { mutableStateOf(false) }
+    var strictOpen by remember { mutableStateOf(false) }
+    var allowOpen by remember { mutableStateOf(false) }
     var confirmFreeze by remember { mutableStateOf(false) }
     TopBar("Security", onBack = { vm.go(vm.cameFrom) })
 
@@ -100,7 +103,7 @@ fun SecurityScreen(vm: AppViewModel) {
                     val mine = myPub != null && s.phonePublicKey()?.contentEquals(myPub) == true
                     Row_(
                         Ic.Phone, if (mine) "This phone" else "Another phone key",
-                        if (mine) "${vm.phone.hardwareLabel} · fingerprint or screen lock" else "Not on this phone",
+                        if (mine) "${vm.phone.hardwareLabel} · " + (if (vm.phone.isStrict) "fingerprint only" else "fingerprint or screen lock") else "Another phone or a guardian",
                         value = "P-256", tint = if (mine) Tv.Positive else Tv.Text, iconBg = if (mine) Tv.PositiveSoft else Tv.GlassStrong,
                     )
                 } else {
@@ -129,6 +132,32 @@ fun SecurityScreen(vm: AppViewModel) {
             "One backup is enough: keep it at home, not with your main card. Every extra card is one more card that can be skimmed.",
             Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp), color = Tv.Text3,
         )
+        Spacer(Modifier.height(12.dp))
+        Group {
+            Row_(
+                Ic.Phone, "Add a guardian phone", "Someone you trust can cancel and freeze, and co-sign with a card",
+                chevron = true, onClick = { if (idle && w.signers.size < 8) guardianOpen = true },
+            )
+            if (vm.isV02 == true) {
+                GroupDivider()
+                Row_(
+                    Ic.Send, "Instant receivers", if (w.allowlist.isEmpty()) "Off: anyone within your limits" else "Only listed receivers are instant",
+                    value = if (w.allowlist.isEmpty()) "Off" else "${w.allowlist.size}", chevron = true,
+                    onClick = { if (idle) allowOpen = true },
+                )
+            }
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                GroupDivider()
+                val strict = vm.phone.isStrict
+                Row_(
+                    Ic.Fingerprint, "Fingerprint only", if (strict) "This phone's key refuses the PIN or pattern" else "Stop the PIN or pattern from approving",
+                    value = if (strict) "On" else if (vm.store.pendingAlias != null) "Pending" else "Off",
+                    chevron = !strict && vm.store.pendingAlias == null, tint = if (strict) Tv.Positive else Tv.Text,
+                    iconBg = if (strict) Tv.PositiveSoft else Tv.GlassStrong,
+                    onClick = if (strict || vm.store.pendingAlias != null) null else ({ if (idle) strictOpen = true }),
+                )
+            }
+        }
     }
 
     Column(Modifier.enter(2)) {
@@ -200,6 +229,9 @@ fun SecurityScreen(vm: AppViewModel) {
         "Freeze", { confirmFreeze = false; vm.freezeWithPhone() }, { confirmFreeze = false }, icon = Ic.Freeze,
     )
     lost?.let { LostCardSheet(vm, it) { lost = null } }
+    if (guardianOpen) AddGuardianSheet(vm) { guardianOpen = false }
+    if (strictOpen) StrictKeySheet(vm) { strictOpen = false }
+    if (allowOpen) AllowlistSheet(vm) { allowOpen = false }
     if (addOpen && vm.backup == null) AddBackupIntro(vm, { addOpen = false })
     vm.backup?.let { BackupReview(vm, it) { addOpen = false } }
     if (holdOpen) HoldTimerSheet(vm) { holdOpen = false }

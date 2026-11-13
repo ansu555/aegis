@@ -9,8 +9,15 @@ the integrity state), hold-to-sign (4.5) and `FLAG_SECURE`. Test results:
 (5.4), integrity check (5.7), review warnings (4.4), the gap 6b fix,
 watchtower alerts (5.9, framework JobScheduler instead of WorkManager, to
 add no dependency) and the app lock; Security Center has the protection score
-and the CHECKS rows. Everything else in this document is not built yet
-unless it says "today". It describes how Tapvault gets the features and guarantees
+and the CHECKS rows. **Phase 3 is built** (app + client): backup card
+during setup, recover on a new phone (5.5), fingerprint only (5.8, setup
+option and key switch) and a guardian phone. **Phase 4 is built in the
+contract source** (v0.2): possession proofs, the seed in the proposal view,
+a receiver allowlist and a delayed `UpgradeCode`; the app uses each only on
+v0.2 wallets (Security Center → Instant receivers for the allowlist; adding
+and removing a receiver both wait the settings delay, unlike the "instant to
+remove" in section 6). What is tested and what is still for a phone:
+[MANUAL-TESTS.md](MANUAL-TESTS.md). It describes how Tapvault gets the features and guarantees
 of a hardware wallet (Ledger, Trezor, Tangem), what each screen and flow looks
 like, and in what order to build it.
 

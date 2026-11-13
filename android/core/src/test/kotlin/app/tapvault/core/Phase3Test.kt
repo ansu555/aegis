@@ -76,16 +76,21 @@ class Phase3Test {
         assertTrue(Recovery.isRecovery(p(1, a), st))
         assertFalse(Recovery.isRecovery(p(0, a), st), "proposed by a phone: an ordinary settings change")
         assertFalse(Recovery.isRecovery(p(1, Action.Transfer(Asset.Near, Near.ONE, "bob.testnet")), st))
+        // the old phone's watchtower names it plainly
+        val (_, m) = Watch.check(null, st, emptyList(), phoneIndex = 0)
+        val (alerts, _) = Watch.check(m, st, listOf(p(1, a)), phoneIndex = 0)
+        assertEquals("Someone is recovering this wallet", alerts.single().title)
     }
 
     @Test
     fun guardianCodeRoundTripsAndCatchesMistakes() {
         val g = SoftP256Signer()
-        val code = Guardian.encode(account, g.publicKey)
+        val code = Guardian.offer(account, g)
         val offer = Guardian.decode(code)
         assertEquals(account, offer.wallet)
+        assertTrue(P256.verify(g.publicKey, Guardian.messageToSign(account, g.publicKey), offer.possession), "the code carries the key's possession proof")
         assertContentEquals(g.publicKey, offer.key.pubkey)
-        assertEquals(offer, Guardian.decode("  $code\n").copy(key = offer.key))
+        assertContentEquals(offer.possession.signature, Guardian.decode("  $code\n").possession.signature, "surrounding spaces are ignored")
 
         assertFailsWith<TapvaultException> { Guardian.decode("hello") }
         assertFailsWith<TapvaultException> { Guardian.decode(code.dropLast(1)) }
@@ -95,21 +100,26 @@ class Phase3Test {
         assertFailsWith<TapvaultException> { Guardian.decode(typo) }
         // a well-formed code whose x isn't on the curve
         val bad = ByteArray(33).also { it[0] = 2; it[32] = 5 }
-        val badCode = Guardian.encode(account, bad)
+        val badCode = Guardian.encode(account, bad, P256Sig(ByteArray(64)))
         if (!Guardian.isP256Point(bad)) assertFailsWith<TapvaultException> { Guardian.decode(badCode) }
         repeat(20) { assertTrue(Guardian.isP256Point(SoftP256Signer().publicKey)) }
+        // checksum fine, but the possession signature is by another key or for another wallet
+        val forged = Guardian.encode(account, g.publicKey, SoftP256Signer().sign(Guardian.messageToSign(account, g.publicKey)))
+        assertFailsWith<TapvaultException> { Guardian.decode(forged) }
+        val elsewhere = Guardian.encode(account, g.publicKey, g.sign(Guardian.messageToSign("x.testnet", g.publicKey)))
+        assertFailsWith<TapvaultException> { Guardian.decode(elsewhere) }
     }
 
     @Test
     fun guardianIsAddedOnlyToTheWalletItWasOfferedFor() {
         val st = state(listOf(oldPhone.signerKey(), card1))
         val g = SoftP256Signer()
-        val a = Guardian.addAction(account, st, Guardian.decode(Guardian.encode(account, g.publicKey)))
+        val a = Guardian.addAction(account, st, Guardian.decode(Guardian.offer(account, g)))
         assertContentEquals(g.publicKey, ((a.ops.single() as ConfigOp.AddSigner).key as SignerKey.P256).pubkey)
-        assertFailsWith<TapvaultException> { Guardian.addAction("other.testnet", st, Guardian.decode(Guardian.encode(account, g.publicKey))) }
-        assertFailsWith<TapvaultException> { Guardian.addAction(account, st, Guardian.decode(Guardian.encode(account, oldPhone.publicKey))) }
+        assertFailsWith<TapvaultException> { Guardian.addAction("other.testnet", st, Guardian.decode(Guardian.offer(account, g))) }
+        assertFailsWith<TapvaultException> { Guardian.addAction(account, st, Guardian.decode(Guardian.offer(account, oldPhone))) }
         val full = state(List(6) { SoftP256Signer().signerKey() } + card1 + card2)
-        assertFailsWith<TapvaultException> { Guardian.addAction(account, full, Guardian.decode(Guardian.encode(account, g.publicKey))) }
+        assertFailsWith<TapvaultException> { Guardian.addAction(account, full, Guardian.decode(Guardian.offer(account, g))) }
     }
 
     private object SimCardKeys {

@@ -25,7 +25,10 @@ impl Tapvault {
     ///   (anti-spam) but is NOT an approval, because it can be computed
     ///   before the proposal exists. The card approves separately once the
     ///   challenge is sealed.
-    pub fn propose(&mut self, action: Action, proof: SignerProof) -> U64 {
+    ///
+    /// v0.2: `possession` may carry the proofs for the keys this action adds
+    /// (they can also come later through `prove_possession`, before execute).
+    pub fn propose(&mut self, action: Action, proof: SignerProof, possession: Option<Vec<OpPossession>>) -> U64 {
         check(!self.setup_mode, ERR_IN_SETUP);
         action.validate();
         if matches!(action, Action::Transfer { .. }) {
@@ -76,8 +79,12 @@ impl Tapvault {
                 seed: None,
                 sealed_ts: None,
                 action,
+                possessed: 0,
             },
         );
+        for p in possession.unwrap_or_default() {
+            self.record_possession(id, p.op, &p.proof);
+        }
         self.update_ready(id);
 
         // A dropped promise is still scheduled.
@@ -98,6 +105,15 @@ impl Tapvault {
                 events::emit("challenge_sealed", json!({ "id": id, "card_challenge": hex(&ch) }));
             }
         }
+    }
+
+    /// v0.2: a key that proposal `id` adds (op `op`) proves it is held by
+    /// signing `possession_message` / `card_possession_challenge` for this
+    /// wallet and its own key hash. Anyone may send it; execute requires one
+    /// for every added key (DESIGN gap 8).
+    pub fn prove_possession(&mut self, id: U64, op: u8, proof: PossessionProof) {
+        check(!self.setup_mode, ERR_IN_SETUP);
+        self.record_possession(id.0, op, &proof);
     }
 
     /// A P-256 signer approves by signing the intent hash.
@@ -122,6 +138,28 @@ impl Tapvault {
 }
 
 impl Tapvault {
+    fn record_possession(&mut self, id: u64, op: u8, proof: &PossessionProof) {
+        let p = self.proposal(id);
+        let key = match &p.action {
+            Action::Config { ops } => match ops.get(op as usize) {
+                Some(ConfigOp::AddSigner(k)) => k.clone(),
+                _ => env::panic_str(ERR_NOT_ADD_SIGNER),
+            },
+            _ => env::panic_str(ERR_NOT_ADD_SIGNER),
+        };
+        let account = account_bytes();
+        match proof {
+            PossessionProof::P256(sig) => {
+                verify_p256(&key, sig, &domain::possession_message::<NearSha256>(&account, &key.key_hash()))
+            }
+            PossessionProof::Card(sig) => {
+                verify_card(&key, sig, &domain::card_possession_challenge::<NearSha256>(&account, &key.key_hash()))
+            }
+        }
+        self.proposals.get_mut(&id).unwrap().possessed |= 1 << op;
+        events::emit("possession_proved", json!({ "id": U64(id), "op": op }));
+    }
+
     fn pre_approve(&self, id: u64, idx: u8) -> Proposal {
         check(!self.setup_mode, ERR_IN_SETUP);
         let p = self.proposal(id);

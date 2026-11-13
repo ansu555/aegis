@@ -39,6 +39,16 @@ pub const ERR_SIGNER_NOT_FOUND: &str = "Signer not found";
 pub const ERR_LIMIT_NOT_FOUND: &str = "Limit not found";
 pub const ERR_CANNOT_CANCEL: &str = "This signer may not cancel a proposal that removes it";
 
+// v0.2
+pub const ERR_NO_POSSESSION: &str = "A key this proposal adds hasn't proved possession (prove_possession)";
+pub const ERR_NOT_ADD_SIGNER: &str = "That op doesn't add a signer";
+pub const ERR_UPGRADE_ALONE: &str = "UpgradeCode must be the only op of its proposal";
+pub const ERR_USE_EXECUTE_UPGRADE: &str = "Run an UpgradeCode proposal with execute_upgrade";
+pub const ERR_NOT_UPGRADE: &str = "Not an UpgradeCode proposal";
+pub const ERR_CODE_HASH: &str = "Code doesn't match the approved code hash";
+pub const ERR_ALLOWLIST: &str = "Receiver allowlist is full or already has that receiver";
+pub const ERR_RECEIVER_NOT_FOUND: &str = "Receiver not on the allowlist";
+
 pub fn check(cond: bool, msg: &str) {
     if !cond {
         env::panic_str(msg)

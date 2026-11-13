@@ -54,6 +54,37 @@ Where things are:
 - [Creating a wallet](#creating-a-wallet)
 - [The shipped build](#the-shipped-build)
 - [Changing the contract safely](#changing-the-contract-safely)
+- [Contract v0.2](#contract-v02): possession proofs, seed in the view, receiver allowlist, `UpgradeCode`
+
+## Contract v0.2
+
+Source changes of 13 Nov 2026 (hardware-wallet plan phase 4). Only wallets
+created from a build that ships it get it; every existing wallet keeps the
+code it was deployed with (AGENTS.md invariant 4). The reference sections
+below describe v0.1; this section lists what v0.2 adds or changes. The
+`contract_version` view returns `"0.2.0"`; v0.1 has no such view, which is
+how the app tells them apart (`TapvaultWallet.isV02`).
+
+| Change | Methods and types | Why |
+|---|---|---|
+| A key added by a settings change must prove possession before the change executes | `propose(action, proof, possession: Option<Vec<OpPossession>>)`; new `prove_possession(id: U64, op: u8, proof: PossessionProof)` (anyone may send it); `execute` refuses with `A key this proposal adds hasn't proved possession (prove_possession)` | DESIGN gap 8: a key nobody holds can't be added by a client of one's own |
+| Possession messages | P-256: `possession_message(account, new_key_hash)` = SHA-256(`tapvault/near/v1/possess` ‖ len(account) ‖ account ‖ key hash); card: `card_possession_challenge`, tag `tapvault/near/v1/card-possess`. No proposal id, so a guardian or a backup card signs it ahead | Same shape as the setup messages |
+| The sealed seed is in the proposal view | `ProposalView.card_seed` (hex, null before the seal), `ProposalView.possessed` (bit i ⇔ op i proved) | DESIGN gap 6a: the phone recomputes `card_approve_challenge(intent, seed)` from the intent it computed and refuses a view that differs (`TapvaultWallet.checkedChallenge`) |
+| Receiver allowlist | `ConfigOp::AllowReceiver { receiver }`, `ConfigOp::DisallowReceiver { receiver }` (Borsh tags 7, 8), `WalletView.allowlist`, at most 16 (`MAX_ALLOWLIST`). Once the list has an entry, only listed receivers can be paid instantly; any other transfer waits `delays.transfer` even within the limits | A thief with phone, card and fingerprint can't pay a new receiver at once |
+| Code upgrade | `ConfigOp::UpgradeCode { code_hash }` (tag 9; must be the only op; 32-byte SHA-256 of the new wasm). `execute` refuses it; `execute_upgrade(id: u64, code: Vec<u8>)` with **Borsh** arguments is refused while the wallet is frozen (`Wallet is frozen`; unfreezing is a config change, so it also voids the upgrade request), checks the hash, runs the gate with `ActionClass::Upgrade` (always the recovery delay, ≥ 24 h, whoever approved), bumps `signer_epoch`, then deploys the code and calls `migrate` in one receipt (if `migrate` fails, the old code stays) | DESIGN gap 12: wallets can receive fixes, behind the longest delay the owner can cancel in |
+| `migrate` | `#[private] #[init(ignore_state)] migrate()`: reads the state as the current layout. A later version with another layout converts it here | Needed by `execute_upgrade` |
+| State | `Proposal.possessed: u8`, `Tapvault.allowlist: Vec<AccountId>` | A v0.1 state can't be read by v0.2, which is fine: v0.1 wallets have no upgrade path |
+
+New errors: `ERR_NO_POSSESSION`, `ERR_NOT_ADD_SIGNER` ("That op doesn't add a
+signer"), `ERR_UPGRADE_ALONE`, `ERR_USE_EXECUTE_UPGRADE`, `ERR_NOT_UPGRADE`,
+`ERR_CODE_HASH` ("Code doesn't match the approved code hash"),
+`ERR_ALLOWLIST`, `ERR_RECEIVER_NOT_FOUND` (`contract/src/error.rs`).
+
+Tests: `contract/tests/flows.rs` (29, five for v0.2), `policy` unit tests,
+`contract/tests/sandbox.rs` (possession in `propose`, seed in view, an
+upgrade refused early, a wrong code refused, the upgrade to the same code
+after a day keeping the state), `vectors.json` (`config_v02_ops`,
+`config_upgrade`, `possess_card`, `card_possess_card`).
 
 ## At a glance
 
@@ -107,7 +138,11 @@ new --> setup_add_signer (1..7 times) --> setup_finalize   [account key deleted]
 Gas figures are burnt gas measured on a local sandbox node (nearcore
 2.6.5, 12 Nov 2026) by `contract/tests/sandbox.rs`. NEAR's limit is 300 Tgas
 per receipt; the most expensive receipt is 56.4 Tgas. The P-256 check is
-about 32 Tgas of every call that verifies a phone signature.
+about 32 Tgas of every call that verifies a phone signature. The v0.2 source (13 Nov run) is within ~1 Tgas
+of these for the same steps (deploy + `new` 57.5 Tgas); its new calls:
+`propose` of an `AddSigner` with a P-256 possession proof 68.1 Tgas (two
+P-256 checks, now the most expensive receipt), `execute_upgrade` deploy +
+`migrate` 24.5 Tgas.
 
 ## Calling conventions
 
@@ -810,7 +845,7 @@ Every message from `contract/src/error.rs`, and where it comes from.
 |---|---|---|
 | `ERR_IN_SETUP` | `Wallet is still in setup` | `propose`, `approve_p256`, `approve_card`, `freeze` before `setup_finalize` |
 | `ERR_NOT_IN_SETUP` | `Wallet setup is already finalized` | `setup_add_signer`, `setup_finalize` after setup |
-| `ERR_FROZEN` | `Wallet is frozen` | transfer `propose` or `execute` while frozen; `freeze` when already frozen |
+| `ERR_FROZEN` | `Wallet is frozen` | transfer `propose` or `execute` while frozen; `execute_upgrade` while frozen (v0.2); `freeze` when already frozen |
 | `ERR_NOT_FROZEN` | `Wallet is not frozen` | executing `Unfreeze` when not frozen |
 | `ERR_TOO_MANY_SIGNERS` | `Too many signers` | `setup_add_signer` at 8 signers; `AddSigner` past 8 |
 | `ERR_DUPLICATE_SIGNER` | `Signer already enrolled` | `setup_add_signer`; config validation |

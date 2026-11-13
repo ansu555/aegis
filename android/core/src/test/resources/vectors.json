@@ -105,6 +105,45 @@
         }
       },
       "name": "config_more_ops"
+    },
+    {
+      "borsh": "0102000000070d0000006361726f6c2e746573746e6574080c000000646176652e746573746e6574",
+      "intent": "e1e0d39461c459c0b2321b07cfe8891f841d4e41b98782b26eb0193b4a6547c9",
+      "intent_id": 5,
+      "json": {
+        "Config": {
+          "ops": [
+            {
+              "AllowReceiver": {
+                "receiver": "carol.testnet"
+              }
+            },
+            {
+              "DisallowReceiver": {
+                "receiver": "dave.testnet"
+              }
+            }
+          ]
+        }
+      },
+      "name": "config_v02_ops"
+    },
+    {
+      "borsh": "010100000009200000003333333333333333333333333333333333333333333333333333333333333333",
+      "intent": "ece8a9d772bc3c3b52187d6dadce833e249bdd2f5ccff80d16c0cddfd05258b3",
+      "intent_id": 5,
+      "json": {
+        "Config": {
+          "ops": [
+            {
+              "UpgradeCode": {
+                "code_hash": "MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM="
+              }
+            }
+          ]
+        }
+      },
+      "name": "config_upgrade"
     }
   ],
   "card_key_borsh": "0180000000b4240d3bf0f41a2aa081123cbc2fd5aa5d2424af0a20dfd9fc23a092563f3e509cb0df2d328c134de6f60dd9a10cb26ceccfa19717e0aa0e2d741810cdef307cee1b297c145fb473ff58429795be626cf9a6939c9a1846a6291a8ab442d0f240d96cae324a32e43ada8e69196b79de3f080a3460585c158b4288b68423cf558703000000000404",
@@ -131,11 +170,13 @@
     "card_cancel": "0444d40d04c87d2ef70151dbe9f42f839029cc2074ce3f23bd9fa61821633df9",
     "card_enroll_1": "114876d9faf58a11c49f10862032de1ebd6d4f30986742e0cf2828da04816c0d",
     "card_freeze_3": "f7523166beca23bb266076c7c937a1f7fc5bf123a85ec3ca63ec128680390c0f",
+    "card_possess_card": "84e086f5232ce9b8961dbf3a973cd4603e5973a67a015429235b3f5f78275cb1",
     "card_propose": "757c5ad6f93d620c26cef775cec6b6fbae6edd03ec45e83163252fa6e068627d",
     "create": "7c5b71520e2bf4a0f521775d5eeff1d0c5c0d17c3b833328c5929cb955b76f2b",
     "finalize": "5398ece448e8e68dcf564cb1cc90b14145e0aa5ffe420c207edbf6c5a1852489",
     "freeze_3": "dbf3867127843b4a7d35025f087886a907b6995d2f837bbbda50d78d7576d25c",
     "intent_input": "1111111111111111111111111111111111111111111111111111111111111111",
+    "possess_card": "ba48eab2e21591c5837b60aadce4f8a64886ba34c69087a3e7bad981bfd88fda",
     "seed_input": "2222222222222222222222222222222222222222222222222222222222222222",
     "setup_add_1_card": "67db9f15a36af50eff0d36739aa7e8aa9d4d9ba3e23eea8b9de0c1f988650bce"
   },

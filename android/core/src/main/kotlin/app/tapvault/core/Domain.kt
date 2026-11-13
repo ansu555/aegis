@@ -20,6 +20,8 @@ object Domain {
     private val D_FINALIZE = tag("finalize")
     private val D_KEY_P256 = tag("key/p256")
     private val D_KEY_EMV = tag("key/emv")
+    private val D_POSSESS = tag("possess")
+    private val D_CARD_POSSESS = tag("card-possess")
 
     private fun acct(account: String): Array<ByteArray> {
         val b = account.toByteArray()
@@ -54,4 +56,10 @@ object Domain {
         sha256(D_CARD_ENROLL, *acct(account), byteArrayOf(signerCount.toByte()), newKeyHash)
 
     fun finalizeMessage(account: String, args: ByteArray) = sha256(D_FINALIZE, *acct(account), args)
+
+    /** v0.2: a key a config proposal adds signs this to prove it is held (no proposal id: it can be signed ahead). */
+    fun possessionMessage(account: String, newKeyHash: ByteArray) = sha256(D_POSSESS, *acct(account), newKeyHash)
+
+    /** v0.2: the card form of [possessionMessage]. */
+    fun cardPossessionChallenge(account: String, newKeyHash: ByteArray) = sha256(D_CARD_POSSESS, *acct(account), newKeyHash)
 }

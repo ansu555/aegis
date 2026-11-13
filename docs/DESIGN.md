@@ -497,12 +497,15 @@ terminal does). It must not store or transmit it.
    Since several cards per wallet (13 Nov), a signing tap first identifies
    the card (`CardService.identify`: one more GPO with a random UN), so each
    signing tap is at least two card transactions.
-4. **A wallet can't be recovered in the app yet.** App setup creates
-   phone + one card, threshold 2; backup cards can be added afterwards, so a
-   lost card is survivable. Recovering from a lost phone key (uninstall,
-   cleared data, removed screen lock) needs two other signers and a recovery
-   proposal that the app can't make yet, so it still strands the wallet.
-   Testnet only.
+4. **Recovery needs two cards (or a guardian).** Setup can add a backup
+   card with no delay, and backup cards can be added later. Since 13 Nov the
+   app can recover a lost phone key: Welcome → Recover a wallet, where two
+   of the wallet's cards propose and approve `RemoveSigner(old phone) +
+   AddSigner(this phone)` (`Recovery.plan`), which waits the recovery delay
+   (24 h) and which any phone key still on the wallet can cancel. A wallet
+   with one card and no guardian phone is still stranded by a lost phone
+   key. Not yet run on live testnet end to end (faucet limit); see
+   MANUAL-TESTS.md.
 5. **Nothing executes by itself, and approval and execution share a
    receipt.** Over-limit payments and unfreezes need someone to send
    `execute` after the delay. When the app sends `approve_card` and `execute`
@@ -528,8 +531,10 @@ terminal does). It must not store or transmit it.
    (`ProposalInfo.verifiedAction`) and build the prompt from the parsed
    action. (a) alone can't move funds, because a transfer also needs a phone
    approval and every phone approval is now over an intent the phone
-   computed. Remaining fix for (a): return the seed in `ProposalView`
-   (contract v0.2) so clients can check the challenge. (Cancel and freeze also sign values read from the RPC, the
+   computed. **Fixed for v0.2 wallets (13 Nov):** `ProposalView.card_seed`
+   is returned and `TapvaultWallet.checkedChallenge` recomputes the
+   challenge from the parsed action and refuses a mismatch. Wallets running
+   v0.1 code still take (a) on trust. (Cancel and freeze also sign values read from the RPC, the
    proposal's intent hash and the freeze nonce, but those messages can only
    cancel a proposal or freeze the wallet.)
 7. **A phone key's biometric lock can't be checked on-chain.** The contract
@@ -542,7 +547,10 @@ terminal does). It must not store or transmit it.
    checks possession itself first: the new card signs an enrolment-style
    challenge that the phone verifies (`provesPossession`) before anything is
    proposed. That is an app-side check: a client of one's own could still
-   propose a key nobody holds.
+   propose a key nobody holds. **Fixed in v0.2 (13 Nov):** the new key signs
+   `possession_message` / `card_possession_challenge` and `execute` refuses
+   an `AddSigner` without it (CONTRACT.md, Contract v0.2). v0.1 wallets keep
+   the app-side check only.
 9. **Some card challenges can be collected in advance.** The propose, cancel
    and enrolment challenges are deterministic, and the freeze challenge is
    public (the `freeze_challenge` view; the nonce starts at 0). A skimmed

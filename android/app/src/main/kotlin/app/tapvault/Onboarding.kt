@@ -108,6 +108,10 @@ fun Welcome(vm: AppViewModel) {
             TvButton("Create a new wallet", Modifier.fillMaxWidth(), icon = Ic.Plus) { vm.go(Screen.Limits) }
             Spacer(Modifier.height(8.dp))
             TvButton("Check my card first", Modifier.fillMaxWidth(), Btn.Secondary, icon = Ic.Scan) { vm.go(Screen.CardCheck) }
+            Row(Modifier.fillMaxWidth()) {
+                TvButton("Recover a wallet", Modifier.weight(1f), Btn.Ghost, height = 46.dp) { vm.go(Screen.Recover) }
+                TvButton("Be a guardian", Modifier.weight(1f), Btn.Ghost, height = 46.dp) { vm.go(Screen.Guardian) }
+            }
             if (others > 0) {
                 Spacer(Modifier.height(2.dp))
                 TvButton("Back to my wallets", Modifier.fillMaxWidth(), Btn.Ghost, height = 48.dp) { vm.cancelNewWallet() }
@@ -153,6 +157,26 @@ fun ColumnScope.LimitsScreen(vm: AppViewModel) {
     LimitInput("Instant payment limit", "Largest single payment that goes out at once", instant, { instant = clean(it) }, listOf("0.5", "1", "5"))
     Spacer(Modifier.height(14.dp))
     LimitInput("Daily limit", "Most that can go out instantly in 24 hours", daily, { daily = clean(it) }, listOf("2", "5", "20"), err)
+    var backup by remember { mutableStateOf(vm.store.wantBackup) }
+    var strict by remember { mutableStateOf(vm.store.strictKey) }
+    SectionHeader("Extra protection")
+    Group {
+        Row_(
+            Ic.Card, "Add a backup card now", "A second card, added during setup with no wait. Keep it at home.",
+            value = if (backup) "On" else "Off", chevron = true, tint = if (backup) Tv.Positive else Tv.Text,
+            iconBg = if (backup) Tv.PositiveSoft else Tv.GlassStrong,
+            onClick = { backup = !backup; vm.setSetupOptions(backup, strict) },
+        )
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            GroupDivider()
+            Row_(
+                Ic.Fingerprint, "Fingerprint only", "Approvals refuse the PIN or pattern. If the fingerprint stops working, your cards recover the wallet.",
+                value = if (strict) "On" else "Off", chevron = true, tint = if (strict) Tv.Positive else Tv.Text,
+                iconBg = if (strict) Tv.PositiveSoft else Tv.GlassStrong,
+                onClick = { strict = !strict; vm.setSetupOptions(backup, strict) },
+            )
+        }
+    }
     SectionHeader("What you'll need")
     Group {
         Row_(Ic.Card, "Your contactless bank card", "Visa, Mastercard, RuPay and others with a chip")
@@ -195,6 +219,9 @@ fun SetupProgress(vm: AppViewModel) {
         Triple(Ic.Card, "Card read and signed", cardRead),
         Triple(Ic.Layers, "Wallet contract deployed", vm.setupStep >= 2),
         Triple(Ic.ShieldCheck, "Card added as a signer", vm.setupStep >= 3),
+    ) + listOfNotNull(
+        Triple(Ic.Card, "Backup card added", vm.setupStep >= 4).takeIf { vm.store.wantBackup },
+    ) + listOf(
         Triple(Ic.Lock, "Limits set, account locked", vm.setupStep >= 4),
     )
     val done = steps.count { it.third }
@@ -240,6 +267,10 @@ fun SetupProgress(vm: AppViewModel) {
             Spacer(Modifier.height(20.dp))
             TvButton("Continue setup", Modifier.fillMaxWidth(), icon = Ic.Chevron) { vm.continueSetup() }
             Spacer(Modifier.height(8.dp))
+            if (vm.store.wantBackup && vm.setupStep >= 3) {
+                TvButton("Skip the backup card", Modifier.fillMaxWidth(), Btn.Secondary) { vm.skipBackupCard() }
+                Spacer(Modifier.height(8.dp))
+            }
             if (vm.walletList.size > 1) {
                 TvButton("Switch wallet (this setup stays saved)", Modifier.fillMaxWidth(), Btn.Secondary) { showPicker = true }
                 Spacer(Modifier.height(8.dp))

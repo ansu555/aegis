@@ -86,6 +86,7 @@ fun TapvaultApp(vm: AppViewModel) {
                 vm.go(
                     when {
                         vm.screen == Screen.Limits -> Screen.Welcome
+                        vm.screen == Screen.Recover || vm.screen == Screen.Guardian -> if (vm.store.joinMode != null) vm.screen else Screen.Welcome
                         (vm.screen == Screen.CardCheck || vm.screen == Screen.Security) && ready -> vm.cameFrom
                         ready -> Screen.Home
                         else -> Screen.Welcome
@@ -123,6 +124,7 @@ fun TapvaultApp(vm: AppViewModel) {
                                     Screen.CardCheck -> CardCheck(vm)
                                     Screen.Settings -> SettingsScreen(vm)
                                     Screen.Security -> SecurityScreen(vm)
+                                    Screen.Recover, Screen.Guardian -> {} // pinned-form layout below
                                 }
                                 // room for the floating tab bar
                                 Spacer(Modifier.height(if (s in tabScreens && ready) 104.dp else 28.dp))
@@ -131,10 +133,15 @@ fun TapvaultApp(vm: AppViewModel) {
                         if (s == Screen.Welcome) {
                             // The welcome pager fills the screen instead of scrolling.
                             Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp)) { Welcome(vm) }
-                        } else if (s == Screen.Limits || s == Screen.Send) {
+                        } else if (s == Screen.Limits || s == Screen.Send || s == Screen.Recover || s == Screen.Guardian) {
                             // Form screens: content scrolls, the main button stays pinned above the keyboard.
                             Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
-                                if (s == Screen.Limits) LimitsScreen(vm) else Send(vm)
+                                when (s) {
+                                    Screen.Limits -> LimitsScreen(vm)
+                                    Screen.Recover -> RecoverScreen(vm)
+                                    Screen.Guardian -> GuardianScreen(vm)
+                                    else -> Send(vm)
+                                }
                             }
                         } else if ((s == Screen.Home || s == Screen.Activity) && ready) {
                             PullToRefreshBox(vm.pulling, { vm.pullRefresh() }, Modifier.fillMaxSize()) { body() }
@@ -192,7 +199,7 @@ private fun delayFor(vm: AppViewModel, p: ProposalInfo): Long {
     val w = vm.wallet ?: return 0
     val phoneIdx = runCatching { w.phoneIndexOf(vm.phone.publicKey) }.getOrNull()
     return if (p.isTransfer) {
-        if (p.isNearTransfer && w.nearLimit?.isInstant(p.transferAmount() ?: BigInteger.ZERO) == true) 0 else w.delays.transfer
+        if (p.isNearTransfer && w.isInstantTo(p.transferReceiver(), p.transferAmount() ?: BigInteger.ZERO)) 0 else w.delays.transfer
     } else if (phoneIdx != null && p.approvedBy(phoneIdx)) w.delays.config else w.delays.recovery
 }
 
@@ -437,7 +444,7 @@ private fun ColumnScope.Send(vm: AppViewModel) {
     val validTo = to.matches(Regex("^(([a-z\\d]+[-_])*[a-z\\d]+\\.)*([a-z\\d]+[-_])*[a-z\\d]+$")) && to.length in 2..64
     val toError = if (to.length >= 2 && !validTo) "That isn't a NEAR account name" else if (to == vm.store.walletAccount) "That's this wallet's own account" else null
     val tooMuch = parsed != null && spendable != null && parsed > spendable
-    val instant = parsed != null && limit?.isInstant(parsed) == true
+    val instant = parsed != null && w?.isInstantTo(to, parsed) == true
     fun press(k: Char) {
         focus.clearFocus()
         amount = when (k) {

@@ -55,7 +55,11 @@ object Watch {
                 val left = r + d - nowSecs
                 if (left > 0) " · can execute in ${left / 60} min" else " · can execute now"
             } ?: " · not approved yet"
-            alerts += Alert(Kind.UNKNOWN_REQUEST, "A request you didn't make", p.describe() + runs + ". Cancel it if it isn't yours.", p.id)
+            alerts += if (Recovery.isRecovery(p, state)) {
+                Alert(Kind.UNKNOWN_REQUEST, "Someone is recovering this wallet", "Cards are adding a new phone and removing this one$runs. If you didn't start a recovery, cancel it now.", p.id)
+            } else {
+                Alert(Kind.UNKNOWN_REQUEST, "A request you didn't make", p.describe() + runs + ". Cancel it if it isn't yours.", p.id)
+            }
         }
         if (state.frozen && !before.frozen) alerts += Alert(Kind.FROZEN, "Wallet frozen", "No transfers can go out until it is unfrozen. If you didn't freeze it, a card of this wallet did.")
         if (now.signers != before.signers) {

@@ -103,6 +103,9 @@ impl LimitState {
 pub enum ActionClass {
     Transfer { instant: bool },
     Config,
+    /// Replacing the contract code (v0.2 `UpgradeCode`): it can change every
+    /// rule, so it always waits the longest delay, `recovery`, whoever approved.
+    Upgrade,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,6 +148,7 @@ pub fn check_execution(
                 delays.recovery
             }
         }
+        ActionClass::Upgrade => delays.recovery.max(delays.config),
     };
     let ready = ready_ts.saturating_add(delay);
     if now < ready {
@@ -228,6 +232,10 @@ mod tests {
             check_execution(Config, 2, 0, 2, &d, t, t + d.recovery + EXECUTION_WINDOW + 1),
             Err(Refusal::Expired)
         );
+        // an upgrade always waits the recovery delay, even with a phone approval
+        assert_eq!(check_execution(Upgrade, 2, 1, 2, &d, t, t + d.config), Err(Refusal::TooEarly));
+        assert_eq!(check_execution(Upgrade, 2, 1, 2, &d, t, t + d.recovery), Ok(()));
+        assert_eq!(check_execution(Upgrade, 1, 1, 2, &d, t, t + d.recovery), Err(Refusal::NotEnoughApprovals));
     }
 
     #[test]

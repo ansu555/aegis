@@ -58,6 +58,13 @@ sealed interface NearAction {
         override fun borsh(b: Borsh) { b.u8(7).string(beneficiary) }
     }
 
+    /** A call whose arguments are raw bytes (Borsh), e.g. the v0.2 `execute_upgrade(id, code)`. */
+    class RawFunctionCall(val method: String, val args: ByteArray, val gasTgas: Long = 100) : NearAction {
+        override fun borsh(b: Borsh) {
+            b.u8(2).string(method).bytes(args).u64(gasTgas * 1_000_000_000_000L).u128(BigInteger.ZERO)
+        }
+    }
+
     class FunctionCall(val method: String, val args: JsonElement, val gasTgas: Long = 100, val deposit: BigInteger = BigInteger.ZERO) : NearAction {
         override fun borsh(b: Borsh) {
             b.u8(2).string(method).bytes(args.toString().toByteArray()).u64(gasTgas * 1_000_000_000_000L).u128(deposit)

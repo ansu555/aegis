@@ -142,7 +142,14 @@ class TestnetE2ETest {
         val hash2 = e2.key.keyHash().hex()
         recipes[hash2] = e2.recipe
         step("  card 2 ****${e2.report.panLast4}, ${e2.recipe.method}, key hash ${hash2.take(12)}…")
-        val add = w.proposeByPhone(Action.Config(listOf(ConfigOp.AddSigner(e2.key))), phone, phoneIdx)
+        // Contract v0.2 also checks possession on chain: card 2 signs the possession challenge, sent with the proposal.
+        val v02 = w.isV02()
+        val poss = if (v02) {
+            step("contract v0.2: card 2 signs its possession challenge")
+            mapOf(0 to PossessionProof.Card(cards.sign(card2, e2.key, Domain.cardPossessionChallenge(a.wallet, e2.key.keyHash()), e2.recipe)))
+        } else emptyMap()
+        val add = w.proposeByPhone(Action.Config(listOf(ConfigOp.AddSigner(e2.key))), phone, phoneIdx, poss)
+        if (v02) assertEquals(1, w.proposal(add)!!.possessed)
         step("phone proposed AddSigner(card 2) as #$add")
         val addCh = w.awaitCardChallenge(add)
         val notYet = runCatching { tap(cards, w, card2, addCh, recipes) }.exceptionOrNull()

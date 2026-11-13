@@ -12,10 +12,13 @@ import java.math.BigInteger
  * read-only watcher, and the app says so before the owner adds one.
  *
  * The guardian phone shows its key as a short text (QR or copy/paste):
- * `tapvault:guardian:1:<wallet>:<33-byte key hex>:<check>`, where check is
- * the first 4 bytes of SHA-256 over everything before it. The wallet name in
- * it stops a key offered for one wallet from being added to another, and
- * the check catches typing and scanning mistakes.
+ * `tapvault:guardian:1:<wallet>:<33-byte key hex>:<64-byte sig hex>:<check>`.
+ * The signature is the guardian key's possession proof over
+ * [Domain.possessionMessage] for that wallet (contract v0.2 requires it
+ * before the key can be added; older wallets ignore it). check is the first
+ * 4 bytes of SHA-256 over everything before it. The wallet name stops a key
+ * offered for one wallet from being added to another, and the check catches
+ * typing and scanning mistakes.
  */
 object Guardian {
     const val PREFIX = "tapvault:guardian:1:"
@@ -24,24 +27,36 @@ object Guardian {
         "A guardian phone is a full co-signer. Together with any one of your cards it can approve a payment, " +
             "and on its own it can cancel requests and freeze the wallet. Only add a phone you would trust with a card."
 
-    data class Offer(val wallet: String, val key: SignerKey.P256)
+    data class Offer(val wallet: String, val key: SignerKey.P256, val possession: P256Sig) {
+        val proof get() = PossessionProof.P256(possession)
+    }
 
-    fun encode(wallet: String, pubkey: ByteArray): String {
-        val body = "$PREFIX$wallet:${pubkey.hex()}"
+    /** What the guardian phone signs (with its fingerprint) to make its code. */
+    fun messageToSign(wallet: String, pubkey: ByteArray) = Domain.possessionMessage(wallet, SignerKey.P256(pubkey).keyHash())
+
+    fun encode(wallet: String, pubkey: ByteArray, possession: P256Sig): String {
+        val body = "$PREFIX$wallet:${pubkey.hex()}:${possession.signature.hex()}"
         return "$body:${check(body)}"
     }
+
+    /** Sign and encode in one step (the guardian phone). */
+    fun offer(wallet: String, signer: P256Signer): String = encode(wallet, signer.publicKey, signer.sign(messageToSign(wallet, signer.publicKey)))
 
     /** Parses and checks an offer; throws [TapvaultException] with a readable reason. */
     fun decode(text: String): Offer {
         val s = text.trim()
         if (!s.startsWith(PREFIX)) throw TapvaultException("That isn't a Tapvault guardian code.")
         val parts = s.removePrefix(PREFIX).split(":")
-        if (parts.size != 3) throw TapvaultException("That guardian code is incomplete. Copy or scan it again.")
-        val (wallet, keyHex, sum) = parts
-        if (check("$PREFIX$wallet:$keyHex") != sum.lowercase()) throw TapvaultException("That guardian code has a typo or was cut off. Copy or scan it again.")
+        if (parts.size != 4) throw TapvaultException("That guardian code is incomplete. Copy or scan it again.")
+        val (wallet, keyHex, sigHex, sum) = parts
+        if (check("$PREFIX$wallet:$keyHex:$sigHex") != sum.lowercase()) throw TapvaultException("That guardian code has a typo or was cut off. Copy or scan it again.")
         val key = runCatching { keyHex.unhex() }.getOrNull()
         if (key == null || !isP256Point(key)) throw TapvaultException("That guardian code doesn't hold a valid phone key.")
-        return Offer(wallet, SignerKey.P256(key))
+        val sig = runCatching { P256Sig(sigHex.unhex()) }.getOrNull()
+        if (sig == null || !P256.verify(key, messageToSign(wallet, key), sig)) {
+            throw TapvaultException("That guardian code's signature doesn't check out. Make a new code on the guardian phone.")
+        }
+        return Offer(wallet, SignerKey.P256(key), sig)
     }
 
     /** The settings change that adds [offer]'s key to [state] of [account]. */

@@ -177,13 +177,13 @@ prompt offers the fingerprint or the screen lock instead.
 | `Send` and the snowflake dimmed on Home | `Screens.kt` `Home` | Frozen, busy, or the wallet hasn't loaded since the app started (needs the network once) | Wait for the balance to show; unfreeze if frozen |
 | `Clean up` shows no result banner | `AppViewModel.closeStale` | Normal; the entry disappears on the next refresh | Nothing |
 
-## Backup cards, lost cards and Security Center
+## Backup cards, lost cards, recovery and Security Center
 
 | Message or state | From | Meaning | What to do |
 |---|---|---|---|
 | `That card is already one of this wallet's cards. Hold a different card to add it as a backup.` | `AppViewModel.readBackupCard` (`AlreadySignerException`) | The tapped card's key hash is already a signer; it signed nothing | Hold the new card |
 | `This card can't sign for Tapvault: <reason>. Try another contactless card.` | `AppViewModel.readBackupCard` | The new card failed the same checks as at setup ([reasons](#reasons-in-the-report-and-in-card-errors)) | Another card; Card check shows why |
-| `The card's test signature didn't check out, so it won't be added. Tap it again, or use another card.` | `AppViewModel.readBackupCard` (`provesPossession`) | The new card's signature over the test challenge didn't verify on the phone. The contract doesn't check this for cards added after setup, so the app refuses the card | Tap again; if it repeats, report the card's Card check report |
+| `The card's test signature didn't check out, so it won't be added. Tap it again, or use another card.` | `AppViewModel.readBackupCard` (`provesPossession`) | The new card's signature over the test challenge didn't verify on the phone. v0.1 contracts don't check this for cards added after setup (v0.2 does), so the app refuses the card | Tap again; if it repeats, report the card's Card check report |
 | `This wallet already has 8 signers, the most it can have.` | `AppViewModel.readBackupCard` | `MAX_SIGNERS` is 8 | Nothing to add |
 | `<card> is already a signer of this wallet.` | `AppViewModel.addBackupCard` | The card was added meanwhile | Nothing |
 | `<message>` + `Request #<n> is saved: approve it with your card in Activity within 10 minutes, or cancel it there.` | `AppViewModel.addBackupCard` | The phone proposed adding the card, but the approving card tap failed | Activity → `Approve · card` with a card already in the wallet, or Security Center → `Add backup card` again with the same new card (it finishes the same request) |
@@ -203,6 +203,25 @@ prompt offers the fingerprint or the screen lock instead.
 | `This request's action can't be read by this app version, so it won't be signed (…)` | `ProposalInfo.verifiedAction` | A request with an action this app doesn't know | Approve is refused; **Cancel** still works (its prompt says "its details can't be checked"). Freeze if you don't recognise it, and report it |
 | "Tapvault is locked" | `LockOverlay` (`AppViewModel.lockIfAway`) | App lock: the app was away more than a minute or just started | Unlock with fingerprint or screen lock. It hides the screen only; funds are protected by the card + phone key either way |
 | No watchtower notifications | `Watchtower.kt` | Alerts are off (Security Center → Checks → Alerts), notifications are denied (Android 13+), or Android delayed the job (Doze, battery saver: 15 min is a minimum, not a promise). Alerts only fire for what's new: a request this phone didn't approve, a freeze, a signer change, a failed check | Turn Alerts on; allow notifications; exempt Tapvault from battery optimisation |
+| `That's the card you already added. Tap Continue setup and hold a different card, or skip the backup card.` | `AppViewModel.continueSetup` (backup card) | During setup with **Add a backup card now**, card 1 was tapped again; it signed nothing | Hold the second card, or **Skip the backup card** |
+| `This card can't sign for Tapvault: <reason>. Tap Continue setup to try another card, or skip the backup card.` | `AppViewModel.continueSetup` (backup card) | The second card failed the card checks | Another card, or skip; add one later in Security Center |
+| `Fingerprint only needs a fingerprint enrolled on this phone. …` | `KeystoreSigner.create(strict)` | Strict mode without a strong fingerprint | Enrol a fingerprint, or turn Fingerprint only off |
+| `Add a backup card first: if your fingerprint stops working, two cards are how you get back in.` | `AppViewModel.switchToStrictKey` | Switching an existing wallet to fingerprint only needs two cards | Add a backup card |
+| `Key switch in 1 h` / row **Pending** | `switchToStrictKey` | The new fingerprint-only key replaces the old one when the change executes | After the wait: Activity → Execute. The next refresh switches keys (log: `switched to the fingerprint-only phone key`) |
+| `No Tapvault wallet found at <account>. …` | `findWalletToRecover`, `becomeGuardian` | No contract at that account, a typo, or no connection | Copy the account from the old phone's Receive screen or an explorer link |
+| `Recovery needs <n> of this wallet's cards to approve, and it has <m>. …` / `Can't recover with cards alone` | `Recovery.plan` | Cards alone can't reach the threshold (one card, or lost cards marked) | A wallet with one card can only be recovered from a phone that is still a signer (or a guardian, after a card is added) |
+| `That card is marked lost. Tap another card.` / `That card already approved. Tap another of the wallet's cards.` | `startRecovery`, `approveRecovery` | The tapped card can't count; it signed nothing | Hold the next card |
+| `The recovery request is gone: a phone or card of the wallet cancelled it.` / `No open recovery request` | `approveRecovery`, `RecoverScreen` | The old phone (or a card the request doesn't remove) cancelled it | If it wasn't you, someone has the old phone: start again with the lost card marked |
+| `Recovery requested` · `Joins in …` | `RecoverScreen` | Approved by cards; waits the recovery delay (24 h) | Keep the app installed; **Finish recovery** when the time is up |
+| Notification `Someone is recovering this wallet` | `Watch.check` (old phone) | Cards proposed adding a new phone and removing this one | If it isn't you: Activity → Cancel, and freeze |
+| `That guardian code has a typo or was cut off.` / `… doesn't hold a valid phone key.` / `… signature doesn't check out.` / `That guardian code is for <wallet>, not this wallet.` | `Guardian.decode`, `addAction` | The code was changed, cut, signed by another key, or made for another wallet | Make a new code on the guardian phone and copy it whole |
+| `Not added yet` (guardian phone) | `checkGuardianAdded` | The owner's request hasn't executed | The owner: Activity → Execute after the settings wait |
+| `The network's card challenge for request #<n> doesn't match its own seed. Nothing was signed; try another connection.` | `TapvaultWallet.checkedChallenge` (v0.2 wallets) | The node's proposal view is inconsistent: a broken or dishonest RPC | Retry (RPCs rotate); report it with the Log if it repeats |
+| `A key this proposal adds hasn't proved possession (prove_possession)` | contract v0.2 `execute` | An `AddSigner` request without the new key's possession proof (an older app, or a script) | Propose it again from this app: it sends the proof |
+| `Enter a NEAR account, like bob.testnet` | `AppViewModel.changeAllowlist` | The receiver typed in Instant receivers isn't a valid account name | Type the full account (`name.testnet`) |
+| `This wallet runs an older contract without an allowlist. …` | `AppViewModel.changeAllowlist` | The wallet was created before v0.2 (invariant 4: it keeps its code) | Nothing; the row only shows on v0.2 wallets |
+| `<receiver> is already on the list.` / `<receiver> isn't on the list.` / `The list is full (16 receivers).` | `AppViewModel.changeAllowlist` | The change would do nothing, or the contract's limit (`MAX_ALLOWLIST`) is reached | Pull to refresh; remove one first when full |
+| A payment that was instant now waits the transfer delay | Contract v0.2 allowlist | The wallet has at least one instant receiver, and this receiver isn't on the list | Expected. Add the receiver (it takes the settings delay), or wait and execute |
 
 ## Network and RPC
 
@@ -260,7 +279,7 @@ the limits" is judged with the phone's clock (`LimitInfo.isInstant`).
 |---|---|---|---|
 | `Wallet is still in setup` | `ERR_IN_SETUP` | Never in normal use: Home is shown only after `setup_finalize` landed | Check `get_wallet` ([TESTING.md](TESTING.md#4-check-the-wallet-on-the-explorer)); report |
 | `Wallet setup is already finalized` | `ERR_NOT_IN_SETUP` | A setup step sent again after it had landed | **Continue setup**: it re-reads the chain and skips finished steps |
-| `Wallet is frozen` | `ERR_FROZEN` | A transfer proposed or executed while frozen, or freezing twice, when the screen was out of date | Wait for Home to refresh; `Request unfreeze` |
+| `Wallet is frozen` | `ERR_FROZEN` | A transfer proposed or executed while frozen, an `execute_upgrade` while frozen (v0.2), or freezing twice, when the screen was out of date | Wait for Home to refresh; `Request unfreeze` |
 | `Wallet is not frozen` | `ERR_NOT_FROZEN` | Executing an unfreeze when the wallet isn't frozen | Nothing; `Cancel` or `Clean up` it |
 | `Too many signers` | `ERR_TOO_MANY_SIGNERS` | Not reachable (the app adds one card; the maximum is 8 signers) | |
 | `Signer already enrolled` | `ERR_DUPLICATE_SIGNER` | Adding the card again after it was added | **Continue setup** (it sees the card on-chain and skips) |
