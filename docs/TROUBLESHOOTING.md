@@ -152,6 +152,22 @@ has a `Cancel` button).
 Face unlock: weak face unlock doesn't count as a strong biometric, so the
 prompt offers the fingerprint or the screen lock instead.
 
+## Security key
+
+| Message | From | Meaning | What to do |
+|---|---|---|---|
+| `That isn't your security key. N tries left before a pause.` | `AppViewModel.requireSecurityKey` | Wrong key typed | Type it again. After 5 wrong tries in a row each try waits (30 s, doubling, at most 1 h) |
+| `Too many wrong security keys. Try again in …, or reset it with your card: Settings → Security key.` | `requireSecurityKey` | The pause after wrong tries | Wait, or reset it |
+| `Use at least 6 characters.` / `Pick something harder to guess.` / `That one is too easy to guess. Pick another.` / `The two entries don't match.` | `SecurityKey.problem` | A new key was refused | Pick another |
+| `… Nothing was sent. Payment #N is saved and waits 10 minutes for your card: send the same amount again, or cancel it in Activity.` | `AppViewModel.send` | The key wasn't entered after the card tap | Send the same amount again to finish it (it reuses the request), or cancel it in Activity |
+| `The card's signature didn't check out, so the security key wasn't reset. Tap it again.` | `resetSecurityKey` | The reset's card signature failed the check on the phone | Tap the card again; it must be one of this wallet's cards |
+| `This wallet has no card yet. Start over to set up again.` | `resetSecurityKey` | A reset during setup, before any card was added | Start over |
+
+The key is asked by the app, not by the wallet contract. Forgetting it never
+locks funds: a tap of one of the wallet's cards and the fingerprint set a new
+one (Settings → Security key → Forgot it?, or `Forgot security key?` in the
+prompt).
+
 ## Sending, Activity and freeze
 
 | Message or state | From | Meaning | What to do |

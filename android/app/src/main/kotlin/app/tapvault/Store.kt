@@ -82,6 +82,20 @@ class Store(context: Context, file: String = WalletIndex.prefsFile(WalletIndex.F
 
     // ---- phase 3 ----
 
+    /** The wallet's security key, as a salted hash ([app.tapvault.core.SecurityKey.Record], encoded); null until set. */
+    var securityKey: String?
+        get() = p.getString("security_key", null)
+        set(v) { p.edit().putString("security_key", v).commit() }
+
+    /** Wrong security keys in a row, and when the last one was typed (seconds), for the pause. */
+    var keyFailures: Int
+        get() = p.getInt("key_failures", 0)
+        set(v) { p.edit().putInt("key_failures", v).commit() }
+
+    var keyLastFail: Long
+        get() = p.getLong("key_last_fail", 0)
+        set(v) { p.edit().putLong("key_last_fail", v).commit() }
+
     /** Setup option: read and add a second (backup) card before the wallet is locked. */
     var wantBackup: Boolean
         get() = p.getBoolean("want_backup", false)
@@ -167,6 +181,11 @@ class WalletIndex(context: Context) {
     var backgroundAt: Long
         get() = p.getLong("background_at", 0)
         set(v) { p.edit().putLong("background_at", v).commit() }
+
+    /** Saved receivers, shared by every wallet on this phone ([app.tapvault.core.AddressBook], encoded). */
+    var addressBook: app.tapvault.core.AddressBook
+        get() = app.tapvault.core.AddressBook.decode(p.getString("address_book", null))
+        set(v) { p.edit().putString("address_book", v.encode()).commit() }
 
     /** Whether the user turned on watchtower alerts. */
     var alertsOn: Boolean

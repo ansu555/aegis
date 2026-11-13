@@ -48,6 +48,7 @@ import app.tapvault.core.Recovery
 import app.tapvault.core.Guardian
 import app.tapvault.core.ActionJson
 import app.tapvault.core.TapvaultException
+import app.tapvault.core.SecurityKey
 import app.tapvault.core.TapvaultWallet
 import app.tapvault.core.WalletState
 import kotlinx.coroutines.Dispatchers
@@ -92,6 +93,16 @@ private object SoftP256Probe {
     val key: SignerKey.P256 by lazy { app.tapvault.core.SoftP256Signer().signerKey() }
 }
 
+/**
+ * The security key sheet the UI shows while a flow waits for it: [create]
+ * asks for a new key twice; otherwise the current key, with [error] after a
+ * wrong one. [checking] while the hash is computed.
+ */
+data class KeyPrompt(val title: String, val detail: String, val create: Boolean, val error: String? = null, val checking: Boolean = false, val canForget: Boolean = true)
+
+/** "Forgot security key?" in the sheet: the flow stops and the card reset starts. */
+class ForgotSecurityKey : Exception("Security key forgotten")
+
 /** A finished operation, shown as a result card. */
 data class Outcome(val ok: Boolean, val title: String, val detail: String = "", val link: String? = null)
 
@@ -124,6 +135,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var busy by mutableStateOf<String?>(null)
     var outcome by mutableStateOf<Outcome?>(null)
     var tap by mutableStateOf<TapRequest?>(null)
+
+    /** The security key sheet, while a flow waits for the key. */
+    var keyPrompt by mutableStateOf<KeyPrompt?>(null)
+        private set
+
+    /** Whether the active wallet has a security key yet. */
+    var hasSecurityKey by mutableStateOf(store.securityKey != null)
+        private set
+
+    /** Saved receivers (shared by every wallet on this phone). */
+    var addressBook by mutableStateOf(wallets.addressBook)
+        private set
     var wallet by mutableStateOf<WalletState?>(null)
     var balance by mutableStateOf<BigInteger?>(null)
     var storageLocked by mutableStateOf<BigInteger?>(null)
@@ -212,8 +235,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         outcome = null
         busy = label
         viewModelScope.launch {
+            var forgot = false
             try {
                 withContext(Dispatchers.IO) { block() }
+            } catch (e: ForgotSecurityKey) {
+                note("security key forgotten: reset with a card")
+                forgot = true
             } catch (e: Throwable) {
                 val msg = (e as? java.util.concurrent.ExecutionException)?.cause?.message ?: e.message ?: e.toString()
                 note("error: $msg")
@@ -221,6 +248,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } finally {
                 busy = null
                 tap = null
+                keyPrompt = null
+                if (forgot) resetSecurityKey()
             }
         }
     }
@@ -228,6 +257,160 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun progress(s: String) {
         busy = s
         note(s)
+    }
+
+    // ---- security key ----
+    //
+    // Asked by the app before the phone's key signs a payment, an approval or a
+    // change of keys (not to freeze or cancel: those only stop things). The
+    // contract doesn't know about it; the phone's key only works in this app,
+    // so on this phone nothing is signed without it. See core SecurityKey.
+
+    @Volatile private var keyEntry: CompletableFuture<String>? = null
+
+    fun submitKey(key: String) { keyEntry?.complete(key) }
+
+    fun cancelKey() { keyEntry?.completeExceptionally(KeystoreSigner.Cancelled("Cancelled: the security key wasn't entered")) }
+
+    fun forgotKey() { keyEntry?.completeExceptionally(ForgotSecurityKey()) }
+
+    private fun pepper() = SecurityPepper.of(SecurityPepper.aliasFor(activeId))
+
+    /** Show [p] and wait (this background thread) for what the user types. */
+    private fun askKey(p: KeyPrompt): String {
+        val f = CompletableFuture<String>()
+        keyEntry = f
+        keyPrompt = p
+        try {
+            return f.get(5, TimeUnit.MINUTES)
+        } catch (e: java.util.concurrent.TimeoutException) {
+            throw IllegalStateException("No security key was entered.")
+        } catch (e: java.util.concurrent.ExecutionException) {
+            throw e.cause ?: e
+        } finally {
+            keyEntry = null
+        }
+    }
+
+    /** Seconds until the next try is allowed after wrong keys (0 = now). */
+    private fun keyPause(): Long {
+        val pause = SecurityKey.pauseAfter(store.keyFailures)
+        return (store.keyLastFail + pause - System.currentTimeMillis() / 1000).coerceAtLeast(0)
+    }
+
+    /**
+     * Ask for the security key and return once it's right. [what] says what
+     * it unlocks. A wallet without one (made before this version) sets it now.
+     */
+    private fun requireSecurityKey(what: String) {
+        val rec = SecurityKey.Record.decode(store.securityKey)
+        if (rec == null) {
+            createSecurityKey("Set a security key", "This wallet doesn't have one yet. From now on you type it for every payment and every change of cards.")
+            return
+        }
+        var error: String? = null
+        try {
+            while (true) {
+                val wait = keyPause()
+                if (wait > 0) throw IllegalStateException("Too many wrong security keys. Try again in ${formatWait(wait)}, or reset it with your card: Settings → Security key.")
+                val typed = askKey(KeyPrompt("Enter your security key", what, create = false, error = error))
+                keyPrompt = keyPrompt?.copy(checking = true, error = null)
+                if (SecurityKey.verify(rec, typed, pepper())) {
+                    store.keyFailures = 0
+                    note("security key accepted")
+                    return
+                }
+                store.keyFailures = store.keyFailures + 1
+                store.keyLastFail = System.currentTimeMillis() / 1000
+                val left = SecurityKey.FREE_TRIES - store.keyFailures
+                note("wrong security key (${store.keyFailures} in a row)")
+                error = if (left > 0) "That isn't your security key. $left ${if (left == 1) "try" else "tries"} left before a pause."
+                else "That isn't your security key."
+            }
+        } finally {
+            keyPrompt = null
+        }
+    }
+
+    /** Ask for a new security key (typed twice) and save its hash. */
+    private fun createSecurityKey(title: String, detail: String) {
+        var error: String? = null
+        try {
+            while (true) {
+                val typed = askKey(KeyPrompt(title, detail, create = true, error = error, canForget = false))
+                // The sheet checks both entries match; the strength rules are checked again here.
+                val problem = SecurityKey.problem(typed, typed)
+                if (problem != null) {
+                    error = problem
+                    continue
+                }
+                keyPrompt = keyPrompt?.copy(checking = true, error = null)
+                store.securityKey = SecurityKey.create(typed, pepper()).encode()
+                store.keyFailures = 0
+                hasSecurityKey = true
+                note("security key set")
+                return
+            }
+        } finally {
+            keyPrompt = null
+        }
+    }
+
+    private fun formatWait(secs: Long) = if (secs < 60) "$secs s" else "${(secs + 59) / 60} min"
+
+    /** Settings: set a key now (a wallet made before security keys). */
+    fun setSecurityKeyNow() = run("Security key") {
+        if (store.securityKey != null) throw IllegalStateException("This wallet already has a security key. Change it instead.")
+        createSecurityKey("Set a security key", "You'll type it for every payment and every change of cards.")
+        outcome = Outcome(true, "Security key set", "You'll type it for every payment and every change of cards.")
+    }
+
+    /** Settings: change the key (the current one first). */
+    fun changeSecurityKey() = run("Changing security key") {
+        if (store.securityKey == null) throw IllegalStateException("This wallet has no security key yet. Set one first.")
+        requireSecurityKey("Type your current security key first.")
+        createSecurityKey("Choose a new security key", "At least ${SecurityKey.MIN_LENGTH} characters. You'll type it for every payment and every change of cards.")
+        outcome = Outcome(true, "Security key changed", "Use the new one from now on.")
+    }
+
+    /**
+     * Forgot the key: one of the wallet's cards signs a fresh random challenge
+     * (checked here against the card key on chain), the phone's key confirms
+     * with a fingerprint, then a new key is set. Wrong-try pauses are cleared.
+     */
+    fun resetSecurityKey() = run("Resetting security key") {
+        requireNfc()
+        val st = walletClient().state()
+        if (st.cards().isEmpty()) throw IllegalStateException("This wallet has no card yet. Start over to set up again.")
+        val challenge = sha256("tapvault/reset-security-key".toByteArray() + ByteArray(32).also { java.security.SecureRandom().nextBytes(it) })
+        val t = tapWalletCard("Tap one of this wallet's cards to reset your security key", st, challenge, hold = false)
+        if (!provesPossession(t.signer.cardKey()!!, t.sig, challenge)) {
+            throw IllegalStateException("The card's signature didn't check out, so the security key wasn't reset. Tap it again.")
+        }
+        note("${t.name} verified for the security key reset")
+        phone.reason = "Reset your Tapvault security key"
+        phone.sign(sha256(challenge))
+        store.keyFailures = 0
+        createSecurityKey("Choose a new security key", "${t.name} and your fingerprint checked out. Pick a new key of at least ${SecurityKey.MIN_LENGTH} characters.")
+        outcome = Outcome(true, "Security key reset", "Use the new one from now on.")
+    }
+
+    // ---- address book ----
+
+    /** Save [account] as [name]; returns a readable problem, or null when saved. */
+    fun saveContact(name: String, account: String): String? = try {
+        val b = addressBook.put(name, account)
+        wallets.addressBook = b
+        addressBook = b
+        null
+    } catch (e: IllegalArgumentException) {
+        e.message
+    }
+
+    fun deleteContact(account: String) {
+        val b = addressBook.remove(account)
+        wallets.addressBook = b
+        addressBook = b
     }
 
     // ---- card taps ----
@@ -504,6 +687,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun continueSetup() = run("Setting up") {
         if (PendingCard.decode(store.pendingCard) == null && store.setupStep < 3) requireNfc()
         val ob = Onboarding(near)
+        if (store.securityKey == null) {
+            progress("Set your security key")
+            createSecurityKey("Set your security key", "You'll type it for every payment and to change your card. At least ${SecurityKey.MIN_LENGTH} characters; it never leaves this phone.")
+        }
         if (!phoneKeyExists) {
             progress("Creating your phone key in secure hardware")
             try {
@@ -730,6 +917,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             refresh()
             throw IllegalStateException("${e.message}\n\nPayment #$id is saved and waits 10 minutes for your card: send the same amount again, or approve or cancel it in Activity.")
         }
+        try {
+            requireSecurityKey("To send ${Near.format(amount)} NEAR to $to.")
+        } catch (e: ForgotSecurityKey) {
+            throw e
+        } catch (e: Exception) {
+            refresh()
+            throw IllegalStateException("${e.message}\n\nNothing was sent. Payment #$id is saved and waits 10 minutes for your card: send the same amount again, or cancel it in Activity.")
+        }
         progress("Submitting")
         rememberReceiver(to)
         val instant = st.isInstantTo(to, amount)
@@ -770,6 +965,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val t = tapWalletCard("Tap your card to approve: ${p.describe()}", st, ch) { s ->
             if (p.approvedBy(s.index)) "${cardName(s)} already approved this. Tap another card of this wallet." else null
         }
+        requireSecurityKey("To approve: ${p.describe()}.")
         val sent = if (canRunNow) approveAndMaybeExecute(w, p.id, t.index, t.sig) else null
         val r = sent ?: w.approveCard(p.id, t.index, t.sig)
         outcome = Outcome(true, if (sent != null) "Approved and sent" else "Approved", p.describe(), near.explorerTx(r.hash))
@@ -795,6 +991,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun approveWithPhone(p: ProposalInfo) = run("Approving") {
+        requireSecurityKey("To approve: ${p.describe()}.")
         val w = walletClient()
         val idx = phoneIndex(w.state())
         // The phone recomputes the intent from the action and the prompt names that same action (gap 6b).
@@ -844,6 +1041,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun requestUnfreeze() = run("Requesting unfreeze") {
+        requireSecurityKey("To unfreeze the wallet.")
         val w = walletClient()
         val st = w.state()
         val idx = phoneIndex(st)
@@ -878,6 +1076,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun readBackupCard() = run("Reading the new card") {
         backup = null
         requireNfc()
+        requireSecurityKey("To add a card to this wallet.")
         val w = walletClient()
         val st = w.state()
         if (st.signers.size >= 8) throw IllegalStateException("This wallet already has 8 signers, the most it can have.")
@@ -976,6 +1175,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun removeCard(keyHash: String, freezeFirst: Boolean) = run("Removing the card") {
         requireNfc()
+        requireSecurityKey("To remove a card from this wallet.")
         val w = walletClient()
         var st = w.state()
         val gone = st.signerByKeyHash(keyHash) ?: throw IllegalStateException("That card isn't a signer of this wallet any more.")
@@ -1231,6 +1431,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun addGuardian(code: String) = run("Adding guardian") {
         val offer = Guardian.decode(code)
         requireNfc()
+        requireSecurityKey("To add a guardian phone.")
         val w = walletClient()
         val st = w.state()
         val action = Guardian.addAction(w.account, st, offer)
@@ -1260,6 +1461,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val r = receiver.trim().lowercase()
         if (!Regex("^[a-z0-9._-]{2,64}$").matches(r)) throw IllegalArgumentException("Enter a NEAR account, like bob.testnet")
         requireNfc()
+        requireSecurityKey(if (add) "To add $r to your instant receivers." else "To remove $r from your instant receivers.")
         val w = walletClient()
         if (!w.isV02()) throw IllegalStateException("This wallet runs an older contract without an allowlist. Wallets created with this app version have it.")
         val st = w.state()
@@ -1294,6 +1496,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (android.os.Build.VERSION.SDK_INT < 30) throw IllegalStateException("Fingerprint only needs Android 11 or newer; on this phone the key is already fingerprint-only.")
         if (phone.isStrict) throw IllegalStateException("This wallet's phone key is already fingerprint only.")
         requireNfc()
+        requireSecurityKey("To switch this phone's key to fingerprint only.")
         val w = walletClient()
         val st = w.state()
         if (st.cards().size < 2) throw IllegalStateException("Add a backup card first: if your fingerprint stops working, two cards are how you get back in.")
@@ -1495,6 +1698,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         wallet = null; balance = null; storageLocked = null; proposals = emptyList(); cardReport = null; offline = null
         cardBook = store.cards; holdSeconds = store.holdSeconds; backup = null
         receivers = store.receivers; integrity = Integrity.Report.decode(store.integrity)
+        hasSecurityKey = store.securityKey != null
         isV02 = null
         outcome = null
         screen = startScreen(store)
@@ -1510,6 +1714,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun erase(id: String) {
         val s = wallets.store(id)
         listOfNotNull(WalletIndex.aliasOf(s, id), WalletIndex.keyAlias(id), s.pendingAlias).distinct().forEach { a -> runCatching { KeystoreSigner.delete(a) } }
+        SecurityPepper.delete(SecurityPepper.aliasFor(id))
         s.clear()
         wallets.remove(id)
         walletBalances = walletBalances - id
@@ -1518,7 +1723,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Clear the active wallet's setup and phone key but keep it in the list (Start over). */
     private fun resetCurrent() {
         listOfNotNull(WalletIndex.aliasOf(store, activeId), WalletIndex.keyAlias(activeId), store.pendingAlias).distinct().forEach { a -> runCatching { KeystoreSigner.delete(a) } }
+        SecurityPepper.delete(SecurityPepper.aliasFor(activeId))
         store.clear()
+        hasSecurityKey = false
         setStep(0)
         wallet = null; balance = null; storageLocked = null; proposals = emptyList(); cardReport = null
         cardBook = store.cards; holdSeconds = store.holdSeconds; backup = null

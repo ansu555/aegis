@@ -174,3 +174,29 @@ class KeystoreSigner(private val alias: () -> String, private val activity: () -
         }
     }
 }
+
+/**
+ * The security key's pepper ([app.tapvault.core.SecurityKey]): HMAC-SHA256
+ * under a per-wallet key generated in the phone's Keystore. It needs no
+ * fingerprint (it only checks the typed security key) and can't be exported,
+ * so the stored hash can only be checked on this phone.
+ */
+object SecurityPepper {
+    private const val ANDROID_KEYSTORE = "AndroidKeyStore"
+
+    fun aliasFor(walletId: String) = "tapvault-skey-$walletId"
+
+    fun of(alias: String): (ByteArray) -> ByteArray = { input -> mac(alias).doFinal(input) }
+
+    fun delete(alias: String) = runCatching { KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }.deleteEntry(alias) }
+
+    private fun mac(alias: String): javax.crypto.Mac {
+        val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+        if (!ks.containsAlias(alias)) {
+            javax.crypto.KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_HMAC_SHA256, ANDROID_KEYSTORE).apply {
+                init(KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN).build())
+            }.generateKey()
+        }
+        return javax.crypto.Mac.getInstance("HmacSHA256").apply { init(ks.getKey(alias, null)) }
+    }
+}

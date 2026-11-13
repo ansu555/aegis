@@ -171,8 +171,9 @@ fun TapvaultApp(vm: AppViewModel) {
                 }
                 OutcomeBanner(vm.outcome, { l -> uri.openUri(l) }, { vm.outcome = null }, Modifier.align(Alignment.TopCenter))
                 vm.tap?.let { TapSheet(it) { vm.cancelTap() } }
+                vm.keyPrompt?.let { SecurityKeySheet(vm, it) }
                 // Setup shows its progress in place; everything else gets the overlay.
-                if (vm.tap == null && vm.screen != Screen.Setup) vm.busy?.let { BusyOverlay(it) }
+                if (vm.tap == null && vm.keyPrompt == null && vm.screen != Screen.Setup) vm.busy?.let { BusyOverlay(it) }
                 if (vm.locked) LockOverlay(vm)
             }
         }
@@ -488,6 +489,7 @@ private fun ColumnScope.Send(vm: AppViewModel) {
                 Row(verticalAlignment = Alignment.CenterVertically) { TvIcon(Ic.Paste, 16.dp, Tv.Text); Spacer(Modifier.width(6.dp)); Text("Paste", style = Type.CaptionStrong, color = Tv.Text) }
             }
         })
+        ContactChips(vm, to) { to = it; pasted = false }
         // the amount, typed on the keypad below
         Column(Modifier.fillMaxWidth().padding(top = 22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             val shown = amount.ifEmpty { "0" }
@@ -519,7 +521,7 @@ private fun ColumnScope.Send(vm: AppViewModel) {
             }
             Spacer(Modifier.height(14.dp))
             when {
-                parsed == null -> Caption("You'll approve with your fingerprint and a card tap", color = Tv.Text3)
+                parsed == null -> Caption("You'll approve with your fingerprint, a card tap and your security key", color = Tv.Text3)
                 instant -> StatusPill("Goes out instantly", Tv.Positive, Ic.CheckCircle)
                 else -> StatusPill("Waits ${hoursLabel(w?.delays?.transfer ?: 3600)} · you can cancel it", Tv.Warn, Ic.Timer)
             }
@@ -537,7 +539,8 @@ private fun ColumnScope.Send(vm: AppViewModel) {
             Spacer(Modifier.height(18.dp))
             // The receiver in full, never cut, the last 6 characters bold: what an address swap changes is easy to see.
             Column(Modifier.fillMaxWidth().surface(20.dp).padding(horizontal = 16.dp, vertical = 12.dp)) {
-                Text("To", style = Type.Caption, color = Tv.Text2)
+                val saved = vm.addressBook.nameOf(to)
+                Text(if (saved != null) "To · $saved (address book)" else "To", style = Type.Caption, color = if (saved != null) Tv.Positive else Tv.Text2)
                 Text(
                     androidx.compose.ui.text.buildAnnotatedString {
                         val cut = (to.length - 6).coerceAtLeast(0)
@@ -577,6 +580,10 @@ private fun ColumnScope.Send(vm: AppViewModel) {
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp)) {
                 StepNum(2); Spacer(Modifier.width(10.dp)); Text("Tap your bank card on the phone", style = Type.Body)
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp)) {
+                StepNum(3); Spacer(Modifier.width(10.dp)); Text("Type your security key", style = Type.Body)
             }
             Spacer(Modifier.height(22.dp))
             SlideToConfirm("Slide to approve") { review = false; vm.send(to, amount) }
@@ -833,6 +840,8 @@ private fun SettingsScreen(vm: AppViewModel) {
     var showPicker by remember { mutableStateOf(false) }
     var showLog by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<String?>(null) }
+    var keyOpen by remember { mutableStateOf(false) }
+    var bookOpen by remember { mutableStateOf(false) }
     val w = vm.wallet
 
     // profile
@@ -880,6 +889,17 @@ private fun SettingsScreen(vm: AppViewModel) {
             Row_(Ic.Shield, "Security Center", "Keys, backup cards, limits, delays and the hold timer", chevron = true, onClick = { vm.go(Screen.Security) })
             GroupDivider()
             Row_(Ic.Fingerprint, "Phone key", if (vm.phoneKeyExists) "${vm.phone.hardwareLabel} · this wallet only" else "none", value = "P-256")
+            GroupDivider()
+            Row_(
+                Ic.Lock, "Security key", if (vm.hasSecurityKey) "Asked for payments and card changes" else "Not set yet: tap to set it",
+                chevron = true, tint = if (vm.hasSecurityKey) Tv.Text else Tv.Warn, iconBg = if (vm.hasSecurityKey) Tv.GlassStrong else Tv.Warn.copy(alpha = 0.13f),
+                onClick = { if (vm.busy == null) keyOpen = true },
+            )
+            GroupDivider()
+            Row_(
+                Ic.Wallet, "Address book", vm.addressBook.entries.size.let { if (it == 0) "Save accounts under a name" else "$it saved" },
+                chevron = true, onClick = { bookOpen = true },
+            )
             w?.let {
                 GroupDivider()
                 Row_(Ic.ShieldCheck, "Approvals", "${it.threshold} of ${it.signers.size} signers for every payment; neither key alone can move funds", tint = Tv.Positive, iconBg = Tv.PositiveSoft)
@@ -951,6 +971,8 @@ private fun SettingsScreen(vm: AppViewModel) {
         "This deletes this wallet's phone key. With a single card the wallet can't approve anything without it, so its NEAR stays locked in the wallet for good (on testnet that is only test NEAR). Your other wallets on this phone aren't affected.",
         "Forget", { confirmReset = false; vm.forgetWallet() }, { confirmReset = false }, dismiss = "Keep", danger = true, icon = Ic.Trash,
     )
+    if (keyOpen) SecurityKeySettingsSheet(vm) { keyOpen = false }
+    if (bookOpen) AddressBookSheet(vm) { bookOpen = false }
 }
 
 // ---------------------------------------------------------------- wallet switcher

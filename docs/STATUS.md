@@ -1,6 +1,6 @@
 # Status
 
-Last updated 13 Nov 2026. Submission deadline: 14 Nov 2026, 23:59 UTC.
+Last updated 14 Nov 2026. Submission deadline: 14 Nov 2026, 23:59 UTC.
 
 **In one line:** the contract, the Kotlin client and the Android app work end to
 end on NEAR testnet with simulated cards of all three kinds. Nothing has run
@@ -111,6 +111,30 @@ Wallets created before this build keep their code (invariant 4).
 | `./gradlew :core:test` | Pass: 47 tests, `Phase4Test` 5 (card challenge recomputed from the seed and mismatches refused, P-256 verify, possession JSON, 12 Nov wallets still pass the wallet check, allowlist makes unlisted receivers wait) |
 | `sandbox.rs` (compiled wasm, nearcore 2.6.5) | Pass (13 Nov): every step; propose `AddSigner` with a possession proof 68.1 Tgas (the most expensive receipt, limit 300), `execute_upgrade` deploy + `migrate` 24.5 Tgas, state kept, open requests voided. The 24 h upgrade wait is skipped by moving `ready_ts` back in the sandbox state (sandbox blocks advance the clock ~0.3 s each); `flows.rs` covers the delay itself |
 | Live testnet with the v0.2 build | Not run yet (faucet limit): MANUAL-TESTS.md, phase 4 |
+
+### 14 Nov: security key and address book (app only)
+
+- **Security key.** Set as the first setup step (at least 6 characters).
+  The app asks for it before the phone's key signs a payment (after the
+  card tap), an approval, adding or removing a card, a guardian, an
+  allowlist change, the switch to fingerprint only, or an unfreeze. Freeze
+  and cancel never ask. Wallets made earlier set one the first time it's
+  needed. Forgot it: Settings → Security key → reset with a tap of one of
+  the wallet's cards (its signature checked against the card key on chain)
+  and the fingerprint. Stored as PBKDF2-SHA256 (120,000 rounds, random
+  salt) over an HMAC by a per-wallet Keystore key, so a copy of the app's
+  storage can't be guessed offline; 5 wrong tries, then pauses from 30 s
+  doubling to 1 h. **The contract doesn't enforce it**: it protects this
+  phone's key, which only this app can use.
+- **Address book.** Settings → Address book: names for NEAR accounts,
+  shared by all wallets on the phone. Send shows matching contacts under
+  To, and the review sheet names a saved receiver.
+
+| Check | Result |
+|---|---|
+| `./gradlew :core:test` | Pass, including `SecurityKeyTest` (5) |
+| App build | Compiles |
+| On a phone | Not yet |
 
 ## What is not verified
 

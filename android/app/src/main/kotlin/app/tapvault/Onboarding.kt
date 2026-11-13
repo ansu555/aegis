@@ -287,6 +287,7 @@ fun SetupProgress(vm: AppViewModel) {
     var showPicker by remember { mutableStateOf(false) }
     val cardRead = vm.store.pendingCard != null || vm.setupStep >= 3
     val steps = listOf(
+        Triple(Ic.Lock, "Security key set", vm.hasSecurityKey),
         Triple(Ic.Key, "Phone key in secure hardware", vm.phoneKeyExists),
         Triple(Ic.Wallet, "Wallet account on NEAR", vm.setupStep >= 1),
         Triple(Ic.Card, "Card read and signed", cardRead),

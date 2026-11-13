@@ -430,6 +430,8 @@ fun TvField(
     error: String? = null,
     trailing: @Composable (RowScope.() -> Unit)? = null,
     focus: androidx.compose.ui.focus.FocusRequester? = null,
+    /** Hidden input (dots), password keyboard, no suggestions: for the security key. */
+    secret: Boolean = false,
 ) {
     Column(modifier) {
         if (label.isNotEmpty()) { Text(label, style = Type.CaptionStrong, color = Tv.Text2); Spacer(Modifier.height(8.dp)) }
@@ -438,7 +440,11 @@ fun TvField(
             modifier = if (focus != null) Modifier.focusRequester(focus) else Modifier,
             textStyle = Type.Body.copy(color = Tv.Text, fontWeight = FontWeight.Medium, fontSize = 16.sp),
             cursorBrush = SolidColor(Tv.Accent),
-            keyboardOptions = KeyboardOptions(keyboardType = if (number) KeyboardType.Decimal else KeyboardType.Ascii, autoCorrectEnabled = false),
+            visualTransformation = if (secret) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+            keyboardOptions = KeyboardOptions(
+                keyboardType = when { secret -> KeyboardType.Password; number -> KeyboardType.Decimal; else -> KeyboardType.Ascii },
+                autoCorrectEnabled = false,
+            ),
             decorationBox = { inner ->
                 Row(
                     Modifier.fillMaxWidth().heightIn(min = 56.dp).surface(18.dp, Tv.Glass, if (error != null) Tv.Danger.copy(alpha = 0.6f) else Tv.Stroke).padding(start = 16.dp, end = 8.dp),
