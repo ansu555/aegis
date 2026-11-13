@@ -18,7 +18,7 @@ test first ([TESTING.md](TESTING.md#real-phone-test-plan)).
   build made a wallet on this phone, uninstall it or use Settings →
   `Forget this wallet on this phone`: wallets created before 12 Nov run the previous
   contract build, which rejects Visa online signatures.
-- **Card check first:** Welcome → **Check it first** → **Check a card**, hold
+- **Card check first:** Welcome → **Check my card first** → **Check a card**, hold
   the card you will use. It must show **Can sign**. Note its "Signs with" line
   for the voice-over, and tap **Share report** to keep the report.
 - **Rehearse once end to end** on the same phone and note where the NFC
@@ -37,27 +37,27 @@ test first ([TESTING.md](TESTING.md#real-phone-test-plan)).
   shows only the last four digits (Card check, and the prompt
   `Add Visa card ****1234 as a signer`); blur them if you prefer.
 
-Defaults used below: limits **1 NEAR at once, 2 NEAR per day** (Welcome's
-"Spending limits"). The app always sets the contract's shortest delays:
+Defaults used below: limits **1 NEAR at once, 2 NEAR per day** ("Instant
+payment limit" and "Daily limit" on "Set your spending limits"). The app always sets the contract's shortest delays:
 transfers 1 h, settings changes 1 h, recovery 24 h.
 
 ## Shots
 
 | # | Time | On screen (exact labels) | Say |
 |---|---|---|---|
-| 1 | 10 s | The card in hand, then the Welcome screen: "Your bank card is your hardware wallet." | "This is my debit card. It's now the hardware wallet for my NEAR account. No seed phrase, no new device." |
-| 2 | 15 s (optional) | **Check it first** → **Check a card** → hold the card → badge **Can sign**, "Signs with" (Visa: `signature in GET PROCESSING OPTIONS (fDDA)`; Mastercard: `signature in GENERATE AC (CDA)`) → back arrow | "The phone reads the chip and checks its certificates up to the card network's key. Then the chip signs a challenge, the same kind of signature a terminal uses to check a card is genuine. No PIN, no payment, and the card number never leaves the phone." |
-| 3 | 40 s | **My bank card** is already selected; "At once (NEAR)" 1, "Per day (NEAR)" 2 → **Create my wallet**. Setup screen "Setting up" / "Almost there" (cut the account step if the faucet is slow). Sheet "Hold your bank card to the back of the phone to add it" → hold the card. Prompt "Create your Tapvault wallet" → fingerprint. Prompt `Add Visa card ****1234 as a signer` → fingerprint. Prompt "Lock the wallet: up to 1 NEAR at once, 2 NEAR a day" → fingerprint. Result "Your wallet is ready" / "Funds now move only with your phone and your card." | "The card is read and signs first, before anything is deployed. One approval deploys my wallet contract with my phone key, one adds the card, one sets the limits and deletes the account's own key. From now on only the contract's rules can move these funds." |
-| 4 | 10 s | **View on explorer ↗** → the wallet account: no access keys, the contract, the three setup transactions | "No keys left on the account: not even mine." |
-| 5 | 30 s | Home → **Send** → amount `0.5`, "NEAR account" `friend.testnet` ("This payment" shows Instant) → **Approve, then tap card** → prompt "Send 0.5 NEAR to friend.testnet" → fingerprint → "Waiting for the card challenge" → sheet "Tap your card to approve sending 0.5 NEAR" → hold the card → "Sent 0.5 NEAR" → **View on explorer ↗** | "The prompt names exactly the amount and the receiver my phone approves. Then the contract picks the card's challenge from randomness in a later block, after my payment is fixed, so a signature skimmed from my pocket earlier can't match. One transaction: the card's approval and the transfer." |
-| 6 | 25 s | Back → **Send** `1.5` ("This payment" shows Waits 1 h) → approve → tap → "Approved, waiting 1 h". Activity (clock button) → "Approved · can execute in 0 h 59 min" → **Cancel** → prompt "Cancel: Send 1.5 NEAR to friend.testnet" → "Cancelled". Home → snowflake button → "Freeze the wallet?" → **Freeze** → tap → "Wallet frozen", badge "Frozen" | "Over my limit it doesn't block, it waits an hour, counted from full approval, and I can cancel it. Any one of my keys can freeze everything; with the card it is one tap. Unfreezing needs both, plus a delay." |
+| 1 | 10 s | The card in hand, then the Welcome screen: "Your bank card is your hardware wallet." (swipe through the three slides) | "This is my debit card. It's now the hardware wallet for my NEAR account. No seed phrase, no new device." |
+| 2 | 15 s (optional) | **Check my card first** → **Check a card** → hold the card → badge **Can sign**, "Signs with" (Visa: `signature in GET PROCESSING OPTIONS (fDDA)`; Mastercard: `signature in GENERATE AC (CDA)`) → back arrow | "The phone reads the chip and checks its certificates up to the card network's key. Then the chip signs a challenge, the same kind of signature a terminal uses to check a card is genuine. No PIN, no payment, and the card number never leaves the phone." |
+| 3 | 40 s | **Create a new wallet** → "Set your spending limits": "Instant payment limit" 1, "Daily limit" 2 → **Continue**. Setup screen "Setting up your wallet" with its progress ring (cut the account step if the faucet is slow). Sheet "Hold your bank card to the back of the phone to add it" → hold the card. Prompt "Create your Tapvault wallet" → fingerprint. Prompt `Add Visa card ****1234 as a signer` → fingerprint. Prompt "Lock the wallet: up to 1 NEAR at once, 2 NEAR a day" → fingerprint. Result "Your wallet is ready" / "Funds now move only with your phone and your card." | "The card is read and signs first, before anything is deployed. One approval deploys my wallet contract with my phone key, one adds the card, one sets the limits and deletes the account's own key. From now on only the contract's rules can move these funds." |
+| 4 | 10 s | **View on explorer** (in the banner) → the wallet account: no access keys, the contract, the three setup transactions | "No keys left on the account: not even mine." |
+| 5 | 30 s | Home → **Send** → "To" `friend.testnet`, amount `0.5` ("Speed" shows Instant) → **Review** → **Approve and send** → prompt "Send 0.5 NEAR to friend.testnet" → fingerprint → "Waiting for the card challenge" → sheet "Tap your card to approve sending 0.5 NEAR" → hold the card → "Sent 0.5 NEAR" → **View on explorer** | "The prompt names exactly the amount and the receiver my phone approves. Then the contract picks the card's challenge from randomness in a later block, after my payment is fixed, so a signature skimmed from my pocket earlier can't match. One transaction: the card's approval and the transfer." |
+| 6 | 25 s | Back → **Send** `1.5` ("Speed" shows Waits 1 h) → **Review** → **Approve and send** → fingerprint → tap → "Approved, waiting 1 h". **Activity** (bottom bar) → "Approved · can execute in 0 h 59 min" → **Cancel** → prompt "Cancel: Send 1.5 NEAR to friend.testnet" → "Cancelled". **Wallet** → **Freeze** → "Freeze the wallet?" → **Freeze** → tap → "Wallet frozen", pill "Frozen" | "Over my limit it doesn't block, it waits an hour, counted from full approval, and I can cancel it. Any one of my keys can freeze everything; with the card it is one tap. Unfreezing needs both, plus a delay." |
 | 7 | 15 s | Home, frozen | "My card alone can't pay: every payment also needs my phone's key, which signs only after my fingerprint or screen lock. My phone alone can't pay without my card. And even with both, only the daily allowance goes out at once. Built on NEAR." |
 
 Shots 1–7 run about 2.5 minutes; drop shots 2 and 4 for a 2-minute cut.
 
 ## What to show on the explorer
 
-All links come from the app's **View on explorer ↗** (testnet.nearblocks.io).
+All links come from the app's **View on explorer** (testnet.nearblocks.io).
 
 - **Wallet account** (`/address/<wallet>`): the balance, **no access keys**,
   a deployed contract. Its first transactions: deploy + `new` (from the wallet

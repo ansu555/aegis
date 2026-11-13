@@ -78,19 +78,26 @@ Dependencies: `org.bouncycastle:bcprov-jdk18on:1.79` (ed25519),
 | `Keystore.kt` | `KeystoreSigner`: the phone's P-256 key behind BiometricPrompt |
 | `Store.kt` | `Store`: one wallet's settings in SharedPreferences; `WalletIndex`: the wallets on this phone |
 | `PendingCard.kt` | A card read during setup, kept until it is added on-chain |
-| `Screens.kt` | Every screen (`TapvaultApp`, `Welcome`, `SetupProgress`, `Home`, `Send`, `ActivityScreen`, `CardCheck`, `SettingsScreen`, `CardReportCard`) |
-| `Components.kt` | UI parts: buttons, list rows, `BottomBar`, `OutcomeToast`, `BusyOverlay`, `TapSheet`, `CardArt` |
-| `Theme.kt` | Palette `Tv`, the Outfit font, `TapvaultTheme`, `NightBackground`, drawn icons (`Glyph`) |
+| `Onboarding.kt` | Welcome (three-slide intro), `LimitsScreen` (spending limits, the step before setup), `SetupProgress`, `NfcNotice`, the onboarding illustrations |
+| `Screens.kt` | `TapvaultApp` (shell, transitions, bottom bar, overlays), `Home`, `ReceiveSheet`, `Send` (with its review sheet), `ActivityScreen`, `CardCheck`, `CardReportCard`, `SettingsScreen`, `WalletPicker` |
+| `Components.kt` | UI parts: `TvButton`, `ActionButton`, `Group`/`Row_` lists, `Notice`, `StatusPill`, `TvField`, `AmountField`, `BottomNav`, `OutcomeBanner`, `BusyOverlay`, `TapSheet`, `CardArt`, `QrCode`, `LogoMark` |
+| `Theme.kt` | Colour tokens `Tv`, type scale `Type` (Inter), `TapvaultTheme` (dark only), `AppBackground`, icons `Ic` / `TvIcon` |
 
 Resources: `res/values/themes.xml` (`Theme.Tapvault`, parent
-`Theme.AppCompat.NoActionBar`), `res/font/outfit.ttf` (licence in
-`android/app/FONT-LICENSE-Outfit.txt`), the launcher icon. The asset
+`Theme.AppCompat.NoActionBar`) and `res/values-v31/themes.xml` (adds the
+Android 12+ launch screen: `@drawable/ic_splash` on the app background);
+`res/font/inter_*.ttf` (Inter 4.1, licence in
+`android/app/FONT-LICENSE-Inter.txt`); line icons `res/drawable/ic_*.xml`
+converted from Lucide (licence in `android/app/ICONS-LICENSE-Lucide.txt`); the
+adaptive launcher icon (`ic_launcher_background`, `ic_launcher_foreground`,
+`ic_launcher_monochrome`). The asset
 `src/main/assets/tapvault_contract.wasm` is copied in by the build (see
 [The contract wasm](#the-contract-wasm)) and is gitignored.
 
 Dependencies: Compose BOM `2024.12.01` (ui, material3, material-icons-core),
 `activity-compose` 1.9.3, `lifecycle-viewmodel-compose` 2.8.7, `biometric`
-1.1.0, `fragment-ktx` 1.8.5, `kotlinx-coroutines-android` 1.9.0, and `:core`.
+1.1.0, `fragment-ktx` 1.8.5, `kotlinx-coroutines-android` 1.9.0, ZXing `core`
+3.5.3 (the Receive QR code), and `:core`.
 
 ### Tests
 
@@ -103,46 +110,63 @@ Dependencies: Compose BOM `2024.12.01` (ui, material3, material-icons-core),
 
 ## Screens
 
+The look: graphite surfaces, one mint accent (`Tv.Accent`) for primary actions
+and "safe" states, amber for "waiting", ice blue only for the frozen state,
+coral for danger. Inter throughout, with tabular figures for amounts. The app
+is dark only: `TapvaultTheme` reports night mode to everything inside it so
+system-drawn parts (bottom-sheet windows and their navigation bar) match.
+
 ### Navigation
 
-- `Screen` enum: `Welcome`, `Setup`, `Home`, `Send`, `Activity`, `CardCheck`,
-  `Settings`. Everything is drawn by `TapvaultApp` in `Screens.kt`.
+- `Screen` enum: `Welcome`, `Limits`, `Setup`, `Home`, `Send`, `Activity`,
+  `CardCheck`, `Settings`. Everything is drawn by `TapvaultApp` in
+  `Screens.kt`; screens cross-fade with a short upward slide, and the keyboard
+  closes on every screen change.
 - Start screen: `Home` when `Store.setupStep` is 4, `Setup` when it is 1 to 3,
   `Welcome` when it is 0.
-- The bottom bar (Home, Activity, Card check, Settings; Activity carries a dot
-  while proposals are open) shows on those four screens once setup is done.
-  Its buttons are icons; their accessibility labels are the `Screen` names
-  (`Home`, `Activity`, `CardCheck`, `Settings`).
-- System back on Send, Activity, Card check and Settings goes to Home (to
-  Welcome before setup is done). On Home, Welcome and Setup it leaves the app.
-- `AppViewModel.go(screen)` changes screen and clears the result card.
+- The bottom bar (`BottomNav`: "Wallet", "Activity", "Card", "Settings", icon
+  and label; the current tab in mint) shows on those four screens once setup is
+  done. "Activity" carries a count badge while proposals are open.
+- System back on Limits goes to Welcome; on Send, Activity, Card check and
+  Settings it goes to Home (to Welcome before setup is done). On Home, Welcome
+  and Setup it leaves the app.
+- Home and Activity refresh on pull-down (`AppViewModel.pullRefresh`) as well
+  as every 8 s.
+- `AppViewModel.go(screen)` changes screen and clears the result banner.
 
 ### Welcome
 
-- Headline "Your bank card / is your / hardware wallet." (three lines) and
-  "Every payment needs your fingerprint and a tap of the card you already
-  carry. No seed phrase, no new device."
-- Tiles "My bank card" ("Visa · Mastercard · RuPay", tag "NFC"; ticked when the
-  phone has NFC; tapping it does nothing) and "Check it first" ("See if your
-  card can sign", tag "TEST"; opens Card check). Both are greyed out without
-  NFC.
-- Warnings: "This phone has no NFC, so it can't read a bank card. Use an
-  Android phone with NFC." or "NFC is off. Turn it on in Android settings
-  (Connected devices → NFC)."
-- "Spending limits": "Within these, payments go through instantly. Anything
-  bigger waits an hour so you can cancel it." Fields "At once (NEAR)" and "Per
-  day (NEAR)", prefilled from `Store` (defaults 1 and 2); a comma becomes a dot
-  and anything but digits and dots is dropped.
-- "Create my wallet" (disabled without NFC) calls `beginSetup`.
-- Footer: "NEAR testnet · accounts and test NEAR come from the faucet".
+- Wordmark and a "Testnet" pill. A three-slide pager (auto-advances every
+  5.5 s until swiped), each with an animated illustration: "Your bank card is
+  your hardware wallet", "Two keys, every payment", "Limits that have your
+  back".
+- `NfcNotice`: "This phone has no NFC" / "It can't read a bank card. Use an
+  Android phone with NFC.", or "NFC is off" / "Turn it on to tap your card
+  (Connected devices → NFC)." with "Open NFC settings".
+- "Create a new wallet" opens Limits. "Check my card first" opens Card check.
+  With other wallets on the phone: "Back to my wallets" (`cancelNewWallet`).
+- Footer: "Self-custody on NEAR testnet. Only test NEAR, no real money."
+
+### Limits (`LimitsScreen`)
+
+- "Set your spending limits", then two cards: "Instant payment limit" and
+  "Daily limit", each a NEAR field prefilled from `Store` (defaults 1 and 2; a
+  comma becomes a dot, anything but digits and dots is dropped) with preset
+  chips (0.5 / 1 / 5 and 2 / 5 / 20 NEAR). A daily limit below the instant
+  limit shows "The daily limit must be at least the instant limit."
+- "What you'll need": the card, a screen lock, about a minute.
+- "Continue" stays pinned at the bottom; it is disabled without NFC or while
+  the limits are invalid, and calls `beginSetup`.
 
 ### Setup (`SetupProgress`)
 
-- "Setting up", "Almost there", "Three approvals and one card tap. Each step
-  is saved, so you can continue if anything is interrupted."
-- Six rows, each "Done" or "Waiting", in code order:
+- Title "Creating <wallet name>", a progress ring "<done>/6 steps", headline
+  "Setting up your wallet" (while running), "Ready to set up", "Paused" or
+  "All set".
+- A vertical stepper, in code order; the running step shows a spinner and the
+  current busy label under it (setup has no busy overlay):
 
-  | Row | Done when |
+  | Step | Done when |
   |---|---|
   | "Phone key in secure hardware" | `AppViewModel.phoneKeyExists` (this wallet's alias) |
   | "Wallet account on NEAR" | step ≥ 1 |
@@ -151,13 +175,13 @@ Dependencies: Compose BOM `2024.12.01` (ui, material3, material-icons-core),
   | "Card added as a signer" | step ≥ 3 |
   | "Limits set, account locked" | step ≥ 4 |
 
-- "Wallet account: <account id>" once the accounts exist.
-- The last card report in memory (`AppViewModel.cardReport`), if any: the
-  card step's report (success or failure); "Create my wallet" clears any
-  earlier one, such as a Card check's from Welcome. Under it, "Share card
-  report" shares `CardReport.diagnostics()` as text; see
-  [CARDS.md](CARDS.md#where-it-comes-from).
-- While idle and unfinished: "Continue setup" (`continueSetup`) and "Start
+- "Account: <account id>" once the accounts exist.
+- The last card report in memory (`AppViewModel.cardReport`), if any, and
+  "Share card report" (`CardReport.diagnostics()` as text; see
+  [CARDS.md](CARDS.md#where-it-comes-from)). `beginSetup` clears any earlier
+  report, such as a Card check's from Welcome.
+- While idle and unfinished: "Continue setup" (`continueSetup`), "Switch
+  wallet (this setup stays saved)" when there are other wallets, and "Start
   over", which asks "Start over?" with, when the build has no usable sponsor
   (`AppViewModel.hasSponsor`), "The phone key and this setup's saved state are
   removed. The accounts made so far stay on testnet with their test NEAR.";
@@ -169,55 +193,66 @@ Dependencies: Compose BOM `2024.12.01` (ui, material3, material-icons-core),
 
 ### Home
 
-- Offline banner when the last refresh failed: "Can't reach NEAR testnet right
-  now. Showing the last known state; retrying."
-- "Hello," / "Your vault", and the Activity icon (dot while proposals are
-  open).
-- "Wallet (NEAR)": the spendable balance (balance minus the part locked for
-  storage), 3 decimals, "…" until loaded. Badge "Frozen", or "<x> NEAR instant
-  now" (`LimitInfo.availableNow()`, capped by the balance).
-- Round icon buttons (accessibility labels in quotes): "Receive" (dialog
-  "Receive NEAR": "Send NEAR on testnet to this account:", the account id,
-  "Copy", "Share"); "Freeze with card" (dialog "Freeze the wallet?": "One card
-  tap stops every transfer. Unfreezing needs your phone and card, then waits
-  <h> h." with "Freeze" / "Cancel"); "Check a card" (opens Card check). The
-  pill "Send" opens Send. Freeze and Send are disabled while frozen or busy,
-  and until the wallet state has loaded.
-- When frozen: "Wallet frozen", tag "<h> h to unfreeze", "No transfers can go
-  out. Unfreezing needs your phone and your card, then waits.", and "Request
+- Header: avatar, wallet name and account (tap: the wallet switcher), and a
+  QR button (Receive).
+- Offline notice when the last refresh failed: "Offline" / "Can't reach NEAR
+  testnet right now. Showing the last known state; retrying."
+- "Total balance": the spendable balance (balance minus the part locked for
+  storage), up to 4 decimals with the decimals dimmed, and "NEAR"; a shimmer
+  until loaded. Pill "Frozen", or "<x> NEAR available instantly"
+  (`LimitInfo.availableNow()`, capped by the balance).
+- Action buttons (icon and label): "Send" (opens Send), "Receive" (Receive
+  sheet), "Freeze" ("Freeze the wallet?": "One card tap stops every transfer.
+  Unfreezing needs your phone and card, then waits <h>." with "Freeze" /
+  "Cancel"; calls `freezeWithCard`), "Check card" (opens Card check). Send and
+  Freeze are disabled while frozen or busy, and until the wallet state has
+  loaded; while frozen, Freeze reads "Frozen".
+- When frozen: an ice-blue notice "Wallet frozen" / "No transfers can go out.
+  Unfreezing needs your phone and your card, then waits <h>." with "Request
   unfreeze".
-- Tabs:
-  - "Activity": "#<id> <description>" with its status for each open proposal
-    (tap to open Activity), or "All clear" / "Nothing waiting for approval".
-  - "Signers": "Bank card" (tag "RSA") and "This phone" (tag "P-256"), each
-    "key <first 10 hex of the key hash>…", then "<threshold> of <n> must
-    approve every payment".
-  - "Limits": "Up to <x> NEAR at once" / "instantly, with phone + card"; "<y>
-    NEAR per day" / "<z> available right now"; "Bigger payments wait <h> h" /
-    "you can cancel or freeze meanwhile".
-- Footer: "+ <x> NEAR held for the wallet contract's storage".
+- "Pending approvals" (with "See all" when there are any): up to three open
+  proposals ("Send · #<id>" or the settings change, the status, the amount);
+  tap one for Activity. Empty: "All clear" / "Nothing waiting for approval".
+- "Spending limits": "Used today" "<used> / <daily> NEAR" with a meter (amber
+  above 85 %), "Instant up to" "<x> NEAR per payment", "Bigger payments" "wait
+  <h>, cancellable".
+- "Security": "This phone" (P-256), the card ("<network> •••• <last 4>" when
+  known, else "Bank card"; RSA), "<threshold> of <n> approvals required" /
+  "Neither key alone can move funds".
+- Footer: "+ <x> NEAR reserved for the wallet contract's storage".
+
+Receive sheet (`ReceiveSheet`): "Receive NEAR", a QR code of the account id,
+the account id, "Copy" (turns into "Copied") and "Share", and the notice
+"Testnet only".
 
 ### Send
 
-- Amount card: "Half" (half the spendable balance), the amount field
-  (placeholder "0"), "Max" (the smaller of the instant allowance left and the
-  spendable balance minus 0.01 NEAR), "Available: <x> NEAR".
-- "To": field "NEAR account" (placeholder "friend.testnet"; trimmed and
-  lowercased as you type).
-- "Approve, then tap card": enabled when idle, the receiver isn't empty and the
-  amount is above 0. Calls `send`.
-- Summary: "This payment" ("Instant", "Waits <h> h", or "–"), "Instant limit",
-  "Instant allowance left", "Network fee" / "paid by your fee account",
-  "Approvals" / "phone + card". "Instant" is the app's estimate with the
-  phone's clock (`LimitInfo.isInstant`); the contract decides.
+- "To" field (placeholder "name.testnet"; trimmed and lowercased as you type)
+  with "Paste". Shows "That isn't a NEAR account name" or "That's this
+  wallet's own account" under it.
+- Amount card: a large centred amount (placeholder "0"), "Available: <x>
+  NEAR" (or "More than the wallet holds"), chips "Half" (half the spendable
+  balance) and "Max instant" (the smaller of the instant allowance left and
+  the spendable balance minus 0.01 NEAR).
+- Summary: "Speed" ("Instant", "Waits <h>", or "–"), "Instant allowance left",
+  "Network fee" / "Paid by your fee account", "Approve with" / "Fingerprint +
+  card tap". "Instant" is the app's estimate with the phone's clock
+  (`LimitInfo.isInstant`); the contract decides.
+- "Review" (pinned at the bottom; enabled when idle with a valid receiver and
+  an amount above 0 that the wallet holds) opens the review sheet: the amount,
+  "To", "From", "Speed", "Network", the two next steps, "Approve and send"
+  (calls `send`) and "Edit".
 
 ### Activity (`ActivityScreen`)
 
-One card per open proposal (`list_proposals`, up to 50) with its
-description, status and "#<id>". Statuses (`proposalStatus`): "Void: signers
-changed", "Waiting for approvals", "Expired: it can no longer execute; cancel
-it", "Approved · can execute in <h> h <m> min", "Approved · wallet is
-frozen", "Approved · ready: tap Execute".
+"Activity" / "Approvals, delays and history". One card per open proposal
+(`list_proposals`, up to 50): title ("Send" or the settings change), "To
+<receiver, shortened> · #<id>", the amount, a status pill, and two approval
+marks ("Phone", "Card"; ticked once that signer approved). Statuses
+(`proposalStatus`): "Void: signers changed", "Waiting for approvals",
+"Expired: it can no longer execute; cancel it", "Approved · can execute in
+<time>", "Approved · wallet is frozen", "Approved · ready: tap Execute".
+Empty: "You're all caught up".
 
 | Button | Shown when | Calls |
 |---|---|---|
@@ -234,51 +269,68 @@ the limits right now, else `delays.transfer`; for a settings change it is
 clock is more than 7 days past the end of that delay (the contract's
 `EXECUTION_WINDOW`).
 
-Below the proposals, "Log": the in-app log, newest first, the last 60 lines
-("Nothing yet." when empty). See [Logs](#logs).
+Below: "History" → "All transactions" (the wallet on testnet.nearblocks.io),
+and "Technical log" with "Show" / "Hide": the in-app log, newest first, the
+last 60 lines ("Nothing yet." when empty). See [Logs](#logs).
 
 ### Card check (`CardCheck`)
 
-- "Card check", with a back button only before setup is done (it is a tab
-  after).
-- A card picture labelled "•••• <last 4>" after a check, "TAPVAULT" before
-  (and when the card number couldn't be read).
-- "Reads a card's payment chip and tells you whether it can sign for Tapvault.
-  Your card number never leaves this phone."
-- "Check a card" calls `checkCard`; then the report card (`CardReportCard`) and
-  "Share report", which shares `CardReport.diagnostics()` as text ("Share card
-  report"). Reading the report: [CARDS.md](CARDS.md#reading-a-card-check-report).
+- "Card check" / "See whether a card can sign for Tapvault"; a back button
+  only before setup is done (it is a tab after).
+- A card picture showing "•••• <last 4>" and the network after a check.
+- Before a check: what it does ("Reads the payment chip", "Checks it can
+  sign", "Your card number stays here").
+- `NfcNotice`, then "Check a card" ("Check another card" after one; disabled
+  without NFC) calls `checkCard`; then the report card (`CardReportCard`: "This
+  card can sign" / "This card can't sign", "<network> •••• <last 4> · <label>",
+  the notes, and "Technical details", open by default for a card that can't
+  sign) and "Share report", which shares `CardReport.diagnostics()` as text
+  ("Share card report"). Reading the report:
+  [CARDS.md](CARDS.md#reading-a-card-check-report).
 - The picture, report and "Share report" show `AppViewModel.cardReport`, the
   last report in memory, so right after setup this screen already shows the
   enrolled card's report (until the next check, Forget or a restart).
 
 ### Settings (`SettingsScreen`)
 
-- "Wallet account" (the account id; opens it on testnet.nearblocks.io), "Fee
-  account" ("pays gas, can't move funds"; opens it), "Phone key"
-  (`KeystoreSigner.hardwareLabel`, or "none"), "Card" ("Bank card over NFC ·
-  <method label>" from the saved recipe, else "Contactless bank card over
-  NFC"), "Delays" ("transfers <h> h · changes <h> h · recovery <h> h").
-- "Freeze with phone" while not frozen (`freezeWithPhone`; the fingerprint
-  prompt is the confirmation).
-- "Forget this wallet on this phone": "Forget this wallet?" / "This deletes
-  the phone key. With a single card the wallet can't approve anything without
-  it, so its NEAR stays locked in the wallet for good (on testnet that is only
-  test NEAR). Your other wallets on this phone aren't affected." with
+- Profile card: avatar, wallet name, account (tap to copy), and a pencil to
+  rename ("Wallet name" / "Shown on this phone only").
+- "Wallets": "My wallets" (the switcher), "Wallet account" and "Fee account"
+  ("Pays network fees, can't move funds"), each opening testnet.nearblocks.io.
+- "Security": "Phone key" (`KeystoreSigner.hardwareLabel` · "this wallet only",
+  or "none"), the card ("<network> •••• <last 4>" when known; "Contactless
+  over NFC · <method label>" from the saved recipe), "Approvals", "Delays"
+  ("Transfers <h> · changes <h> · recovery <h>").
+- "Emergency" while not frozen: "Freeze with phone" asks "Freeze with phone?"
+  then calls `freezeWithPhone` (the fingerprint prompt follows).
+- "About": "Network" "NEAR testnet" and the app version.
+- "Forget this wallet on this phone": "Forget <name>?" / "This deletes this
+  wallet's phone key. With a single card the wallet can't approve anything
+  without it, so its NEAR stays locked in the wallet for good (on testnet that
+  is only test NEAR). Your other wallets on this phone aren't affected." with
   "Forget" / "Keep". Calls `forgetWallet`.
+
+Wallet switcher (`WalletPicker`, a bottom sheet): "My wallets", one row per
+wallet (avatar, name, account or "Setup not finished" / "Not created yet",
+balance, a tick on the active one), and "Add a wallet".
 
 ### Overlays
 
-- **Result card** (`OutcomeToast`), pinned at the top: title, detail, "View on
-  explorer ↗" when there is a link, "OK" to dismiss. Cleared when the next
-  operation starts or on navigation.
-- **Tap sheet** (`TapSheet`) while a card tap is awaited: the request's title,
-  then "Hold it flat against the back of the phone, near the camera, until
-  this screen closes (2–3 seconds)." or a retry hint, and "Cancel". Once a card
-  is in the field: "Keep holding the card…" / "Reading the chip and asking it
-  to sign. Don't move the card until this screen closes.", with no Cancel.
-- **Busy overlay** (`BusyOverlay`): spinner and the current step's label;
-  blocks touches; hidden while the tap sheet is up. It has no cancel.
+- **Result banner** (`OutcomeBanner`), pinned at the top, solid: an icon (tick
+  or alert), title, detail (scrolls past 180 dp), "View on explorer" when there
+  is a link, and × to dismiss; a swipe up dismisses it too. Successes leave on
+  their own after 5 s (7 s with a link); failures stay and buzz. Cleared when
+  the next operation starts or on navigation.
+- **Tap sheet** (`TapSheet`), a bottom sheet while a card tap is awaited: "Ready
+  to scan", an animation of the card gliding onto the back of a phone, the
+  request's title, then "Hold the card flat against the back of the phone,
+  near the camera, for 2–3 seconds." or a retry hint (amber), and "Cancel".
+  Once a card is in the field: "Reading card", "Keep holding the card…" /
+  "Reading the chip and asking it to sign. Don't move the card until this
+  closes.", with no Cancel.
+- **Busy overlay** (`BusyOverlay`): spinner, the current step's label and "Keep
+  the app open"; blocks touches; hidden while the tap sheet is up and on the
+  Setup screen. It has no cancel.
 
 ## AppViewModel
 
@@ -512,7 +564,7 @@ several wallets) and its own Keystore key.
 - The switcher (`WalletPicker`) opens from the wallet name on Home, "My
   wallets" in Settings, or "Switch wallet" on a paused setup. It lists each
   wallet's name, account and spendable balance (`loadWalletBalances`), and
-  "+ Add a wallet".
+  "Add a wallet".
 
 ### Forget: `forgetWallet`, and Start over: `resetCurrent`
 
@@ -769,7 +821,8 @@ never does.
 | `setup_plan` | `setupPlan` | `Onboarding.Plan.encode()`: `tag\|walletSecret\|gasSecret` | **yes** | before any account is created / once the accounts exist |
 | `pending_card` | `pendingCard` | `PendingCard.encode()`, below | no PAN; the proof only works for this wallet's setup | after the card step / after finalize |
 | `card_recipe` | `cardRecipe` | `CardRecipe.encode()`, e.g. `A0000000041010:CDA:100:0:0` | no | after the card step / Forget |
-| `instant`, `daily` | `instantNear`, `dailyNear` | the limits from Welcome, as typed (a comma saved as a dot; defaults "1", "2") | no | "Create my wallet" / Forget |
+| `card_network`, `card_last4` | `cardNetwork`, `cardLast4` | the enrolled card's network name and last four digits, for the card art and Security rows (never more of the PAN) | no | after the card is read at enrolment / Forget |
+| `instant`, `daily` | `instantNear`, `dailyNear` | the limits from the Limits screen, as typed (a comma saved as a dot; defaults "1", "2") | no | "Continue" on Limits / Forget |
 | `demo_card` | `legacyDemoWallet` | set only by old builds that had a simulated demo card; with step > 0 it blocks every card tap | no | never written now |
 
 `PendingCard.encode()` is nine fields joined by `|`: modulus (hex), exponent,
@@ -964,7 +1017,7 @@ A new APK changes the app, not existing wallets' contract code.
 
 ### The in-app log
 
-Activity tab → "Log": newest first, `HH:mm:ss  message`, the last 60 lines of
+Activity → "Technical log" → "Show": newest first, `HH:mm:ss  message`, the last 60 lines of
 up to 200. Held in memory only: it is lost when the process dies and cleared
 by Forget and Start over, and it can't be shared (take screenshots:
 `adb exec-out screencap -p > screen.png`). It records every progress step,

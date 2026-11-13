@@ -31,14 +31,14 @@ Contents:
 
 | Where | What you see | Notes |
 |---|---|---|
-| Result box | A box pinned to the top of the screen with a red icon: title `That didn't work` (or `Can't start yet` on Welcome), the message under it, `OK` to close (moving to another screen or starting another action also closes it) | Every failed action ends here (`AppViewModel.run`). The message is also added to the Log as `error: <message>`. `Can't start yet` is not logged |
+| Result banner | A banner pinned to the top of the screen with a red icon: title `That didn't work` (or `Can't start yet` on the limits screen), the message under it; tap `×` or swipe it up to close (moving to another screen or starting another action also closes it). Successes use the same banner with a green icon and close by themselves after a few seconds | Every failed action ends here (`AppViewModel.run`). The message is also added to the Log as `error: <message>`. `Can't start yet` is not logged |
 | Busy overlay | Spinner and a label such as `Waiting for the card challenge` | No cancel button. Each network call retries across three RPCs, so with no connection a step can take minutes before it fails |
 | Tap sheet | Card picture, a title saying what the tap is for, a hint line, `Cancel` | A hint after a failed read is not an error: the sheet waits for another tap, up to three attempts |
 | Fingerprint prompt | System dialog titled `Tapvault`; the subtitle is what you approve; `Your phone key signs only what you approve here.` | Dismissing it gives `Approval cancelled: …` |
 | Home banner | `Can't reach NEAR testnet right now. Showing the last known state; retrying.` | The background refresh (every 8 s on Home and Activity) failed |
 | Card check report | Badge `Can't sign` and notes | Not an error box; see [Reading the Card check report](#reading-the-card-check-report) |
 | Activity status | `Waiting for approvals`, `Void: signers changed`, `Approved · wallet is frozen`, … | See [Sending, Activity and freeze](#sending-activity-and-freeze) |
-| Log | Activity → Log: newest first, each line starts with the time | Kept in memory only (200 lines kept, 60 shown); gone when the app process ends, and cleared by Start over and by Forget; can only be opened once a wallet exists (not during setup). Nothing is written to the Android system log |
+| Log | Activity → Technical log → Show: newest first, each line starts with the time | Kept in memory only (200 lines kept, 60 shown); gone when the app process ends, and cleared by Start over and by Forget; can only be opened once a wallet exists (not during setup). Nothing is written to the Android system log |
 
 Composite messages:
 
@@ -74,8 +74,8 @@ Composite messages:
 
 | Message | From | Meaning | What to do |
 |---|---|---|---|
-| `Can't start yet` + `Enter both limits as amounts like 1 or 0.5.` | `AppViewModel.beginSetup` | A limit is empty, not a number, or not above 0 | Fix the limits on Welcome |
-| `Can't start yet` + `The per-day limit must be at least the at-once limit.` | `AppViewModel.beginSetup` | "At once" is larger than "Per day" | Fix the limits |
+| `Can't start yet` + `Enter both limits as amounts like 1 or 0.5.` | `AppViewModel.beginSetup` | A limit is empty, not a number, or not above 0. Rare: the limits screen keeps Continue disabled until both are valid | Fix the limits on "Set your spending limits" |
+| `Can't start yet` + `The per-day limit must be at least the at-once limit.` | `AppViewModel.beginSetup` | "Instant payment limit" is larger than "Daily limit". Rare: the limits screen shows `The daily limit must be at least the instant limit.` under the field and keeps Continue disabled | Fix the limits |
 | `Can't start yet` + `This phone has no NFC, so it can't read a bank card.` | `AppViewModel.beginSetup` | No NFC hardware | Use a phone with NFC |
 | `Can't start yet` + `Turn on NFC in Android settings (Connected devices → NFC) first.` | `AppViewModel.beginSetup` | NFC is off | Turn NFC on |
 | `The testnet faucet refused (<reason>). Try again later or from another network.` | `Onboarding.createAccounts` | The faucet failed and this APK has no sponsor | See [Faucet and sponsor funding](#faucet-and-sponsor-funding) |
@@ -100,8 +100,8 @@ Composite messages:
 
 | Message | From | Meaning | What to do |
 |---|---|---|---|
-| `This phone has no NFC, so it can't read a bank card.` (Welcome also shows `… Use an Android phone with NFC.`) | `AppViewModel.withCard`, `requireNfc`; `Screens.kt` `Welcome` | No NFC adapter | Use a phone with NFC |
-| `Turn on NFC in Android settings (Connected devices → NFC), then try again.` (Welcome: `NFC is off. Turn it on in Android settings (Connected devices → NFC).`) | `AppViewModel.withCard`, `requireNfc` | NFC is off. Send and Request unfreeze check this before the fingerprint prompt; Continue setup checks it only while the card still has to be read | Turn NFC on |
+| `This phone has no NFC, so it can't read a bank card.` (Welcome and the limits screen also show `This phone has no NFC` / `It can't read a bank card. Use an Android phone with NFC.`) | `AppViewModel.withCard`, `requireNfc`; `Onboarding.kt` `NfcNotice` | No NFC adapter | Use a phone with NFC |
+| `Turn on NFC in Android settings (Connected devices → NFC), then try again.` (Welcome and the limits screen: `NFC is off` / `Turn it on to tap your card (Connected devices → NFC).` with an `Open NFC settings` button) | `AppViewModel.withCard`, `requireNfc` | NFC is off. Send and Request unfreeze check this before the fingerprint prompt; Continue setup checks it only while the card still has to be read | Turn NFC on |
 | `app is not in the foreground` | `AppViewModel.withCard`, `requireNfc` | The screen was gone when the tap was needed | Open the app; try again |
 | Hint `The card moved away too soon. Tap again and keep it still until this screen closes.` | `AppViewModel.withCard` (`TagLostException`) | The card left the field mid-read | Hold it flat and still until the sheet closes (2–3 s) |
 | Hint `The card connection dropped. Tap again and keep it still until this screen closes.` | `AppViewModel.withCard` (`IOException`) | Link error or a command over the 5 s limit (`IsoDepTransceiver`) | Hold still; try another spot (the antenna is often near the camera); remove thick or metal cases |
@@ -153,7 +153,7 @@ prompt offers the fingerprint or the screen lock instead.
 
 | Message or state | From | Meaning | What to do |
 |---|---|---|---|
-| `Enter an amount like 0.5` | `AppViewModel.send` | Not a number, or more than 24 decimals. Rare: the `Approve, then tap card` button stays disabled until the amount is a number above zero | Fix the amount (a comma works as the decimal point) |
+| `Enter an amount like 0.5` | `AppViewModel.send` | Not a number, or more than 24 decimals. Rare: the `Review` button stays disabled until the amount is a number above zero | Fix the amount (a comma works as the decimal point) |
 | `Amount must be more than zero` | `AppViewModel.send` | Rare, for the same reason | |
 | `That isn't a NEAR account id` | `AppViewModel.send` | 2–64 characters of lowercase letters and digits, `-` or `_` only between them, parts separated by dots (`friend.testnet`), or a 64-hex implicit account | Fix the account id |
 | `The wallet is frozen. Request an unfreeze first.` | `AppViewModel.send` | | Home → `Request unfreeze`, then Execute after 1 h |
@@ -172,7 +172,7 @@ prompt offers the fingerprint or the screen lock instead.
 | No `Execute` button | `ActivityScreen` | Shown only when the delay has passed by the phone's clock, not for transfers while frozen, and not for expired entries | Set date and time to automatic |
 | No `Approve · card` button | `ActivityScreen` | The card window is over, the card already approved, or the entry is void | `Cancel` and send again |
 | `Send` and the snowflake dimmed on Home | `Screens.kt` `Home` | Frozen, busy, or the wallet hasn't loaded since the app started (needs the network once) | Wait for the balance to show; unfreeze if frozen |
-| `Clean up` shows no result box | `AppViewModel.closeStale` | Normal; the entry disappears on the next refresh | Nothing |
+| `Clean up` shows no result banner | `AppViewModel.closeStale` | Normal; the entry disappears on the next refresh | Nothing |
 
 ## Network and RPC
 
@@ -244,7 +244,7 @@ the limits" is judged with the phone's clock (`LimitInfo.isInstant`).
 | `Invalid threshold` | `ERR_INVALID_THRESHOLD` | `finalize failed: Invalid threshold`: locking with threshold 2 while the card isn't on-chain | Report with the Log and the wallet account |
 | `At least one P-256 (phone / security key) signer is required` | `ERR_NO_DELIBERATE_SIGNER` | Not reachable | |
 | `Invalid delays` | `ERR_INVALID_DELAYS` | Not reachable (the app uses 1 h / 1 h / 24 h, the shortest allowed) | |
-| `Invalid limits` | `ERR_INVALID_LIMITS` | "At once" above "Per day" (Welcome checks this first) | Report |
+| `Invalid limits` | `ERR_INVALID_LIMITS` | "Instant payment limit" above "Daily limit" (the app checks this first) | Report |
 | `Invalid action` | `ERR_INVALID_ACTION` | A zero amount (the app checks first) | Report |
 | `Proposal rate limit reached for today` | `ERR_RATE_LIMITED` | The phone made 24 proposals in the current 24-hour window. Every new Send and every Request unfreeze counts; finishing an unfinished payment doesn't | Wait until 24 h after the window began (its first proposal). Executing a settings change, such as an unfreeze, also resets the count |
 | `Proposal not found` | `ERR_NO_PROPOSAL` | Already executed, cancelled or cleaned up; the screen was out of date | Wait for Activity to refresh |

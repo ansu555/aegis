@@ -225,7 +225,7 @@ What makes it resumable and safe to retry:
 
 What `finalize` sets in app wallets: threshold 2, `Delays.SHORTEST`
 (transfer 3,600 s, config 3,600 s, recovery 86,400 s), and one limit for
-`Asset.Near` from "At once" / "Per day" (defaults 1 and 2 NEAR).
+`Asset.Near` from "Instant payment limit" / "Daily limit" (defaults 1 and 2 NEAR).
 
 ### Instant payment (within the limits)
 
@@ -440,7 +440,7 @@ transaction (the card's ATC goes up). Details of the probe: [CARDS.md](CARDS.md)
 | Sponsor account and key | `BuildConfig.SPONSOR_ACCOUNT`, `BuildConfig.SPONSOR_KEY` | From `android/local.properties` at build time; empty means no sponsor |
 | Contract code to deploy | APK asset `tapvault_contract.wasm` | Copied from `contract/res` by the build after the hash check |
 | CA public keys | `android/core/src/main/resources/capk.txt` | Loaded by `CapkStore.load()` |
-| Screen, busy label, result, tap request, last wallet view, balance, proposals, card report, offline banner, in-app log | `AppViewModel` (memory) | Lost when the process dies. The log keeps the last 200 lines (Activity → Log shows 60) |
+| Screen, busy label, result, tap request, last wallet view, balance, proposals, card report, offline banner, in-app log | `AppViewModel` (memory) | Lost when the process dies. The log keeps the last 200 lines (Activity → Technical log shows 60) |
 
 A phone can hold several wallets (`WalletIndex`, SharedPreferences file
 `tapvault_wallets`: the ids, the active one, their names). Every row above

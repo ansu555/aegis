@@ -43,7 +43,7 @@ import java.util.Locale
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 
-enum class Screen { Welcome, Setup, Home, Send, Activity, CardCheck, Settings }
+enum class Screen { Welcome, Limits, Setup, Home, Send, Activity, CardCheck, Settings }
 
 /** What the "tap your card" sheet shows. */
 /** A card tap the UI is waiting for; [reading] once a card is in the field. */
@@ -222,6 +222,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private val refreshing = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** True while a pull-to-refresh the user started is running. */
+    var pulling by mutableStateOf(false)
+        private set
+
+    /** Pull-to-refresh: reload now and show the indicator until it's done. */
+    fun pullRefresh() {
+        if (store.setupStep < 4 || pulling) return
+        pulling = true
+        viewModelScope.launch {
+            refresh()
+            while (refreshing.get()) delay(100)
+            delay(250)
+            pulling = false
+        }
+    }
     private var autoRefresh: kotlinx.coroutines.Job? = null
 
     /** Reload wallet state; skipped while another refresh is still running. */
@@ -362,6 +378,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             cardReport = enrol.report
             store.cardRecipe = enrol.recipe.encode()
+            store.cardNetwork = enrol.report.network
+            store.cardLast4 = enrol.report.panLast4
             pending = PendingCard(enrol.key, enrol.proof, enrol.report.network, enrol.report.panLast4 ?: "????")
             store.pendingCard = pending.encode()
             note("card ${enrol.report.network} ****${enrol.report.panLast4} read (${enrol.report.iccKeyBits}-bit key, ${enrol.recipe.method.label})")

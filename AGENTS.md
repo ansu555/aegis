@@ -109,7 +109,7 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 adb logcat -b crash -d        # crash stack traces; the app itself writes nothing to logcat
 ```
 
-The app's own log is in memory: Activity tab → Log (last 60 of 200 lines).
+The app's own log is in memory: Activity → Technical log → Show (last 60 of 200 lines).
 
 ### Checking the shipped build and a wallet on chain
 

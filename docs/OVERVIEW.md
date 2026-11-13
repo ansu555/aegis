@@ -62,8 +62,8 @@ What the app sets up, every time:
 - **Signers:** the phone (signer index 0) and one card (signer index 1).
   Threshold 2, so every payment and every setting change needs both
   (freezing and cancelling need only one).
-- **Limit:** one, for NEAR, with the "At once" and "Per day" amounts entered
-  on the first screen (defaults 1 and 2 NEAR).
+- **Limit:** one, for NEAR, with the "Instant payment limit" and "Daily limit" amounts entered
+  on "Set your spending limits" (defaults 1 and 2 NEAR).
 - **Delays:** the shortest the contract allows (`Delays.SHORTEST`): transfers
   1 h, setting changes 1 h, recovery 24 h.
 - **Accounts:** a wallet account `tv-<10 hex>.testnet` and a fee account
@@ -101,33 +101,36 @@ test plan for a real phone: [TESTING.md](TESTING.md).
 
 ### 2. Welcome
 
-- Headline "Your bank card is your hardware wallet." The "My bank card" tile
-  ("Visa · Mastercard · RuPay") is the only kind of wallet; there is no demo
-  or simulated card in the app.
-- **Check it first** (optional) opens Card check: tap **Check a card** and
+- Three swipeable slides: "Your bank card is your hardware wallet", "Two
+  keys, every payment" and "Limits that have your back". A bank card is the
+  only kind of signer; there is no demo or simulated card in the app.
+- **Check my card first** (optional) opens Card check: tap **Check a card** and
   hold the card to the phone. The app reads the chip, recovers the card's key
   through its certificates, tries the signing methods that fit the card one
   after another until one works, and says **Can sign** or **Can't sign**.
   Nothing touches the chain. **Share report** sends a text
   report: no card number, track data, name or certificates; only the last
   four digits. See [CARDS.md](CARDS.md).
-- **Spending limits:** "At once (NEAR)" and "Per day (NEAR)". Payments within
-  both go through instantly; anything bigger waits an hour. A comma works as
-  the decimal point. Both must be above zero ("Enter both limits as amounts
-  like 1 or 0.5.") and "Per day" must be at least "At once" ("The per-day
-  limit must be at least the at-once limit.").
-- **Create my wallet** starts setup. It is disabled without NFC (so is
-  **Check it first**). While NFC is off, Welcome shows "NFC is off. Turn it on
-  in Android settings (Connected devices → NFC)." and Create my wallet is
+- **Create a new wallet** opens "Set your spending limits": "Instant payment
+  limit" (default 1 NEAR) and "Daily limit" (default 2 NEAR), each with
+  preset chips. Payments within both go through instantly; anything bigger
+  waits an hour. A comma works as the decimal point. The screen shows the
+  problem under the field ("The daily limit must be at least the instant
+  limit.") and keeps **Continue** disabled until both are amounts above zero.
+- **Continue** starts setup. It is disabled on a phone without NFC (so is
+  **Check a card**). The screens show "This phone has no NFC" or "NFC is off"
+  with an **Open NFC settings** button. While NFC is off, Continue is
   refused with "Can't start yet": "Turn on NFC in Android settings (Connected
-  devices → NFC) first." The limit errors above use the same "Can't start
-  yet" card.
+  devices → NFC) first." Limit errors caught by the app itself ("Enter both
+  limits as amounts like 1 or 0.5.", "The per-day limit must be at least the
+  at-once limit.") use the same "Can't start yet" banner.
 
 ### 3. Setup (about a minute: one card tap, three fingerprints)
 
-The Setup screen ("Almost there") lists six steps and marks each "Done" or
-"Waiting"; once the accounts exist it also shows the wallet account
-("Wallet account: tv-<10 hex>.testnet"). The steps run in this order:
+The Setup screen ("Setting up your wallet", or "Ready to set up" / "Paused"
+/ "All set") shows a progress ring ("n/6 steps") and the six steps, each
+ticked when done; once the accounts exist it also shows the wallet account
+("Account: tv-<10 hex>.testnet"). The steps run in this order:
 
 1. **Phone key in secure hardware:** the P-256 key is created in the Keystore
    (no prompt). Without a screen lock: "Set up a screen lock (PIN, pattern or
@@ -155,7 +158,7 @@ The Setup screen ("Almost there") lists six steps and marks each "Done" or
    limits and deletes the wallet account's own key.
 
 The result is "Your wallet is ready" ("Funds now move only with your phone
-and your card.") with a "View on explorer ↗" link to the wallet account.
+and your card.") with a "View on explorer" link to the wallet account.
 
 If anything is interrupted, **Continue setup** resumes: each step checks the
 chain first and skips what already landed, and a card that was read is kept
@@ -171,24 +174,25 @@ removed. The accounts made so far stay on testnet with their test NEAR."
 
 ### 4. Fund the wallet
 
-- **Home → Receive** (the round arrow button) shows the wallet account id
-  with **Copy** and **Share**. Send testnet NEAR to it from any testnet
+- **Home → Receive** (or the QR button at the top right) opens a sheet with a
+  QR code of the wallet account id, **Copy** and **Share**. Send testnet NEAR to it from any testnet
   account.
 - A faucet-created wallet starts with 10 NEAR; a sponsor-created one with
   5.5 NEAR, minus the gas of the three setup transactions. About 3.35 NEAR of
   either stays locked to pay for storage (3.34 NEAR for the contract code,
   the rest for the account and the wallet's state). Home shows the
-  spendable balance under "Wallet (NEAR)", a badge "X NEAR instant now", and
-  at the bottom "+ X NEAR held for the wallet contract's storage".
+  spendable balance under "Total balance", a pill "X NEAR available
+  instantly", and at the bottom "+ X NEAR reserved for the wallet contract's
+  storage".
 
 ### 5. Pay within the limits
 
 1. **Send** → amount and a NEAR account (`friend.testnet`, or a 64-hex
-   implicit account). **Half** fills half the spendable balance; **Max**
-   fills the most that can go out instantly (the instant allowance left,
-   capped at the spendable balance minus 0.01 NEAR). The card under the
-   fields says "Instant" or "Waits 1 h" for "This payment".
-2. **Approve, then tap card.** Before any prompt the app checks that NFC is
+   implicit account). **Half** fills half the spendable balance; **Max
+   instant** fills the most that can go out instantly (the instant allowance left,
+   capped at the spendable balance minus 0.01 NEAR). The summary under the
+   fields says "Instant" or "Waits 1 h" for "Speed".
+2. **Review** opens a summary sheet; **Approve and send** starts. Before any prompt the app checks that NFC is
    on, the wallet isn't frozen, the spendable balance covers the amount, and
    the receiver exists.
 3. Fingerprint prompt "Send 0.5 NEAR to friend.testnet". The phone signs the
@@ -241,15 +245,15 @@ status turns to "Expired: it can no longer execute; cancel it".
 
 ### 8. Other screens
 
-After setup a bottom bar switches between Home, Activity, Card check and
-Settings (icons only).
+After setup a bottom bar switches between Wallet, Activity, Card and
+Settings (Activity shows a count while proposals are open).
 
-- **Home:** a round Activity button at the top (with a dot while proposals
-  are open), balance, the instant badge ("Frozen" while frozen), the round
-  buttons (Receive, Freeze with card, Check a card), **Send**, and three
-  tabs: Activity (open
-  proposals), Signers ("This phone" P-256, "Bank card" RSA, "2 of 2 must
-  approve every payment"), Limits.
+- **Home:** the wallet switcher and a QR button at the top, "Total balance",
+  the instant pill ("Frozen" while frozen), the round buttons Send, Receive,
+  Freeze (with the card) and Check card, then "Pending approvals", "Spending
+  limits" (instant limit and a "Used today" meter) and "Security" ("This
+  phone" P-256, "Bank card" RSA, "2 of 2 approvals required"). Pull down to
+  refresh.
 - **Activity:** every open proposal with its status ("Waiting for
   approvals", "Approved · can execute in …", "Approved · ready: tap Execute",
   "Approved · wallet is frozen", "Expired: it can no longer execute; cancel
@@ -258,11 +262,13 @@ Settings (icons only).
   card here also executes it when the phone has approved it, the wallet
   isn't frozen and it is within the limits ("Approved and sent"); if the
   contract doesn't agree that it can run yet, the card approval is kept
-  ("Approved"). Below the list, the in-app log ("Log", the last 60 lines).
+  ("Approved"). Below the list: "All transactions" (the explorer) and the
+  in-app log ("Technical log" → **Show**, the last 60 lines).
 - **Card check:** the same check as on Welcome, for any card.
-- **Settings:** wallet and fee account (explorer links), where the phone key
-  lives (for example "Trusted Execution Environment"), how the card signs,
-  the delays, **Freeze with phone** (while not frozen), and **Forget this
+- **Settings:** the wallet name (**Rename**), "My wallets", wallet and fee
+  account (explorer links), where the phone key lives (for example "Trusted
+  Execution Environment"), how the card signs, approvals, the delays,
+  **Freeze with phone** (while not frozen), and **Forget this
   wallet on this phone**. Forgetting deletes the phone key; with a single card the wallet
   can never approve anything again, so its NEAR stays locked for good
   (testnet NEAR only).
@@ -278,7 +284,7 @@ Reasoning: [DESIGN.md](DESIGN.md).
 |---|---|---|
 | Signers | 2 to 8 signers (`MAX_SIGNERS` = 8), at least one P-256, no duplicates; threshold at least 2 (`MIN_THRESHOLD`) and at most the number of signers | Phone + one card, threshold 2 |
 | Transfers | `threshold` approvals, including at least one P-256 approval (phone or passkey). Cards alone never move funds | Phone and card for every payment |
-| Instant limits | Per asset: `instant_max` per transfer and a `daily_max` allowance that refills continuously (`daily_max` per 24 h, so there is no window edge to exploit). An asset with no limit is always delayed | NEAR only, from "At once" / "Per day" |
+| Instant limits | Per asset: `instant_max` per transfer and a `daily_max` allowance that refills continuously (`daily_max` per 24 h, so there is no window edge to exploit). An asset with no limit is always delayed | NEAR only, from "Instant payment limit" / "Daily limit" |
 | Over-limit transfers | Wait `delays.transfer`, counted from the moment the proposal is fully approved (`ready_ts`), not from when it was proposed. Nothing executes automatically | 1 h, then **Execute** in Activity |
 | Execution window | 7 days after the delay ends (`EXECUTION_WINDOW`), then "Proposal expired" | Same; Activity then hides Execute and shows "Expired: it can no longer execute; cancel it" |
 | Card approval window | A card must approve within 10 minutes of the challenge being sealed (`CARD_APPROVAL_WINDOW` = 600 s), else "Card approval window has closed; propose again" | Same; Send reuses an unfinished payment inside the window |

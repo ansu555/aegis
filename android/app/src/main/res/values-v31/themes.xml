@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Tapvault" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@color/bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@color/bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <!-- Launch screen: the mark on the app's own background, so opening the app is one continuous look. -->
+        <item name="android:windowSplashScreenBackground">@color/bg</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>
+    </style>
+</resources>

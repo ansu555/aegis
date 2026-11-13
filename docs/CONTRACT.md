@@ -376,8 +376,8 @@ pub fn setup_finalize(&mut self, args: FinalizeArgs, authorizer_index: u8, sig: 
   the access key that signed it (`env::signer_account_pk()`), so this check
   is what makes "finalize" also mean "lock".
 - **Arguments** (`Onboarding.finalize`, 100 Tgas; the app always uses
-  threshold 2, `Delays.SHORTEST` and one NEAR limit from the Welcome
-  screen):
+  threshold 2, `Delays.SHORTEST` and one NEAR limit from the "Set your
+  spending limits" screen):
 
   ```json
   {"args": {"threshold": 2,

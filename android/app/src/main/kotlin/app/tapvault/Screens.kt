@@ -2,38 +2,34 @@ package app.tapvault
 
 import android.content.Intent
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredSize
-import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -43,306 +39,108 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.zIndex
+import androidx.compose.ui.draw.rotate
 import app.tapvault.core.Near
 import app.tapvault.core.ProposalInfo
 import java.math.BigInteger
 
 private val tabScreens = setOf(Screen.Home, Screen.Activity, Screen.CardCheck, Screen.Settings)
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TapvaultApp(vm: AppViewModel) {
     TapvaultTheme {
-        NightBackground {
+        val frozen = vm.wallet?.frozen == true
+        AppBackground(glow = if (frozen && vm.screen == Screen.Home) Tv.Ice else Tv.Accent) {
             LaunchedEffect(Unit) { vm.refresh(); vm.startAutoRefresh() }
-            BackHandler(enabled = vm.screen !in setOf(Screen.Home, Screen.Welcome, Screen.Setup)) { vm.go(if (vm.store.setupStep >= 4) Screen.Home else Screen.Welcome) }
-            val uri = LocalUriHandler.current
-            Box(Modifier.fillMaxSize().safeDrawingPadding()) {
-                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(horizontal = 20.dp)) {
-                    when (vm.screen) {
-                        Screen.Welcome -> Welcome(vm)
-                        Screen.Setup -> SetupProgress(vm)
-                        Screen.Home -> Home(vm)
-                        Screen.Send -> Send(vm)
-                        Screen.Activity -> ActivityScreen(vm)
-                        Screen.CardCheck -> CardCheck(vm)
-                        Screen.Settings -> SettingsScreen(vm)
-                    }
-                    Spacer(Modifier.height(if (vm.screen in tabScreens) 120.dp else 40.dp))
-                }
-                if (vm.screen in tabScreens && vm.store.setupStep >= 4) {
-                    BottomBar(vm.screen, vm.proposals.size, { vm.go(it) }, Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp))
-                }
-                // Results stay pinned on top, wherever the page is scrolled.
-                vm.outcome?.let {
-                    Box(Modifier.align(Alignment.TopCenter).padding(horizontal = 20.dp, vertical = 8.dp)) {
-                        OutcomeToast(it, { l -> uri.openUri(l) }) { vm.outcome = null }
-                    }
-                }
-                vm.tap?.let { TapSheet(it) { vm.cancelTap() } }
-                if (vm.tap == null) vm.busy?.let { BusyOverlay(it) }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------- welcome
-
-@Composable
-private fun Welcome(vm: AppViewModel) {
-    var instant by remember { mutableStateOf(vm.store.instantNear) }
-    var daily by remember { mutableStateOf(vm.store.dailyNear) }
-    val others = vm.walletList.count { !it.active }
-    Spacer(Modifier.height(28.dp))
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("tapvault", fontSize = 18.sp, color = Tv.Dim, letterSpacing = 1.sp, modifier = Modifier.weight(1f))
-        if (others > 0) Tag("New: ${vm.walletName}", Tv.Lime)
-    }
-    Spacer(Modifier.height(20.dp))
-    Text("Your bank card\nis your\nhardware wallet.", style = Numeral.copy(fontSize = 44.sp, lineHeight = 48.sp, color = Tv.Text))
-    Spacer(Modifier.height(14.dp))
-    Caption("Every payment needs your fingerprint and a tap of the card you already carry. No seed phrase, no new device.")
-    Spacer(Modifier.height(26.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        ChoiceTile("My bank card", "Visa · Mastercard · RuPay", "NFC", Glyph.Card, vm.hasNfc, warm = true, enabled = vm.hasNfc, modifier = Modifier.weight(1f)) { }
-        ChoiceTile("Check it first", "See if your card can sign", "TEST", Glyph.Shield, false, warm = false, enabled = vm.hasNfc, modifier = Modifier.weight(1f)) { vm.go(Screen.CardCheck) }
-    }
-    if (!vm.hasNfc) Caption("This phone has no NFC, so it can't read a bank card. Use an Android phone with NFC.", Modifier.padding(top = 10.dp), Tv.Warn)
-    else if (!vm.nfcEnabled) Caption("NFC is off. Turn it on in Android settings (Connected devices → NFC).", Modifier.padding(top = 10.dp), Tv.Warn)
-    Spacer(Modifier.height(16.dp))
-    GlassCard {
-        Text("Spending limits", fontSize = 16.sp)
-        Caption("Within these, payments go through instantly. Anything bigger waits an hour so you can cancel it.")
-        Spacer(Modifier.height(14.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            GlassField("At once (NEAR)", instant, { v -> instant = v.replace(',', '.').filter { it.isDigit() || it == '.' } }, Modifier.weight(1f), number = true)
-            GlassField("Per day (NEAR)", daily, { v -> daily = v.replace(',', '.').filter { it.isDigit() || it == '.' } }, Modifier.weight(1f), number = true)
-        }
-    }
-    Spacer(Modifier.height(20.dp))
-    PillButton("Create my wallet", Modifier.fillMaxWidth(), enabled = vm.hasNfc, glyph = Glyph.Plus) { vm.beginSetup(instant, daily) }
-    Caption("NEAR testnet · accounts and test NEAR come from the faucet", Modifier.fillMaxWidth().padding(top = 12.dp), Tv.Faint)
-    if (others > 0) {
-        Caption("This wallet gets its own NEAR account, its own phone key and its own card. Your other wallets aren't touched.", Modifier.fillMaxWidth().padding(top = 8.dp), Tv.Faint)
-        Spacer(Modifier.height(12.dp))
-        GhostButton("Back to my wallets", Modifier.fillMaxWidth(), Tv.Dim) { vm.cancelNewWallet() }
-    }
-}
-
-@Composable
-private fun ChoiceTile(title: String, sub: String, tag: String, glyph: Glyph, selected: Boolean, warm: Boolean, modifier: Modifier, enabled: Boolean = true, onClick: () -> Unit) {
-    Column(
-        modifier.height(196.dp).gradientTile(28.dp, warm).border(2.dp, if (selected) Tv.Lime else Color.Transparent, RoundedCornerShape(28.dp))
-            .clip(RoundedCornerShape(28.dp)).alpha(if (enabled) 1f else 0.45f).clickable(enabled = enabled, onClick = onClick).padding(16.dp),
-    ) {
-        Row(verticalAlignment = Alignment.Top) {
-            Box(Modifier.size(46.dp).background(Tv.GlassStrong, CircleShape), contentAlignment = Alignment.Center) { GlyphIcon(glyph, 22.dp) }
-            Spacer(Modifier.weight(1f))
-            Tag(tag)
-        }
-        Spacer(Modifier.weight(1f))
-        Text(title, fontSize = 19.sp)
-        Caption(sub)
-        if (selected) Box(Modifier.padding(top = 8.dp).size(22.dp).background(Tv.Lime, CircleShape), contentAlignment = Alignment.Center) { GlyphIcon(Glyph.Check, 14.dp, Tv.OnLime) }
-    }
-}
-
-// ---------------------------------------------------------------- setup
-
-@Composable
-private fun SetupProgress(vm: AppViewModel) {
-    var confirmStartOver by remember { mutableStateOf(false) }
-    var showPicker by remember { mutableStateOf(false) }
-    val cardRead = vm.store.pendingCard != null || vm.setupStep >= 3
-    val steps = listOf(
-        Triple(Glyph.Phone, "Phone key in secure hardware", vm.phoneKeyExists),
-        Triple(Glyph.Shield, "Wallet account on NEAR", vm.setupStep >= 1),
-        Triple(Glyph.Card, "Card read and signed", cardRead),
-        Triple(Glyph.Check, "Wallet contract deployed", vm.setupStep >= 2),
-        Triple(Glyph.Card, "Card added as a signer", vm.setupStep >= 3),
-        Triple(Glyph.Freeze, "Limits set, account locked", vm.setupStep >= 4),
-    )
-    Header("Setting up")
-    Text("Almost there", style = Numeral.copy(fontSize = 40.sp, color = Tv.Text))
-    Caption("Three approvals and one card tap. Each step is saved, so you can continue if anything is interrupted.")
-    Spacer(Modifier.height(16.dp))
-    steps.forEach { (g, s, done) ->
-        ListRow(g, s, if (done) "Done" else "Waiting", subColor = if (done) Tv.Up else Tv.Faint) {
-            Box(
-                Modifier.size(28.dp).background(if (done) Tv.Lime else Color.Transparent, CircleShape).border(1.dp, if (done) Tv.Lime else Tv.Hairline, CircleShape),
-                contentAlignment = Alignment.Center,
-            ) { if (done) GlyphIcon(Glyph.Check, 16.dp, Tv.OnLime) }
-        }
-    }
-    vm.store.walletAccount?.let { Caption("${vm.walletName} account: $it", Modifier.padding(top = 10.dp)) }
-    vm.cardReport?.let { r ->
-        CardReportCard(r)
-        val ctx = LocalContext.current
-        GhostButton("Share card report", Modifier.fillMaxWidth()) {
-            ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, r.diagnostics()), "Share card report"))
-        }
-    }
-    if (vm.busy == null && vm.setupStep < 4) {
-        Spacer(Modifier.height(12.dp))
-        PillButton("Continue setup", Modifier.fillMaxWidth()) { vm.continueSetup() }
-        Spacer(Modifier.height(8.dp))
-        GhostButton("Start over", Modifier.fillMaxWidth(), Tv.Dim) { confirmStartOver = true }
-        if (vm.walletList.size > 1) {
-            Spacer(Modifier.height(8.dp))
-            GhostButton("Switch wallet (this setup stays saved)", Modifier.fillMaxWidth(), Tv.Dim) { showPicker = true }
-        }
-    }
-    if (showPicker) WalletPicker(vm) { showPicker = false }
-    if (confirmStartOver) {
-        AlertDialog(
-            onDismissRequest = { confirmStartOver = false },
-            containerColor = Tv.Plum,
-            confirmButton = { TextButton(onClick = { confirmStartOver = false; vm.startOver() }) { Text("Start over", color = Tv.Down) } },
-            dismissButton = { TextButton(onClick = { confirmStartOver = false }) { Text("Keep going", color = Tv.Text) } },
-            title = { Text("Start over?") },
-            text = {
-                Text(
-                    if (!vm.hasSponsor) "The phone key and this setup's saved state are removed. The accounts made so far stay on testnet with their test NEAR."
-                    else if (vm.setupStep <= 1) "The accounts made for this setup are deleted (their NEAR goes back to the sponsor) and the phone key is removed."
-                    else "The half-built wallet is left on testnet with its test NEAR. The fee account is deleted and the phone key removed.",
-                    textAlign = TextAlign.Start,
+            val ready = vm.store.setupStep >= 4
+            BackHandler(enabled = vm.screen !in setOf(Screen.Home, Screen.Welcome, Screen.Setup)) {
+                vm.go(
+                    when {
+                        vm.screen == Screen.Limits -> Screen.Welcome
+                        ready -> Screen.Home
+                        else -> Screen.Welcome
+                    },
                 )
-            },
-        )
-    }
-}
-
-// ---------------------------------------------------------------- home
-
-@Composable
-private fun Home(vm: AppViewModel) {
-    val w = vm.wallet
-    val clip = LocalClipboardManager.current
-    val ctx = LocalContext.current
-    var tab by remember { mutableIntStateOf(0) }
-    var showReceive by remember { mutableStateOf(false) }
-    var showPicker by remember { mutableStateOf(false) }
-    var confirmFreeze by remember { mutableStateOf(false) }
-    if (showPicker) WalletPicker(vm) { showPicker = false }
-    if (confirmFreeze) {
-        AlertDialog(
-            onDismissRequest = { confirmFreeze = false },
-            containerColor = Tv.Plum,
-            confirmButton = { TextButton(onClick = { confirmFreeze = false; vm.freezeWithCard() }) { Text("Freeze", color = Tv.Down) } },
-            dismissButton = { TextButton(onClick = { confirmFreeze = false }) { Text("Cancel", color = Tv.Text) } },
-            title = { Text("Freeze the wallet?") },
-            text = { Text("One card tap stops every transfer. Unfreezing needs your phone and card, then waits ${(vm.wallet?.delays?.config ?: 3600) / 3600} h.", textAlign = TextAlign.Start) },
-        )
-    }
-    vm.offline?.let { Caption(it, Modifier.fillMaxWidth().padding(top = 10.dp), Tv.Warn) }
-
-    Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f).clip(RoundedCornerShape(16.dp)).clickable(enabled = vm.busy == null) { showPicker = true }.padding(vertical = 4.dp)) {
-            Caption(if (vm.walletList.size > 1) "${vm.walletList.size} wallets · tap to switch" else "Tap to add a wallet")
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(vm.walletName, fontSize = 22.sp)
-                Spacer(Modifier.width(6.dp))
-                GlyphIcon(Glyph.Down, 16.dp, Tv.Dim)
             }
-        }
-        CircleButton(Glyph.History, "Activity", 48.dp, dot = vm.proposals.isNotEmpty()) { vm.go(Screen.Activity) }
-    }
-    Spacer(Modifier.height(26.dp))
-    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        Caption("Wallet (NEAR)")
-        Text(vm.balance?.let { Near.format(it, 3) } ?: "…", style = Numeral.copy(fontSize = 64.sp, color = Tv.Text))
-        Spacer(Modifier.height(6.dp))
-        when {
-            w?.frozen == true -> Badge("Frozen", Tv.Down, Tv.Down.copy(alpha = 0.15f))
-            w?.nearLimit != null -> {
-                val instant = w.nearLimit!!.availableNow().let { a -> vm.balance?.let { a.min(it) } ?: a }
-                Badge("${Near.format(instant, 2)} NEAR instant now", Tv.Up)
-            }
-        }
-    }
-    Spacer(Modifier.height(26.dp))
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        CircleButton(Glyph.Receive, "Receive", 56.dp) { showReceive = true }
-        CircleButton(Glyph.Freeze, "Freeze with card", 56.dp, enabled = w?.frozen == false && vm.busy == null) { confirmFreeze = true }
-        CircleButton(Glyph.Card, "Check a card", 56.dp) { vm.go(Screen.CardCheck) }
-        PillButton("Send", Modifier.weight(1f), enabled = w?.frozen == false && vm.busy == null, glyph = Glyph.Send) { vm.go(Screen.Send) }
-    }
-
-    if (w?.frozen == true) {
-        Spacer(Modifier.height(16.dp))
-        GlassCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Wallet frozen", color = Tv.Down, fontSize = 17.sp, modifier = Modifier.weight(1f))
-                Tag("${w.delays.config / 3600} h to unfreeze", Tv.Dim)
-            }
-            Caption("No transfers can go out. Unfreezing needs your phone and your card, then waits.")
-            Spacer(Modifier.height(12.dp))
-            GhostButton("Request unfreeze", Modifier.fillMaxWidth(), Tv.Lime, enabled = vm.busy == null) { vm.requestUnfreeze() }
-        }
-    }
-
-    Spacer(Modifier.height(22.dp))
-    Segmented(listOf("Activity", "Signers", "Limits"), tab) { tab = it }
-    Spacer(Modifier.height(10.dp))
-    when (tab) {
-        0 -> {
-            if (vm.proposals.isEmpty()) ListRow(Glyph.Check, "All clear", "Nothing waiting for approval")
-            vm.proposals.forEach { p ->
-                ListRow(if (p.isTransfer) Glyph.Send else Glyph.Settings, "#${p.id} ${shortDescribe(p)}", proposalStatus(vm, p), onClick = { vm.go(Screen.Activity) })
-            }
-        }
-        1 -> {
-            w?.signers?.forEach { s ->
-                if (s.isCard) ListRow(Glyph.Card, "Bank card", "key ${s.keyHash.take(10)}…", "RSA")
-                else ListRow(Glyph.Phone, "This phone", "key ${s.keyHash.take(10)}…", "P-256")
-            }
-            Caption("${w?.threshold ?: 2} of ${w?.signers?.size ?: 2} must approve every payment", Modifier.padding(top = 6.dp, start = 6.dp))
-        }
-        2 -> {
-            w?.nearLimit?.let { l ->
-                ListRow(Glyph.Send, "Up to ${Near.format(l.instantMax)} NEAR at once", "instantly, with phone + card", "NEAR")
-                ListRow(Glyph.History, "${Near.format(l.dailyMax)} NEAR per day", "${Near.format(l.availableNow(), 2)} available right now", "Daily")
-            }
-            w?.let { ListRow(Glyph.Shield, "Bigger payments wait ${it.delays.transfer / 3600} h", "you can cancel or freeze meanwhile", "Delay") }
-        }
-    }
-    vm.storageLocked?.let { Caption("+ ${Near.format(it, 2)} NEAR held for the wallet contract's storage", Modifier.fillMaxWidth().padding(top = 12.dp), Tv.Faint) }
-
-    if (showReceive) {
-        val acct = vm.store.walletAccount ?: ""
-        AlertDialog(
-            onDismissRequest = { showReceive = false },
-            containerColor = Tv.Plum,
-            title = { Text("Receive NEAR") },
-            text = {
-                Column {
-                    Caption("Send NEAR on testnet to this account:")
-                    Spacer(Modifier.height(10.dp))
-                    Text(acct, fontSize = 18.sp, color = Tv.Lime)
+            val uri = LocalUriHandler.current
+            val focus = androidx.compose.ui.platform.LocalFocusManager.current
+            LaunchedEffect(vm.screen) { focus.clearFocus(force = true) }
+            val tabs = vm.screen in tabScreens && ready
+            Column(Modifier.fillMaxSize()) {
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    AnimatedContent(
+                        vm.screen,
+                        transitionSpec = { (fadeIn(tween(220, delayMillis = 90)) + slideInVertically(tween(300, delayMillis = 90, easing = FastOutSlowInEasing)) { it / 30 }) togetherWith fadeOut(tween(90)) },
+                        label = "screen",
+                    ) { s ->
+                        val scroll = rememberScrollState()
+                        val body: @Composable () -> Unit = {
+                            Column(
+                                Modifier.fillMaxSize().verticalScroll(scroll).statusBarsPadding()
+                                    .let { if (tabs) it else it.navigationBarsPadding() }.imePadding().padding(horizontal = 20.dp),
+                            ) {
+                                when (s) {
+                                    Screen.Welcome -> Welcome(vm)
+                                    Screen.Limits -> LimitsScreen(vm)
+                                    Screen.Setup -> SetupProgress(vm)
+                                    Screen.Home -> Home(vm)
+                                    Screen.Send -> Send(vm)
+                                    Screen.Activity -> ActivityScreen(vm)
+                                    Screen.CardCheck -> CardCheck(vm)
+                                    Screen.Settings -> SettingsScreen(vm)
+                                }
+                                Spacer(Modifier.height(28.dp))
+                            }
+                        }
+                        if (s == Screen.Welcome) {
+                            // The welcome pager fills the screen instead of scrolling.
+                            Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp)) { Welcome(vm) }
+                        } else if (s == Screen.Limits || s == Screen.Send) {
+                            // Form screens: content scrolls, the main button stays pinned above the keyboard.
+                            Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
+                                if (s == Screen.Limits) LimitsScreen(vm) else Send(vm)
+                            }
+                        } else if ((s == Screen.Home || s == Screen.Activity) && ready) {
+                            PullToRefreshBox(vm.pulling, { vm.pullRefresh() }, Modifier.fillMaxSize()) { body() }
+                        } else body()
+                    }
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = { clip.setText(AnnotatedString(acct)); showReceive = false }) { Text("Copy", color = Tv.Lime) }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, acct), "Share account"))
-                    showReceive = false
-                }) { Text("Share", color = Tv.Dim) }
-            },
-        )
+                AnimatedVisibility(tabs, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+                    BottomNav(vm.screen, vm.proposals.size, { vm.go(it) })
+                }
+            }
+            // Scrim behind the status bar so scrolled content never runs under the clock.
+            Box(Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars).background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Tv.Bg, Tv.Bg.copy(alpha = 0.85f)))))
+            if (!tabs) Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().windowInsetsBottomHeight(WindowInsets.navigationBars).background(Tv.Bg.copy(alpha = 0.92f)))
+            OutcomeBanner(vm.outcome, { l -> uri.openUri(l) }, { vm.outcome = null }, Modifier.align(Alignment.TopCenter))
+            vm.tap?.let { TapSheet(it) { vm.cancelTap() } }
+            // Setup shows its progress in place; everything else gets the overlay.
+            if (vm.tap == null && vm.screen != Screen.Setup) vm.busy?.let { BusyOverlay(it) }
+        }
     }
 }
+
+// ---------------------------------------------------------------- proposal helpers
+
+private fun camelWords(s: String) = s.replace(Regex("([a-z])([A-Z])"), "$1 $2").lowercase().replaceFirstChar { it.uppercase() }
+
+/** "Send" or the settings change in words ("Unfreeze", "Add signer"). */
+private fun proposalTitle(p: ProposalInfo): String =
+    if (p.isTransfer) "Send" else p.describe().removePrefix("Change settings: ").split(", ").joinToString(", ") { camelWords(it) }
+
+private fun proposalSubtitle(p: ProposalInfo): String =
+    p.transferReceiver()?.let { "To ${shortAccount(it)}" } ?: "Wallet setting"
 
 private fun shortDescribe(p: ProposalInfo) = p.describe().removePrefix("Change settings: ")
 
 /** Seconds until the contract will execute [p] (0 = now), or null while it still needs approvals. */
 private fun secondsToExecute(vm: AppViewModel, p: ProposalInfo): Long? {
-    val w = vm.wallet ?: return null
+    vm.wallet ?: return null
     val ready = p.readyTs ?: return null
     if (p.stale) return null
     val now = System.currentTimeMillis() / 1000
@@ -376,147 +174,369 @@ private fun closable(vm: AppViewModel, p: ProposalInfo): Boolean {
 
 private const val EXECUTION_WINDOW_SECS = 7L * 86_400
 
-private fun proposalStatus(vm: AppViewModel, p: ProposalInfo): String {
+private data class Status(val text: String, val color: Color, val icon: Ic)
+
+private fun proposalStatus(vm: AppViewModel, p: ProposalInfo): Status {
     val left = secondsToExecute(vm, p)
     return when {
-        p.stale -> "Void: signers changed"
-        p.readyTs == null -> "Waiting for approvals"
-        expired(vm, p) -> "Expired: it can no longer execute; cancel it"
-        left == null -> ""
-        left > 0 -> "Approved · can execute in ${left / 3600} h ${(left % 3600) / 60} min"
-        vm.wallet?.frozen == true && p.isTransfer -> "Approved · wallet is frozen"
-        else -> "Approved · ready: tap Execute"
+        p.stale -> Status("Void: signers changed", Tv.Danger, Ic.XCircle)
+        p.readyTs == null -> Status("Waiting for approvals", Tv.Warn, Ic.Hourglass)
+        expired(vm, p) -> Status("Expired: it can no longer execute; cancel it", Tv.Danger, Ic.XCircle)
+        left == null -> Status("", Tv.Text2, Ic.Info)
+        left > 0 -> Status("Approved · can execute in ${formatDuration(left)}", Tv.Text2, Ic.Timer)
+        vm.wallet?.frozen == true && p.isTransfer -> Status("Approved · wallet is frozen", Tv.Ice, Ic.Freeze)
+        else -> Status("Approved · ready: tap Execute", Tv.Accent, Ic.CheckCircle)
+    }
+}
+
+/** Compact proposal line for Home. */
+@Composable
+private fun ProposalRow(vm: AppViewModel, p: ProposalInfo, onClick: () -> Unit) {
+    val st = proposalStatus(vm, p)
+    Row_(
+        if (p.isTransfer) Ic.Send else Ic.Settings, "${proposalTitle(p)} · #${p.id}", st.text,
+        tint = st.color, iconBg = st.color.copy(alpha = 0.12f), onClick = onClick, chevron = true,
+    ) {
+        p.transferAmount()?.takeIf { p.isNearTransfer }?.let { Text("−${Near.format(it)} NEAR", style = Type.Amount.copy(fontSize = 15.sp)) }
+    }
+}
+
+
+// ---------------------------------------------------------------- home
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun Home(vm: AppViewModel) {
+    val w = vm.wallet
+    var showReceive by remember { mutableStateOf(false) }
+    var showPicker by remember { mutableStateOf(false) }
+    var confirmFreeze by remember { mutableStateOf(false) }
+    val frozen = w?.frozen == true
+    val idle = vm.busy == null
+
+    // header: wallet switcher + network
+    Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.weight(1f)) { Row(
+            Modifier.clip(RoundedCornerShape(50)).clickable(enabled = idle) { showPicker = true }.padding(end = 10.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Avatar(vm.walletName, 42.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f, fill = false)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(vm.walletName, style = Type.Title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                    Spacer(Modifier.width(4.dp))
+                    TvIcon(Ic.ChevronDown, 18.dp, Tv.Text2)
+                }
+                Text(vm.store.walletAccount?.let { shortAccount(it, 26) } ?: "", style = Type.Caption, color = Tv.Text3, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        } }
+        Spacer(Modifier.width(12.dp))
+        RoundIcon(Ic.Qr, "Receive", 42.dp) { showReceive = true }
+    }
+    vm.offline?.let { Notice(Ic.Offline, "Offline", it, Tv.Warn, Modifier.padding(top = 14.dp)) }
+
+    // balance
+    Column(Modifier.fillMaxWidth().padding(top = 34.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("Total balance", style = Type.CaptionStrong, color = Tv.Text2)
+        Spacer(Modifier.height(6.dp))
+        if (vm.balance == null) Shimmer(Modifier.size(200.dp, 52.dp)) else Amount(vm.balance, 4)
+        Spacer(Modifier.height(12.dp))
+        when {
+            frozen -> StatusPill("Frozen", Tv.Ice, Ic.Freeze)
+            w?.nearLimit != null -> {
+                val instant = w.nearLimit!!.availableNow().let { a -> vm.balance?.let { a.min(it) } ?: a }
+                StatusPill("${Near.format(instant, 2)} NEAR available instantly", Tv.Accent)
+            }
+            w == null && vm.offline == null -> Shimmer(Modifier.size(170.dp, 26.dp))
+        }
+    }
+
+    // actions
+    Row(Modifier.fillMaxWidth().padding(top = 30.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+        ActionButton(Ic.Send, "Send", primary = true, enabled = w?.frozen == false && idle) { vm.go(Screen.Send) }
+        ActionButton(Ic.Receive, "Receive") { showReceive = true }
+        ActionButton(Ic.Freeze, if (frozen) "Frozen" else "Freeze", tint = Tv.Ice, enabled = w?.frozen == false && idle) { confirmFreeze = true }
+        ActionButton(Ic.Scan, "Check card") { vm.go(Screen.CardCheck) }
+    }
+
+    if (frozen) {
+        Spacer(Modifier.height(24.dp))
+        Notice(Ic.Freeze, "Wallet frozen", "No transfers can go out. Unfreezing needs your phone and your card, then waits ${hoursLabel(w!!.delays.config)}.", Tv.Ice) {
+            TvButton("Request unfreeze", Modifier.fillMaxWidth(), Btn.Secondary, icon = Ic.Key, height = 48.dp, enabled = idle) { vm.requestUnfreeze() }
+        }
+    }
+
+    // pending
+    SectionHeader("Pending approvals", action = if (vm.proposals.isNotEmpty()) "See all" else null) { vm.go(Screen.Activity) }
+    Group {
+        if (vm.proposals.isEmpty()) Row_(Ic.CheckCircle, "All clear", "Nothing waiting for approval", tint = Tv.Accent, iconBg = Tv.AccentSoft)
+        vm.proposals.take(3).forEachIndexed { i, p ->
+            if (i > 0) GroupDivider()
+            ProposalRow(vm, p) { vm.go(Screen.Activity) }
+        }
+    }
+
+    // limits
+    w?.nearLimit?.let { l ->
+        SectionHeader("Spending limits")
+        val now = System.currentTimeMillis() / 1000
+        val elapsed = (now - l.updatedAt).coerceAtLeast(0)
+        val usedNow = if (elapsed >= 86_400) BigInteger.ZERO else (l.used - l.dailyMax * BigInteger.valueOf(elapsed) / BigInteger.valueOf(86_400)).max(BigInteger.ZERO)
+        val frac = if (l.dailyMax.signum() == 0) 0f else usedNow.toBigDecimal().divide(l.dailyMax.toBigDecimal(), 4, java.math.RoundingMode.HALF_UP).toFloat()
+        Column(Modifier.fillMaxWidth().surface(22.dp).padding(18.dp)) {
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text("Used today", style = Type.Body, color = Tv.Text2, modifier = Modifier.weight(1f))
+                Text("${Near.format(usedNow, 2)} / ${Near.format(l.dailyMax, 2)} NEAR", style = Type.Amount.copy(fontSize = 15.sp))
+            }
+            Spacer(Modifier.height(10.dp))
+            Meter(frac, if (frac > 0.85f) Tv.Warn else Tv.Accent)
+            Spacer(Modifier.height(14.dp))
+            InfoRow("Instant up to", "${Near.format(l.instantMax)} NEAR per payment")
+            InfoRow("Bigger payments", "wait ${hoursLabel(w.delays.transfer)}, cancellable", Tv.Text2)
+        }
+    }
+
+    // security
+    SectionHeader("Security")
+    Group {
+        val card = listOfNotNull(vm.store.cardNetwork, vm.store.cardLast4?.let { "•••• $it" }).joinToString(" ").ifBlank { "Bank card" }
+        Row_(Ic.Fingerprint, "This phone", "Fingerprint or screen lock, key in secure hardware", value = "P-256")
+        GroupDivider()
+        Row_(Ic.Card, card, "Tap to approve every payment", value = "RSA")
+        GroupDivider()
+        Row_(Ic.ShieldCheck, "${w?.threshold ?: 2} of ${w?.signers?.size ?: 2} approvals required", "Neither key alone can move funds", tint = Tv.Accent, iconBg = Tv.AccentSoft)
+    }
+    vm.storageLocked?.let { Caption("+ ${Near.format(it, 2)} NEAR reserved for the wallet contract's storage", Modifier.fillMaxWidth().padding(top = 14.dp), Tv.Text3, TextAlign.Center) }
+
+    if (showPicker) WalletPicker(vm) { showPicker = false }
+    if (showReceive) ReceiveSheet(vm) { showReceive = false }
+    if (confirmFreeze) ConfirmDialog(
+        "Freeze the wallet?",
+        "One card tap stops every transfer. Unfreezing needs your phone and card, then waits ${hoursLabel(w?.delays?.config ?: 3600)}.",
+        "Freeze", { confirmFreeze = false; vm.freezeWithCard() }, { confirmFreeze = false }, icon = Ic.Freeze,
+    )
+}
+
+/** Placeholder while values load. */
+@Composable
+fun Shimmer(modifier: Modifier) {
+    val t = rememberInfiniteTransition(label = "sh")
+    val a by t.animateFloat(0.35f, 0.8f, infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "a")
+    Box(modifier.alpha(a).background(Tv.Surface2, RoundedCornerShape(12.dp)))
+}
+
+// ---------------------------------------------------------------- receive
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ReceiveSheet(vm: AppViewModel, onDismiss: () -> Unit) {
+    val acct = vm.store.walletAccount ?: ""
+    val clip = LocalClipboardManager.current
+    val ctx = LocalContext.current
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) { if (copied) { kotlinx.coroutines.delay(1800); copied = false } }
+    ModalBottomSheet(onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = Tv.Surface) {
+        SheetColumn {
+            Text("Receive NEAR", style = Type.H2, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+            Text("Scan, or share your account name", style = Type.Body, color = Tv.Text2, modifier = Modifier.fillMaxWidth().padding(top = 4.dp), textAlign = TextAlign.Center)
+            Spacer(Modifier.height(22.dp))
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { QrCode(acct, Modifier.size(232.dp)) }
+            Spacer(Modifier.height(20.dp))
+            Column(Modifier.fillMaxWidth().surface(18.dp, Tv.Surface2).padding(16.dp)) {
+                Text("${vm.walletName} · NEAR testnet", style = Type.CaptionStrong, color = Tv.Text2)
+                Text(acct, style = Type.Mono, modifier = Modifier.padding(top = 4.dp))
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TvButton(if (copied) "Copied" else "Copy", Modifier.weight(1f), icon = if (copied) Ic.Check else Ic.Copy) { clip.setText(AnnotatedString(acct)); copied = true }
+                TvButton("Share", Modifier.weight(1f), Btn.Secondary, icon = Ic.Share) {
+                    ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, acct), "Share account"))
+                }
+            }
+            Notice(Ic.Info, "Testnet only", "Send only testnet NEAR to this account. Real NEAR sent here can't be recovered.", Tv.Warn, Modifier.padding(top = 16.dp))
+        }
     }
 }
 
 // ---------------------------------------------------------------- send
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun Send(vm: AppViewModel) {
+private fun ColumnScope.Send(vm: AppViewModel) {
     var to by remember { mutableStateOf("") }
     var amount by remember { mutableStateOf("") }
+    var review by remember { mutableStateOf(false) }
+    val clip = LocalClipboardManager.current
     val w = vm.wallet
     val limit = w?.nearLimit
     val parsed = runCatching { Near.parse(amount).takeIf { it.signum() > 0 } }.getOrNull()
     val spendable = vm.balance
+    val validTo = to.matches(Regex("^(([a-z\\d]+[-_])*[a-z\\d]+\\.)*([a-z\\d]+[-_])*[a-z\\d]+$")) && to.length in 2..64
+    val toError = if (to.length >= 2 && !validTo) "That isn't a NEAR account name" else if (to == vm.store.walletAccount) "That's this wallet's own account" else null
+    val tooMuch = parsed != null && spendable != null && parsed > spendable
+    val instant = parsed != null && limit?.isInstant(parsed) == true
 
-    Header("Send", onBack = { vm.go(Screen.Home) })
-    Column {
-            // amount card
-            Column(Modifier.fillMaxWidth().gradientTile(30.dp, warm = true).padding(18.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Row(
-                        Modifier.clip(RoundedCornerShape(50)).background(Tv.GlassStrong).padding(start = 4.dp, end = 14.dp, top = 4.dp, bottom = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Box(Modifier.size(34.dp).background(Tv.Night, CircleShape), contentAlignment = Alignment.Center) {
-                            Text("N", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        Text("NEAR", fontSize = 15.sp)
-                    }
-                    Spacer(Modifier.weight(1f))
-                    Tag("Send")
-                }
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    ChipButton("Half") { spendable?.let { amount = Near.format(it.divide(BigInteger.valueOf(2)), 4) } }
-                    GlassField("", amount, { v -> amount = v.replace(',', '.').filter { it.isDigit() || it == '.' } }, Modifier.weight(1f), number = true, big = true, placeholder = "0")
-                    ChipButton("Max") {
-                        // keep a little behind so the wallet can always pay for its own storage
-                        val buffer = Near.parse("0.01")
-                        val most = listOfNotNull(limit?.availableNow(), spendable?.minus(buffer)).minOrNull()
-                        most?.let { amount = Near.format(it.max(BigInteger.ZERO), 4) }
-                    }
-                }
-                Caption("Available: ${spendable?.let { Near.format(it, 4) } ?: "…"} NEAR", Modifier.fillMaxWidth().padding(top = 4.dp), Tv.Text.copy(alpha = 0.8f))
-            }
-            // lime connector, drawn over the gap between the two cards
-            Box(Modifier.fillMaxWidth().height(10.dp).zIndex(1f), contentAlignment = Alignment.Center) {
-                Box(Modifier.requiredSize(56.dp).background(Tv.Lime, CircleShape).border(5.dp, Tv.Night, CircleShape), contentAlignment = Alignment.Center) {
-                    GlyphIcon(Glyph.Down, 22.dp, Tv.OnLime)
-                }
-            }
-            // receiver card
-            Column(Modifier.fillMaxWidth().gradientTile(30.dp).padding(18.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(34.dp).background(Tv.GlassStrong, CircleShape), contentAlignment = Alignment.Center) { GlyphIcon(Glyph.Receive, 18.dp) }
-                    Spacer(Modifier.width(8.dp))
-                    Text("To", fontSize = 15.sp)
-                    Spacer(Modifier.weight(1f))
-                    Tag("Receive")
-                }
-                Spacer(Modifier.height(12.dp))
-                GlassField("NEAR account", to, { to = it.trim().lowercase() }, placeholder = "friend.testnet")
-            }
-    }
-    Spacer(Modifier.height(18.dp))
-    PillButton("Approve, then tap card", Modifier.fillMaxWidth(), enabled = vm.busy == null && to.isNotBlank() && parsed != null, glyph = Glyph.Card) { vm.send(to, amount) }
-    Spacer(Modifier.height(14.dp))
-    GlassCard(padding = 18.dp) {
-        val instant = parsed != null && limit?.isInstant(parsed) == true
-        InfoRow("This payment", when {
-            parsed == null -> "–"
-            instant -> "Instant"
-            else -> "Waits ${w?.delays?.transfer?.div(3600) ?: 1} h"
-        }, if (parsed == null) Tv.Dim else if (instant) Tv.Up else Tv.Warn)
-        limit?.let {
-            InfoRow("Instant limit", "${Near.format(it.instantMax)} NEAR")
-            InfoRow("Instant allowance left", "${Near.format(it.availableNow(), 2)} NEAR")
+    Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
+    TopBar("Send NEAR", onBack = { vm.go(Screen.Home) })
+    Spacer(Modifier.height(6.dp))
+    TvField("To", to, { to = it.trim().lowercase() }, placeholder = "name.testnet", error = toError, trailing = {
+        Box(Modifier.clip(RoundedCornerShape(12.dp)).background(Tv.Surface2).clickable { clip.getText()?.text?.let { to = it.trim().lowercase() } }.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) { TvIcon(Ic.Paste, 16.dp, Tv.Accent); Spacer(Modifier.width(6.dp)); Text("Paste", style = Type.CaptionStrong, color = Tv.Accent) }
         }
-        InfoRow("Network fee", "paid by your fee account")
-        InfoRow("Approvals", "phone + card")
+    })
+    Spacer(Modifier.height(18.dp))
+    Column(Modifier.fillMaxWidth().surface(26.dp).padding(vertical = 26.dp, horizontal = 18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        AmountField(amount, { v -> amount = v.replace(',', '.').filter { it.isDigit() || it == '.' }.take(14) })
+        Spacer(Modifier.height(14.dp))
+        Text(
+            if (tooMuch) "More than the wallet holds" else "Available: ${spendable?.let { Near.format(it, 4) } ?: "…"} NEAR",
+            style = Type.Caption, color = if (tooMuch) Tv.Danger else Tv.Text2,
+        )
+        Spacer(Modifier.height(14.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Chip("Half") { spendable?.let { amount = Near.format(it.divide(BigInteger.valueOf(2)), 4) } }
+            Chip("Max instant") {
+                // keep a little behind so the wallet can always pay for its own storage
+                val buffer = Near.parse("0.01")
+                val most = listOfNotNull(limit?.availableNow(), spendable?.minus(buffer)).minOrNull()
+                most?.let { amount = Near.format(it.max(BigInteger.ZERO), 4) }
+            }
+        }
+    }
+    Spacer(Modifier.height(14.dp))
+    Column(Modifier.fillMaxWidth().surface(22.dp).padding(horizontal = 18.dp, vertical = 10.dp)) {
+        InfoRow("Speed", when { parsed == null -> "–"; instant -> "Instant"; else -> "Waits ${hoursLabel(w?.delays?.transfer ?: 3600)}" }, if (parsed == null) Tv.Text2 else if (instant) Tv.Accent else Tv.Warn)
+        limit?.let { InfoRow("Instant allowance left", "${Near.format(it.availableNow(), 2)} NEAR") }
+        InfoRow("Network fee", "Paid by your fee account")
+        InfoRow("Approve with", "Fingerprint + card tap")
+    }
+    Spacer(Modifier.height(20.dp))
+    }
+    TvButton("Review", Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), enabled = vm.busy == null && validTo && toError == null && parsed != null && !tooMuch) { review = true }
+
+    if (review && parsed != null) {
+        ModalBottomSheet({ review = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = Tv.Surface) {
+            SheetColumn {
+                Text("Review payment", style = Type.H2, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+                Spacer(Modifier.height(18.dp))
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { Amount(parsed, 4, Type.Balance.copy(fontSize = 40.sp)) }
+                Spacer(Modifier.height(18.dp))
+                Column(Modifier.fillMaxWidth().surface(20.dp, Tv.Surface2).padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    InfoRow("To", to)
+                    InfoRow("From", vm.walletName)
+                    InfoRow("Speed", if (instant) "Instant" else "Waits ${hoursLabel(w?.delays?.transfer ?: 3600)}, cancellable", if (instant) Tv.Accent else Tv.Warn)
+                    InfoRow("Network", "NEAR testnet")
+                }
+                Spacer(Modifier.height(16.dp))
+                Text("Next", style = Type.CaptionStrong, color = Tv.Text2, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp)) {
+                    StepNum(1); Spacer(Modifier.width(10.dp)); Text("Confirm with your fingerprint", style = Type.Body)
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp)) {
+                    StepNum(2); Spacer(Modifier.width(10.dp)); Text("Tap your bank card on the phone", style = Type.Body)
+                }
+                Spacer(Modifier.height(22.dp))
+                TvButton("Approve and send", Modifier.fillMaxWidth(), icon = Ic.Fingerprint) { review = false; vm.send(to, amount) }
+                Spacer(Modifier.height(6.dp))
+                TvButton("Edit", Modifier.fillMaxWidth(), Btn.Ghost) { review = false }
+            }
+        }
     }
 }
 
 @Composable
-private fun InfoRow(k: String, v: String, color: Color = Tv.Text) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-        Caption(k, Modifier.weight(1f))
-        Text(v, fontSize = 14.sp, color = color)
-    }
+private fun StepNum(n: Int) {
+    Box(Modifier.size(26.dp).background(Tv.AccentSoft, CircleShape), contentAlignment = Alignment.Center) { Text("$n", style = Type.CaptionStrong, color = Tv.Accent) }
 }
 
 // ---------------------------------------------------------------- activity
 
 @Composable
 private fun ActivityScreen(vm: AppViewModel) {
+    val uri = LocalUriHandler.current
+    var showLog by remember { mutableStateOf(false) }
+    LargeTitle("Activity", "Approvals, delays and history")
+    if (vm.proposals.isEmpty()) {
+        Column(Modifier.fillMaxWidth().surface(26.dp).padding(vertical = 34.dp, horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(Modifier.size(64.dp).background(Tv.AccentSoft, CircleShape), contentAlignment = Alignment.Center) { TvIcon(Ic.CheckCircle, 30.dp, Tv.Accent) }
+            Spacer(Modifier.height(14.dp))
+            Text("You're all caught up", style = Type.Title)
+            Text("Payments waiting for an approval or a delay show up here.", style = Type.Body, color = Tv.Text2, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp))
+        }
+    } else {
+        Text("Pending · ${vm.proposals.size}", style = Type.Title, modifier = Modifier.padding(start = 4.dp, bottom = 10.dp))
+        vm.proposals.forEach { p -> ProposalCard(vm, p); Spacer(Modifier.height(12.dp)) }
+    }
+    SectionHeader("History")
+    Group {
+        vm.store.walletAccount?.let { a ->
+            Row_(Ic.External, "All transactions", "Open this wallet on the NEAR explorer", chevron = true, onClick = { uri.openUri(vm.near.explorerAccount(a)) })
+        }
+    }
+    SectionHeader("Technical log", action = if (showLog) "Hide" else "Show") { showLog = !showLog }
+    AnimatedVisibility(showLog, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+        Column(Modifier.fillMaxWidth().surface(20.dp).padding(16.dp)) {
+            if (vm.log.isEmpty()) Caption("Nothing yet.")
+            vm.log.take(60).forEach { Text(it, style = Type.Caption.copy(fontFeatureSettings = "tnum"), color = Tv.Text2, modifier = Modifier.padding(vertical = 2.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun ProposalCard(vm: AppViewModel, p: ProposalInfo) {
     val w = vm.wallet
     val now = System.currentTimeMillis() / 1000
-    Header("Activity")
-    if (vm.proposals.isEmpty()) ListRow(Glyph.Check, "All clear", "Nothing waiting for approval")
     val cardIdx = w?.card()?.index
     val phoneIdx = runCatching { w?.phoneIndexOf(vm.phone.publicKey) }.getOrNull()
-    vm.proposals.forEach { p ->
-        Column(Modifier.fillMaxWidth().padding(vertical = 6.dp).glass(28.dp).padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(44.dp).background(Tv.GlassStrong, CircleShape), contentAlignment = Alignment.Center) {
-                    GlyphIcon(if (p.isTransfer) Glyph.Send else Glyph.Settings, 20.dp)
-                }
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(shortDescribe(p), fontSize = 16.sp)
-                    Caption(proposalStatus(vm, p))
-                }
-                Tag("#${p.id}")
+    val st = proposalStatus(vm, p)
+    val idle = vm.busy == null
+    Column(Modifier.fillMaxWidth().surface(24.dp).padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconTile(if (p.isTransfer) Ic.Send else Ic.Settings, st.color, st.color.copy(alpha = 0.12f), 44.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(proposalTitle(p), style = Type.BodyStrong, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text("${proposalSubtitle(p)} · #${p.id}", style = Type.Caption, color = Tv.Text2, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            val canCard = cardIdx != null && !p.approvedBy(cardIdx) && (p.cardDeadlineTs ?: Long.MAX_VALUE) > now && !p.stale
-            val canPhone = phoneIdx != null && !p.approvedBy(phoneIdx) && !p.stale
-            Spacer(Modifier.height(12.dp))
+            p.transferAmount()?.takeIf { p.isNearTransfer }?.let { Text("−${Near.format(it)} NEAR", style = Type.Amount) }
+        }
+        Spacer(Modifier.height(14.dp))
+        if (st.text.isNotEmpty()) StatusPill(st.text, st.color, st.icon)
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ApprovalMark("Phone", Ic.Fingerprint, phoneIdx?.let { p.approvedBy(it) } ?: false, Modifier.weight(1f))
+            ApprovalMark("Card", Ic.Card, cardIdx?.let { p.approvedBy(it) } ?: false, Modifier.weight(1f))
+        }
+        val canCard = cardIdx != null && !p.approvedBy(cardIdx) && (p.cardDeadlineTs ?: Long.MAX_VALUE) > now && !p.stale
+        val canPhone = phoneIdx != null && !p.approvedBy(phoneIdx) && !p.stale
+        val canExecute = secondsToExecute(vm, p) == 0L && !expired(vm, p) && !(w?.frozen == true && p.isTransfer)
+        if (canCard || canPhone || canExecute) Spacer(Modifier.height(14.dp))
+        if (canCard) { TvButton("Approve · card", Modifier.fillMaxWidth(), icon = Ic.Card, height = 48.dp, enabled = idle) { vm.approveWithCard(p) }; Spacer(Modifier.height(8.dp)) }
+        if (canPhone) { TvButton("Approve · phone", Modifier.fillMaxWidth(), if (canCard) Btn.Secondary else Btn.Primary, icon = Ic.Fingerprint, height = 48.dp, enabled = idle) { vm.approveWithPhone(p) }; Spacer(Modifier.height(8.dp)) }
+        if (canExecute) { TvButton("Execute", Modifier.fillMaxWidth(), icon = Ic.Check, height = 48.dp, enabled = idle) { vm.execute(p) }; Spacer(Modifier.height(8.dp)) }
+        val canClose = closable(vm, p)
+        if (!p.stale || canClose) {
+            Spacer(Modifier.height(if (canCard || canPhone || canExecute) 0.dp else 12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (canCard) GhostButton("Approve · card", Modifier.weight(1f), Tv.Lime, vm.busy == null) { vm.approveWithCard(p) }
-                if (canPhone) GhostButton("Approve · phone", Modifier.weight(1f), Tv.Lime, vm.busy == null) { vm.approveWithPhone(p) }
-                if (secondsToExecute(vm, p) == 0L && !expired(vm, p) && !(w?.frozen == true && p.isTransfer)) GhostButton("Execute", Modifier.weight(1f), Tv.Lime, vm.busy == null) { vm.execute(p) }
-                if (!p.stale) GhostButton("Cancel", Modifier.weight(1f), Tv.Down, vm.busy == null) { vm.cancel(p) }
-                if (closable(vm, p)) GhostButton("Clean up", Modifier.weight(1f), Tv.Dim, vm.busy == null) { vm.closeStale(p) }
+                if (!p.stale) TvButton("Cancel", Modifier.weight(1f), Btn.Danger, height = 44.dp, enabled = idle) { vm.cancel(p) }
+                if (canClose) TvButton("Clean up", Modifier.weight(1f), Btn.Secondary, height = 44.dp, enabled = idle) { vm.closeStale(p) }
             }
         }
     }
-    Spacer(Modifier.height(18.dp))
-    Text("Log", fontSize = 16.sp, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
-    GlassCard(padding = 16.dp) {
-        if (vm.log.isEmpty()) Caption("Nothing yet.")
-        vm.log.take(60).forEach { Caption(it, Modifier.padding(vertical = 2.dp)) }
+}
+
+@Composable
+private fun ApprovalMark(label: String, icon: Ic, ok: Boolean, modifier: Modifier) {
+    Row(
+        modifier.background(if (ok) Tv.AccentSoft else Tv.Surface2, RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TvIcon(icon, 16.dp, if (ok) Tv.Accent else Tv.Text3)
+        Spacer(Modifier.width(8.dp))
+        Text(label, style = Type.CaptionStrong, color = if (ok) Tv.Text else Tv.Text2, modifier = Modifier.weight(1f))
+        TvIcon(if (ok) Ic.CheckCircle else Ic.Hourglass, 16.dp, if (ok) Tv.Accent else Tv.Text3)
     }
 }
 
@@ -525,120 +545,201 @@ private fun ActivityScreen(vm: AppViewModel) {
 @Composable
 private fun CardCheck(vm: AppViewModel) {
     val ctx = LocalContext.current
-    Header("Card check", onBack = if (vm.store.setupStep < 4) ({ vm.go(Screen.Welcome) }) else null)
-    Box(Modifier.fillMaxWidth().padding(vertical = 10.dp), contentAlignment = Alignment.Center) { CardArt(label = vm.cardReport?.panLast4?.let { "•••• $it" } ?: "TAPVAULT") }
-    Caption(
-        "Reads a card's payment chip and tells you whether it can sign for Tapvault. Your card number never leaves this phone.",
-        Modifier.fillMaxWidth().padding(vertical = 8.dp),
-    )
-    PillButton("Check a card", Modifier.fillMaxWidth(), enabled = vm.busy == null, glyph = Glyph.Card) { vm.checkCard() }
-    vm.cardReport?.let { r ->
-        CardReportCard(r)
-        GhostButton("Share report", Modifier.fillMaxWidth()) {
-            ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, r.diagnostics()), "Share card report"))
+    val ready = vm.store.setupStep >= 4
+    if (ready) LargeTitle("Card check", "See whether a card can sign for Tapvault")
+    else {
+        TopBar("Card check", onBack = { vm.go(Screen.Welcome) })
+        Text("See whether a card can sign for Tapvault", style = Type.Body, color = Tv.Text2, modifier = Modifier.padding(bottom = 6.dp))
+    }
+    val r = vm.cardReport
+    Box(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 14.dp), contentAlignment = Alignment.Center) {
+        CardArt(Modifier.fillMaxWidth(), last4 = r?.panLast4, network = r?.network)
+    }
+    if (r == null) {
+        Group {
+            Row_(Ic.Scan, "Reads the payment chip", "The same contactless link a card terminal uses", tint = Tv.Accent, iconBg = Tv.AccentSoft)
+            GroupDivider()
+            Row_(Ic.Key, "Checks it can sign", "Looks for an RSA key Tapvault can verify on-chain", tint = Tv.Accent, iconBg = Tv.AccentSoft)
+            GroupDivider()
+            Row_(Ic.Lock, "Your card number stays here", "Only the last four digits are ever shown", tint = Tv.Accent, iconBg = Tv.AccentSoft)
+        }
+        Spacer(Modifier.height(18.dp))
+    }
+    NfcNotice(vm)
+    TvButton(if (r == null) "Check a card" else "Check another card", Modifier.fillMaxWidth(), if (r == null) Btn.Primary else Btn.Secondary, icon = Ic.Nfc, enabled = vm.busy == null && vm.hasNfc) { vm.checkCard() }
+    r?.let {
+        Spacer(Modifier.height(4.dp))
+        CardReportCard(it)
+        Spacer(Modifier.height(10.dp))
+        TvButton("Share report", Modifier.fillMaxWidth(), Btn.Ghost, icon = Ic.Share) {
+            ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, it.diagnostics()), "Share card report"))
         }
     }
 }
 
 @Composable
-private fun CardReportCard(r: app.tapvault.core.CardReport) {
+fun CardReportCard(r: app.tapvault.core.CardReport) {
     val ok = r.canSign
+    var details by remember { mutableStateOf(!ok) }
     Spacer(Modifier.height(12.dp))
-    GlassCard {
+    Column(Modifier.fillMaxWidth().surface(24.dp, stroke = (if (ok) Tv.Accent else Tv.Danger).copy(alpha = 0.3f)).padding(18.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("${r.network} •••• ${r.panLast4 ?: "????"}", fontSize = 17.sp)
-                Caption(r.label.ifBlank { r.aid })
+            Box(Modifier.size(48.dp).background((if (ok) Tv.Accent else Tv.Danger).copy(alpha = 0.14f), CircleShape), contentAlignment = Alignment.Center) {
+                TvIcon(if (ok) Ic.CheckCircle else Ic.XCircle, 26.dp, if (ok) Tv.Accent else Tv.Danger)
             }
-            Badge(if (ok) "Can sign" else "Can't sign", if (ok) Tv.Up else Tv.Down, (if (ok) Tv.Up else Tv.Down).copy(alpha = 0.15f))
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(if (ok) "This card can sign" else "This card can't sign", style = Type.Title, color = if (ok) Tv.Text else Tv.Danger)
+                Text("${r.network} •••• ${r.panLast4 ?: "????"} · ${r.label.ifBlank { r.aid }}", style = Type.Caption, color = Tv.Text2, maxLines = 2)
+            }
         }
-        Spacer(Modifier.height(10.dp))
-        InfoRow("Offline auth", listOfNotNull("SDA".takeIf { r.sdaSupported }, "DDA".takeIf { r.ddaSupported }, "CDA".takeIf { r.cdaSupported }).joinToString(" · ").ifEmpty { "none" })
-        InfoRow("CA key index", r.caIndex ?: "–")
-        InfoRow("Issuer key", r.issuerKeyBits?.let { "$it bit" } ?: "–")
-        InfoRow("Card key", r.iccKeyBits?.let { "$it bit, e=${r.iccExponent}" } ?: "–")
-        InfoRow("Signs with", r.signsWith ?: "–")
-        InfoRow("Challenge format", r.ddol ?: "–")
-        r.notes.forEach { Caption("· $it", Modifier.padding(top = 4.dp)) }
+        r.notes.forEach { Text("· $it", style = Type.Caption, color = Tv.Text2, modifier = Modifier.padding(top = 8.dp)) }
+        Row(Modifier.fillMaxWidth().padding(top = 12.dp).clip(RoundedCornerShape(10.dp)).clickable { details = !details }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Technical details", style = Type.CaptionStrong, color = Tv.Text2, modifier = Modifier.weight(1f))
+            TvIcon(Ic.ChevronDown, 18.dp, Tv.Text3, Modifier.rotate(if (details) 180f else 0f))
+        }
+        AnimatedVisibility(details, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+            Column {
+                InfoRow("Offline auth", listOfNotNull("SDA".takeIf { r.sdaSupported }, "DDA".takeIf { r.ddaSupported }, "CDA".takeIf { r.cdaSupported }).joinToString(" · ").ifEmpty { "none" })
+                InfoRow("CA key index", r.caIndex ?: "–")
+                InfoRow("Issuer key", r.issuerKeyBits?.let { "$it bit" } ?: "–")
+                InfoRow("Card key", r.iccKeyBits?.let { "$it bit, e=${r.iccExponent}" } ?: "–")
+                InfoRow("Signs with", r.signsWith ?: "–")
+                InfoRow("Challenge format", r.ddol ?: "–")
+            }
+        }
     }
 }
+
 
 // ---------------------------------------------------------------- settings
 
 @Composable
 private fun SettingsScreen(vm: AppViewModel) {
     val uri = LocalUriHandler.current
+    val clip = LocalClipboardManager.current
     var confirmReset by remember { mutableStateOf(false) }
+    var confirmFreeze by remember { mutableStateOf(false) }
     var showPicker by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<String?>(null) }
-    Header("Settings")
-    ListRow(Glyph.Home, "Wallet name", vm.walletName, "Edit", onClick = { renaming = vm.walletName })
-    ListRow(Glyph.Plus, "My wallets", "${vm.walletList.size} on this phone · switch or add one", "${vm.walletList.size}", onClick = { showPicker = true })
+    val w = vm.wallet
+    LargeTitle("Settings")
+
+    // profile
+    Row(Modifier.fillMaxWidth().surface(24.dp).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Avatar(vm.walletName, 52.dp)
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(vm.walletName, style = Type.Title)
+            vm.store.walletAccount?.let { a ->
+                Row(Modifier.clip(RoundedCornerShape(8.dp)).clickable { clip.setText(AnnotatedString(a)) }.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(shortAccount(a, 28), style = Type.Caption, color = Tv.Text2)
+                    Spacer(Modifier.width(6.dp))
+                    TvIcon(Ic.Copy, 14.dp, Tv.Text3)
+                }
+            }
+        }
+        RoundIcon(Ic.Edit, "Rename", 40.dp) { renaming = vm.walletName }
+    }
+
+    SectionHeader("Wallets")
+    Group {
+        Row_(Ic.Layers, "My wallets", "${vm.walletList.size} on this phone · switch or add one", chevron = true, onClick = { showPicker = true })
+        vm.store.walletAccount?.let { a -> GroupDivider(); Row_(Ic.Wallet, "Wallet account", shortAccount(a, 30), trailingIcon = Ic.External, onClick = { uri.openUri(vm.near.explorerAccount(a)) }) }
+        vm.store.gasAccount?.let { a -> GroupDivider(); Row_(Ic.Send, "Fee account", "Pays network fees, can't move funds", trailingIcon = Ic.External, onClick = { uri.openUri(vm.near.explorerAccount(a)) }) }
+    }
+
+    SectionHeader("Security")
+    Group {
+        Row_(Ic.Fingerprint, "Phone key", if (vm.phoneKeyExists) "${vm.phone.hardwareLabel} · this wallet only" else "none", value = "P-256")
+        GroupDivider()
+        val card = listOfNotNull(vm.store.cardNetwork, vm.store.cardLast4?.let { "•••• $it" }).joinToString(" ")
+        Row_(Ic.Card, if (card.isBlank()) "Bank card" else card, app.tapvault.core.CardRecipe.decode(vm.store.cardRecipe)?.let { "Contactless over NFC · ${it.method.label}" } ?: "Contactless bank card over NFC", value = "RSA")
+        w?.let {
+            GroupDivider()
+            Row_(Ic.ShieldCheck, "Approvals", "${it.threshold} of ${it.signers.size} signers for every payment", tint = Tv.Accent, iconBg = Tv.AccentSoft)
+            GroupDivider()
+            Row_(Ic.Timer, "Delays", "Transfers ${hoursLabel(it.delays.transfer)} · changes ${hoursLabel(it.delays.config)} · recovery ${hoursLabel(it.delays.recovery)}")
+        }
+    }
+
+    if (w?.frozen == false) {
+        SectionHeader("Emergency")
+        Group {
+            Row_(Ic.Freeze, "Freeze with phone", "Stop all transfers right away, no card needed", tint = Tv.Ice, iconBg = Tv.IceSoft, titleColor = Tv.Ice, chevron = true, onClick = { if (vm.busy == null) confirmFreeze = true })
+        }
+    }
+
+    SectionHeader("About")
+    Group {
+        Row_(Ic.Info, "Network", "NEAR testnet", value = "v${BuildConfig.VERSION_NAME}")
+    }
+    Spacer(Modifier.height(18.dp))
+    TvButton("Forget this wallet on this phone", Modifier.fillMaxWidth(), Btn.Danger, icon = Ic.Trash) { confirmReset = true }
+
     if (showPicker) WalletPicker(vm) { showPicker = false }
     renaming?.let { current ->
-        AlertDialog(
+        androidx.compose.material3.AlertDialog(
             onDismissRequest = { renaming = null },
-            containerColor = Tv.Plum,
-            confirmButton = { TextButton(onClick = { vm.renameWallet(current); renaming = null }, enabled = current.isNotBlank()) { Text("Save", color = Tv.Lime) } },
-            dismissButton = { TextButton(onClick = { renaming = null }) { Text("Cancel", color = Tv.Text) } },
-            title = { Text("Wallet name") },
-            text = { GlassField("Shown on this phone only", current, { renaming = it.take(24) }) },
+            containerColor = Tv.Surface2,
+            shape = RoundedCornerShape(28.dp),
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { vm.renameWallet(current); renaming = null }, enabled = current.isNotBlank()) { Text("Save", style = Type.Button, color = Tv.Accent) } },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { renaming = null }) { Text("Cancel", style = Type.Button, color = Tv.Text2) } },
+            title = { Text("Wallet name", style = Type.H2) },
+            text = { TvField("Shown on this phone only", current, { renaming = it.take(24) }) },
         )
     }
-    vm.store.walletAccount?.let { a -> ListRow(Glyph.Shield, "Wallet account", a, "↗", onClick = { uri.openUri(vm.near.explorerAccount(a)) }) }
-    vm.store.gasAccount?.let { a -> ListRow(Glyph.Send, "Fee account", "pays gas, can't move funds", "↗", onClick = { uri.openUri(vm.near.explorerAccount(a)) }) }
-    ListRow(Glyph.Phone, "Phone key", if (vm.phoneKeyExists) "${vm.phone.hardwareLabel} · this wallet only" else "none", "P-256")
-    ListRow(Glyph.Card, "Card", app.tapvault.core.CardRecipe.decode(vm.store.cardRecipe)?.let { "Bank card over NFC · ${it.method.label}" } ?: "Contactless bank card over NFC", "NFC")
-    vm.wallet?.let { w ->
-        ListRow(Glyph.History, "Delays", "transfers ${w.delays.transfer / 3600} h · changes ${w.delays.config / 3600} h · recovery ${w.delays.recovery / 3600} h")
-    }
-    Spacer(Modifier.height(16.dp))
-    if (vm.wallet?.frozen == false) {
-        GhostButton("Freeze with phone", Modifier.fillMaxWidth(), Tv.Down, vm.busy == null) { vm.freezeWithPhone() }
-        Spacer(Modifier.height(8.dp))
-    }
-    GhostButton("Forget this wallet on this phone", Modifier.fillMaxWidth(), Tv.Down) { confirmReset = true }
-    if (confirmReset) {
-        AlertDialog(
-            onDismissRequest = { confirmReset = false },
-            containerColor = Tv.Plum,
-            confirmButton = { TextButton(onClick = { confirmReset = false; vm.forgetWallet() }) { Text("Forget", color = Tv.Down) } },
-            dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("Keep", color = Tv.Text) } },
-            title = { Text("Forget ${vm.walletName}?") },
-            text = { Text("This deletes this wallet's phone key. With a single card the wallet can't approve anything without it, so its NEAR stays locked in the wallet for good (on testnet that is only test NEAR). Your other wallets on this phone aren't affected.", textAlign = TextAlign.Start) },
-        )
-    }
+    if (confirmFreeze) ConfirmDialog(
+        "Freeze with phone?",
+        "Every transfer stops at once. Unfreezing needs your phone and card, then waits ${hoursLabel(w?.delays?.config ?: 3600)}.",
+        "Freeze", { confirmFreeze = false; vm.freezeWithPhone() }, { confirmFreeze = false }, icon = Ic.Freeze,
+    )
+    if (confirmReset) ConfirmDialog(
+        "Forget ${vm.walletName}?",
+        "This deletes this wallet's phone key. With a single card the wallet can't approve anything without it, so its NEAR stays locked in the wallet for good (on testnet that is only test NEAR). Your other wallets on this phone aren't affected.",
+        "Forget", { confirmReset = false; vm.forgetWallet() }, { confirmReset = false }, dismiss = "Keep", danger = true, icon = Ic.Trash,
+    )
 }
 
 // ---------------------------------------------------------------- wallet switcher
 
 /** Every wallet on this phone; tap one to switch, or add a new one. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun WalletPicker(vm: AppViewModel, onDismiss: () -> Unit) {
+fun WalletPicker(vm: AppViewModel, onDismiss: () -> Unit) {
     LaunchedEffect(Unit) { vm.reloadWalletList(); vm.loadWalletBalances() }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = Tv.Plum,
-        title = { Text("My wallets") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                Caption("Each wallet has its own NEAR account, phone key and card. They share nothing but this phone.")
-                Spacer(Modifier.height(10.dp))
+    ModalBottomSheet(onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = Tv.Surface) {
+        SheetColumn {
+            Text("My wallets", style = Type.H2)
+            Text("Each wallet has its own NEAR account, phone key and card.", style = Type.Body, color = Tv.Text2, modifier = Modifier.padding(top = 4.dp, bottom = 16.dp))
+            Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 vm.walletList.forEach { e ->
                     val sub = when {
-                        e.ready -> e.account ?: ""
-                        e.account != null -> "setup not finished · ${e.account}"
-                        else -> "not created yet"
+                        e.ready -> e.account?.let { shortAccount(it, 28) } ?: ""
+                        e.account != null -> "Setup not finished"
+                        else -> "Not created yet"
                     }
-                    val bal = vm.walletBalances[e.id]?.let { "${Near.format(it, 2)} Ⓝ" } ?: if (e.ready) "…" else null
-                    ListRow(if (e.ready) Glyph.Shield else Glyph.Plus, e.name, sub, bal, subColor = if (e.ready) Tv.Dim else Tv.Warn,
-                        onClick = { onDismiss(); vm.switchWallet(e.id) }) {
-                        if (e.active) Box(Modifier.size(22.dp).background(Tv.Lime, CircleShape), contentAlignment = Alignment.Center) { GlyphIcon(Glyph.Check, 14.dp, Tv.OnLime) }
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(if (e.active) Tv.AccentSoft else Tv.Surface2)
+                            .border(1.dp, if (e.active) Tv.Accent.copy(alpha = 0.4f) else Tv.Stroke, RoundedCornerShape(20.dp))
+                            .clickable { onDismiss(); vm.switchWallet(e.id) }.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Avatar(e.name, 40.dp)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(e.name, style = Type.BodyStrong)
+                            Text(sub, style = Type.Caption, color = if (e.ready) Tv.Text2 else Tv.Warn, maxLines = 1)
+                        }
+                        val bal = vm.walletBalances[e.id]
+                        if (bal != null) Text("${Near.format(bal, 2)} NEAR", style = Type.Amount.copy(fontSize = 15.sp))
+                        else if (e.ready) Shimmer(Modifier.size(60.dp, 16.dp))
+                        if (e.active) { Spacer(Modifier.width(10.dp)); TvIcon(Ic.CheckCircle, 20.dp, Tv.Accent) }
                     }
                 }
             }
-        },
-        confirmButton = { TextButton(onClick = { onDismiss(); vm.addWallet() }, enabled = vm.busy == null) { Text("+ Add a wallet", color = Tv.Lime) } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Close", color = Tv.Text) } },
-    )
+            Spacer(Modifier.height(16.dp))
+            TvButton("Add a wallet", Modifier.fillMaxWidth(), Btn.Secondary, icon = Ic.Plus, enabled = vm.busy == null) { onDismiss(); vm.addWallet() }
+        }
+    }
 }

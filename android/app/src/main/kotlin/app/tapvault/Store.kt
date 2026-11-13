@@ -51,6 +51,15 @@ class Store(context: Context, file: String = WalletIndex.prefsFile(WalletIndex.F
         get() = p.getString("card_recipe", null)
         set(v) { p.edit().putString("card_recipe", v).commit() }
 
+    /** The enrolled card's network ("Visa") and last four digits, for display only. Nothing else about the card is kept. */
+    var cardNetwork: String?
+        get() = p.getString("card_network", null)
+        set(v) { p.edit().putString("card_network", v).commit() }
+
+    var cardLast4: String?
+        get() = p.getString("card_last4", null)
+        set(v) { p.edit().putString("card_last4", v).commit() }
+
     var instantNear: String
         get() = p.getString("instant", "1") ?: "1"
         set(v) { p.edit().putString("instant", v).commit() }

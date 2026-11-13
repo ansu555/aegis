@@ -8,7 +8,9 @@ import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.fragment.app.FragmentActivity
 import app.tapvault.core.CardTransceiver
@@ -18,6 +20,11 @@ class MainActivity : FragmentActivity() {
     private var nfc: NfcAdapter? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Draw behind the system bars with light icons: the app is dark in every system theme.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+        )
         super.onCreate(savedInstanceState)
         nfc = NfcAdapter.getDefaultAdapter(this)
         vm.attach(this)

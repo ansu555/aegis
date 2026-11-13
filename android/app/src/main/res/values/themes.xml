@@ -3,7 +3,8 @@
     <!-- AppCompat parent: Android 9/10 can show the AndroidX fingerprint dialog, which needs it. -->
     <style name="Theme.Tapvault" parent="Theme.AppCompat.NoActionBar">
         <item name="android:windowBackground">@color/bg</item>
-        <item name="android:statusBarColor">@color/bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@color/bg</item>
+        <item name="android:windowLightStatusBar">false</item>
     </style>
 </resources>
