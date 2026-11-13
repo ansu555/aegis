@@ -217,11 +217,12 @@ It prints `[recovery] …` lines ending in `done. wallet: …`.
 
 | # | Do | Expect | Result |
 |---|---|---|---|
-| M1 | New wallet → limits → turn **Add a backup card now** On → Continue | Setup steps include "Backup card added" | |
+| M1 | New wallet → limits → turn **Backup card** On → Continue | Setup steps include "Backup card added" | |
 | M2 | After card 1 is added: hold card 1 again | "That's the card you already added…" | |
 | M3 | Hold card 2 | Fingerprint "Add backup card ****1234 as a signer", then "Limits set" | |
 | M4 | Security Center | Main card + Backup card, no "No backup card" warning, no 1 h wait | |
 | M5 | Another new wallet, backup On, then **Skip the backup card** at step 3 | Setup finishes with one card | |
+| M6 | Another new wallet with **Spending limits** Off | Lock prompt "no instant payments, every payment waits 1 hour"; Home has no "Spent today"; Security Center "Spending limits · Off"; a 0.1 NEAR send shows "Approved, waiting 1 h" / "Spending limits are off, so every payment waits." | |
 
 **N. Fingerprint only** (Android 11+, a fingerprint enrolled)
 
@@ -237,7 +238,7 @@ It prints `[recovery] …` lines ending in `done. wallet: …`.
 
 | # | Do | Expect | Result |
 |---|---|---|---|
-| O1 | New phone: Welcome → **Recover a wallet** → type the account → Find the wallet | Approvals needed 2, Phone keys 1, Recovery wait 24 h; Card 1, Card 2 | |
+| O1 | New phone: Welcome → **I have a wallet** → **Recover a wallet** → type the account → Find the wallet | Approvals needed 2, Phone keys 1, Recovery wait 24 h; Card 1, Card 2 | |
 | O2 | Wallet with one card | "Can't recover with cards alone" | |
 | O3 | Slide to start recovery, hold card A | Fee account made, card A identified, then "Recovery: hold card 2 of 2" | |
 | O4 | Hold card A again | "That card already approved. Tap another…" | |
@@ -251,7 +252,7 @@ It prints `[recovery] …` lines ending in `done. wallet: …`.
 
 | # | Do | Expect | Result |
 |---|---|---|---|
-| P1 | Guardian phone: Welcome → **Be a guardian** → owner's account → Make my guardian code | Fingerprint prompt "Offer this phone as a guardian…", then a QR and Copy/Share | |
+| P1 | Guardian phone: Welcome → **I have a wallet** → **Be a guardian** → owner's account → Make my guardian code | Fingerprint prompt "Offer this phone as a guardian…", then a QR and Copy/Share | |
 | P2 | Owner: Security Center → Add a guardian phone → paste the code | Warning "A full co-signer…", slider appears | |
 | P3 | Paste a code with one character changed | "That guardian code has a typo…" | |
 | P4 | Slide, approve, tap a card | **Guardian added in 1 h** | |

@@ -499,7 +499,7 @@ terminal does). It must not store or transmit it.
    signing tap is at least two card transactions.
 4. **Recovery needs two cards (or a guardian).** Setup can add a backup
    card with no delay, and backup cards can be added later. Since 13 Nov the
-   app can recover a lost phone key: Welcome → Recover a wallet, where two
+   app can recover a lost phone key: Welcome → I have a wallet → Recover a wallet, where two
    of the wallet's cards propose and approve `RemoveSigner(old phone) +
    AddSigner(this phone)` (`Recovery.plan`), which waits the recovery delay
    (24 h) and which any phone key still on the wallet can cancel. A wallet

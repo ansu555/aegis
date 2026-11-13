@@ -78,7 +78,7 @@ Dependencies: `org.bouncycastle:bcprov-jdk18on:1.79` (ed25519),
 | `Keystore.kt` | `KeystoreSigner`: the phone's P-256 key behind BiometricPrompt |
 | `Store.kt` | `Store`: one wallet's settings in SharedPreferences; `WalletIndex`: the wallets on this phone |
 | `PendingCard.kt` | A card read during setup, kept until it is added on-chain |
-| `Onboarding.kt` | Welcome (three-slide intro), `LimitsScreen` (spending limits, the step before setup), `SetupProgress`, `NfcNotice`, the onboarding illustrations |
+| `Onboarding.kt` | Welcome (four-slide intro with image panels, `GlassButton`, the "I have a wallet" sheet, `NfcChip`), `LimitsScreen` (spending limits, the step before setup), `SetupProgress`, `NfcNotice` |
 | `Screens.kt` | `TapvaultApp` (shell, transitions, tab bar, overlays), `Home`, `ReceiveSheet`, `Send` (keypad and review sheet), `ActivityScreen` (`ProposalCard` with its approval tracker), `CardCheck` ("Your card" after setup), `CardReportCard`, `SettingsScreen` (with the technical log sheet), `WalletPicker` |
 | `Components.kt` | UI parts: `TvButton`, `ActionButton`, `Group`/`Row_` lists, `Notice`, `StatusPill`, `TvField`, `AmountField`, `CountingAmount`, `OutcomeBanner`, `AnimatedCheck`, `BusyOverlay`, `GlassDialog`/`ConfirmDialog`, `GlassSheet`, `TapSheet`, `CardArt`, `SlideToConfirm`, `QrCode`, `LogoMark` |
 | `Glass.kt` | The glass look and motion: `glassRim`, `frosted` (backdrop blur through Haze, `LocalHaze`), `AppBackground` (ambient light and grain), `GlassTabBar` and its `LiquidLens` (AGSL, Android 13+), `enter` (staggered entrance), `sharedCard` (the card flying between Home and Your card), `rememberTilt` (rotation sensor), `rememberReduceMotion` |
@@ -143,10 +143,15 @@ of it is skipped when the system's animator duration scale is 0
 - The tab bar (`GlassTabBar`) floats above the navigation bar on Home,
   Activity and Settings once setup is done: three icons ("Wallet", "Activity",
   "Settings") in a frosted pill, the current one under a glass bubble that
+  sits inside the bar with the same 6 dp gap above, below and at both ends,
   slides with a spring, stretches with its speed and shows the label. Dragging
   along the bar moves the bubble too. On Android 13+ the bubble magnifies what
   is under it (`LiquidLens`, an AGSL shader). "Activity" carries an amber count
   badge while proposals are open.
+- Headers stay fixed while the content below them scrolls: Home's wallet
+  switcher and receive button (`HomeHeader`), the large titles of Activity and
+  Settings, and the `TopBar` of every other screen (`PinnedTopBar` on the
+  form screens).
 - Card check is not a tab: after setup it is "Your card", opened by tapping
   the card on Home or from Settings › Your card. Its back button and system
   back return to the tab it was opened from (`AppViewModel.cameFrom`).
@@ -160,28 +165,40 @@ of it is skipped when the system's animator duration scale is 0
 
 ### Welcome
 
-- Wordmark and a "Testnet" pill. A three-slide pager (auto-advances every
-  5.5 s until swiped), each with an animated illustration: "Your bank card is
-  your hardware wallet", "Two keys, every payment", "Limits that have your
-  back". Swiping moves the picture and the text at different speeds; the
-  buttons sit on a glass panel.
-- `NfcNotice`: "This phone has no NFC" / "It can't read a bank card. Use an
-  Android phone with NFC.", or "NFC is off" / "Turn it on to tap your card
-  (Connected devices → NFC)." with "Open NFC settings".
-- "Create a new wallet" opens Limits. "Check my card first" opens Card check.
-  With other wallets on the phone: "Back to my wallets" (`cancelNewWallet`).
-- Footer: "Self-custody on NEAR testnet. Only test NEAR, no real money."
+- A story-style progress bar (one segment per slide; the current one fills
+  over 5.5 s, then the next slide comes in; a swipe restarts it) over a
+  four-slide pager. Each slide is a colour panel image
+  (`res/drawable-nodpi/welcome_*.webp`, 780×778, cropped from the design
+  mockups) with the title and body under it as text: "Your card is your key" (mint), "Two keys to pay" (lilac), "Limits that protect you"
+  (peach), "Card lost? Freeze it" (ice blue), each with a one-line body. Tapping the
+  left third of a panel goes back, elsewhere forward. The text block is as
+  tall as the longest slide's, so the panel keeps one size.
+- `NfcChip`: a small amber chip above the buttons, "No NFC on this phone" or
+  "NFC is off · Turn on" (opens the NFC settings).
+  The full `NfcNotice` stays on Limits.
+- Two separate glass buttons (`GlassButton`: the same glass box as a
+  `Group`, icon tile, label, chevron): "Create wallet" (mint) opens Limits;
+  "I have a wallet" opens a sheet with "Recover a wallet", "Be a guardian" and, with
+  other wallets on the phone, "Back to my wallets" (`cancelNewWallet`).
+- Footer: "Testnet · Check my card" (the link opens Card check).
 
 ### Limits (`LimitsScreen`)
 
-- "Set your spending limits", then two cards: "Instant payment limit" and
-  "Daily limit", each a NEAR field prefilled from `Store` (defaults 1 and 2; a
+- "Spending limits", then a **Spending limits** switch row (`Store.limitsOn`,
+  default On; Off says "Every payment waits 1 hour"). While On, two cards
+  appear: "Instant payment limit" and "Daily limit", each a NEAR field prefilled from `Store` (defaults 1 and 2; a
   comma becomes a dot, anything but digits and dots is dropped) with preset
-  chips (0.5 / 1 / 5 and 2 / 5 / 20 NEAR). A daily limit below the instant
+  chips (0.5 / 1 / 5 and 2 / 5 / 20) and **Custom**, which clears the field
+  and focuses it for any amount (selected whenever the value is not a preset). A daily limit below the instant
   limit shows "The daily limit must be at least the instant limit."
-- "What you'll need": the card, a screen lock, about a minute.
+- "Extra protection": **Backup card** and **Fingerprint only** switches.
+- Off sends `FinalizeArgs` with an empty `limits` list: the contract finds no
+  NEAR limit, so no transfer is instant and each waits `delays.transfer`.
+  Home then shows no "Spent today" card and Security Center shows "Spending
+  limits · Off". There is no screen to add a limit later yet
+  (`ConfigOp.SetLimit` exists in the contract and `Model.kt`).
 - "Continue" stays pinned at the bottom; it is disabled without NFC or while
-  the limits are invalid, and calls `beginSetup`.
+  the limits are invalid (only checked while On), and calls `beginSetup`.
 
 ### Setup (`SetupProgress`)
 
@@ -545,7 +562,9 @@ Label "Sending". In order:
    it as instant, so it waits"). Over the limits: `approve_card` only,
    result "Approved, waiting <h> h" / "This is over your instant limit. In <h>
    h, open Activity and tap Execute. Until then you can cancel it or freeze
-   the wallet." (log "approved #<id>; over the limit, executes after <h> h").
+   the wallet." (log "approved #<id>; over the limit, executes after <h> h"). The first sentence is "Spending limits are off, so every payment waits."
+   on a wallet with no limit, and "<receiver> isn't one of your instant
+   receivers." when the allowlist is what made it wait.
 
 ### Activity actions
 
@@ -614,7 +633,7 @@ several wallets) and its own Keystore key.
 - `addWallet()` registers a new id and opens Welcome for it (or just opens
   Welcome if the current wallet was never started). A new wallet that was
   never started (step 0, no setup plan, no card read) is removed when you
-  switch away from it ("Back to my wallets" on Welcome).
+  switch away from it (Welcome → "I have a wallet" → "Back to my wallets").
 - The switcher (`WalletPicker`) opens from the wallet name on Home, "My
   wallets" in Settings, or "Switch wallet" on a paused setup. It lists each
   wallet's name, account and spendable balance (`loadWalletBalances`), and

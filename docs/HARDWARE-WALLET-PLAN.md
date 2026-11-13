@@ -354,7 +354,7 @@ fewer signers than the threshold (the contract refuses it anyway with
 Needs two cards of the wallet.
 
 ```
-New phone, Welcome → "Recover a wallet"
+New phone, Welcome → "I have a wallet" → "Recover a wallet"
   1. Enter the wallet account id (or scan the QR from the old Receive
      sheet, which the user may have saved).
   2. App reads get_wallet: lists the cards (network + last 4 are not on

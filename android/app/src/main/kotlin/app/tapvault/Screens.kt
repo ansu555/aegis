@@ -109,16 +109,27 @@ fun TapvaultApp(vm: AppViewModel) {
                         label = "screen",
                     ) { s -> CompositionLocalProvider(LocalScreenScope provides this) {
                         val scroll = rememberScrollState()
+                        val homeUi = remember { HomeUi() }
                         val body: @Composable () -> Unit = {
-                            Column(
-                                Modifier.fillMaxSize().verticalScroll(scroll).statusBarsPadding().navigationBarsPadding()
-                                    .imePadding().padding(horizontal = 20.dp),
-                            ) {
+                            Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
+                            // the header stays put; only what is below it scrolls
+                            Column(Modifier.padding(horizontal = 20.dp)) {
+                                when (s) {
+                                    Screen.Home -> HomeHeader(vm, homeUi)
+                                    Screen.Activity -> LargeTitle("Activity", "Approvals, delays and history")
+                                    Screen.CardCheck -> TopBar(if (ready) "Your card" else "Card check", onBack = { vm.go(if (ready) vm.cameFrom else Screen.Welcome) })
+                                    Screen.Settings -> LargeTitle("Settings")
+                                    Screen.Security -> TopBar("Security", onBack = { vm.go(vm.cameFrom) })
+                                    Screen.Setup -> TopBar("Creating ${vm.walletName}")
+                                    else -> {}
+                                }
+                            }
+                            Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(scroll).padding(horizontal = 20.dp)) {
                                 when (s) {
                                     Screen.Welcome -> Welcome(vm)
                                     Screen.Limits -> LimitsScreen(vm)
                                     Screen.Setup -> SetupProgress(vm)
-                                    Screen.Home -> Home(vm)
+                                    Screen.Home -> Home(vm, homeUi)
                                     Screen.Send -> Send(vm)
                                     Screen.Activity -> ActivityScreen(vm)
                                     Screen.CardCheck -> CardCheck(vm)
@@ -128,6 +139,7 @@ fun TapvaultApp(vm: AppViewModel) {
                                 }
                                 // room for the floating tab bar
                                 Spacer(Modifier.height(if (s in tabScreens && ready) 104.dp else 28.dp))
+                            }
                             }
                         }
                         if (s == Screen.Welcome) {
@@ -256,35 +268,13 @@ private fun ProposalRow(vm: AppViewModel, p: ProposalInfo, onClick: () -> Unit) 
  * needs attention. Security details live in Settings, card checks under Your card.
  */
 @Composable
-private fun Home(vm: AppViewModel) {
+private fun Home(vm: AppViewModel, ui: HomeUi) {
     val w = vm.wallet
-    var showReceive by remember { mutableStateOf(false) }
-    var showPicker by remember { mutableStateOf(false) }
     var confirmFreeze by remember { mutableStateOf(false) }
     val frozen = w?.frozen == true
     val idle = vm.busy == null
     val tilt by rememberTilt()
 
-    // header: wallet switcher + receive
-    Row(Modifier.fillMaxWidth().padding(top = 10.dp).enter(0), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.weight(1f)) { Row(
-            Modifier.clip(RoundedCornerShape(50)).clickable(enabled = idle) { showPicker = true }.padding(end = 10.dp, top = 4.dp, bottom = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Avatar(vm.walletName, 42.dp)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f, fill = false)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(vm.walletName, style = Type.Title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                    Spacer(Modifier.width(4.dp))
-                    TvIcon(Ic.ChevronDown, 18.dp, Tv.Text2)
-                }
-                Text(vm.store.walletAccount?.let { shortAccount(it, 26) } ?: "", style = Type.Caption, color = Tv.Text3, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-        } }
-        Spacer(Modifier.width(12.dp))
-        RoundIcon(Ic.Qr, "Receive", 44.dp) { showReceive = true }
-    }
     vm.offline?.let { Notice(Ic.Offline, "Offline", it, Tv.Warn, Modifier.padding(top = 14.dp)) }
 
     // the card: leans with the phone; tap it for card details
@@ -318,7 +308,7 @@ private fun Home(vm: AppViewModel) {
     // actions
     Row(Modifier.fillMaxWidth().padding(top = 28.dp).enter(3), horizontalArrangement = Arrangement.spacedBy(30.dp, Alignment.CenterHorizontally)) {
         ActionButton(Ic.Send, "Send", primary = true, enabled = w?.frozen == false && idle) { vm.go(Screen.Send) }
-        ActionButton(Ic.Receive, "Receive") { showReceive = true }
+        ActionButton(Ic.Receive, "Receive") { ui.receive = true }
         ActionButton(Ic.Freeze, if (frozen) "Frozen" else "Freeze", tint = Tv.Ice, enabled = w?.frozen == false && idle) { confirmFreeze = true }
     }
 
@@ -360,13 +350,45 @@ private fun Home(vm: AppViewModel) {
         }
     }
 
-    if (showPicker) WalletPicker(vm) { showPicker = false }
-    if (showReceive) ReceiveSheet(vm) { showReceive = false }
+    if (ui.picker) WalletPicker(vm) { ui.picker = false }
+    if (ui.receive) ReceiveSheet(vm) { ui.receive = false }
     if (confirmFreeze) ConfirmDialog(
         "Freeze the wallet?",
         "One card tap stops every transfer. Unfreezing needs your phone and card, then waits ${hoursLabel(w?.delays?.config ?: 3600)}.",
         "Freeze", { confirmFreeze = false; vm.freezeWithCard() }, { confirmFreeze = false }, icon = Ic.Freeze,
     )
+}
+
+/** Home's sheets, opened from its pinned header. */
+class HomeUi {
+    var picker by mutableStateOf(false)
+    var receive by mutableStateOf(false)
+}
+
+/** Home's header (wallet switcher + receive); it stays put while Home scrolls. */
+@Composable
+private fun HomeHeader(vm: AppViewModel, ui: HomeUi) {
+    val idle = vm.busy == null
+    // header: wallet switcher + receive
+    Row(Modifier.fillMaxWidth().padding(top = 10.dp).enter(0), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.weight(1f)) { Row(
+            Modifier.clip(RoundedCornerShape(50)).clickable(enabled = idle) { ui.picker = true }.padding(end = 10.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Avatar(vm.walletName, 42.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f, fill = false)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(vm.walletName, style = Type.Title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                    Spacer(Modifier.width(4.dp))
+                    TvIcon(Ic.ChevronDown, 18.dp, Tv.Text2)
+                }
+                Text(vm.store.walletAccount?.let { shortAccount(it, 26) } ?: "", style = Type.Caption, color = Tv.Text3, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        } }
+        Spacer(Modifier.width(12.dp))
+        RoundIcon(Ic.Qr, "Receive", 44.dp) { ui.receive = true }
+    }
 }
 
 /**
@@ -454,8 +476,8 @@ private fun ColumnScope.Send(vm: AppViewModel) {
         }.take(14)
     }
 
+    PinnedTopBar("Send NEAR", onBack = { vm.go(Screen.Home) })
     Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
-        TopBar("Send NEAR", onBack = { vm.go(Screen.Home) })
         Spacer(Modifier.height(6.dp))
         TvField("To", to, { v ->
             val nv = v.trim().lowercase()
@@ -607,7 +629,6 @@ private fun ActivityScreen(vm: AppViewModel) {
     val uri = LocalUriHandler.current
     // ticks every second so countdowns move
     val tick by produceState(0L) { while (true) { kotlinx.coroutines.delay(1000); value++ } }
-    LargeTitle("Activity", "Approvals, delays and history")
     if (vm.proposals.isEmpty()) {
         Column(Modifier.fillMaxWidth().enter(1).surface(28.dp).padding(vertical = 34.dp, horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             AnimatedCheck(68.dp)
@@ -722,7 +743,6 @@ private fun CardCheck(vm: AppViewModel) {
     val ctx = LocalContext.current
     val ready = vm.store.setupStep >= 4
     val tilt by rememberTilt()
-    TopBar(if (ready) "Your card" else "Card check", onBack = { vm.go(if (ready) vm.cameFrom else Screen.Welcome) })
     val r = vm.cardReport
     CardArt(
         Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 16.dp).sharedCard(),
@@ -814,7 +834,6 @@ private fun SettingsScreen(vm: AppViewModel) {
     var showLog by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<String?>(null) }
     val w = vm.wallet
-    LargeTitle("Settings")
 
     // profile
     Row(Modifier.fillMaxWidth().enter(0).surface(26.dp).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {

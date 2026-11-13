@@ -31,7 +31,8 @@ class MainActivity : FragmentActivity() {
         )
         super.onCreate(savedInstanceState)
         // Wallet screens never appear in screenshots, screen recordings, casts or the recent-apps preview.
-        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+        // TEMPORARY (local only, do not commit): screenshots enabled
+        // window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         nfc = NfcAdapter.getDefaultAdapter(this)
         vm.attach(this)
         setContent { TapvaultApp(vm) }

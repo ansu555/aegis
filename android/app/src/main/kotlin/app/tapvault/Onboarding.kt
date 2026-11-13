@@ -2,12 +2,23 @@ package app.tapvault
 
 import android.content.Intent
 import android.provider.Settings
+import androidx.annotation.DrawableRes
+import androidx.compose.animation.core.Animatable
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -44,80 +55,148 @@ import kotlinx.coroutines.delay
 
 // ---------------------------------------------------------------- welcome
 
-private data class Slide(val title: String, val body: String)
+private data class Slide(@DrawableRes val art: Int, val title: String, val body: String)
 
+/** Each slide's art is a full colour panel (res/drawable-nodpi/welcome_*.webp, 780×778 px). */
 private val slides = listOf(
-    Slide("Your bank card is your hardware wallet", "Approve payments with a tap of the contactless card you already carry. No seed phrase, no extra device."),
-    Slide("Two keys, every payment", "Each payment needs your fingerprint on this phone and a tap of your card. Neither one alone can move funds."),
-    Slide("Limits that have your back", "Small payments go through instantly. Bigger ones wait, so you can cancel them or freeze the wallet."),
+    Slide(R.drawable.welcome_card, "Your card is your key", "Tap it to approve. No seed phrase."),
+    Slide(R.drawable.welcome_two_keys, "Two keys to pay", "Your fingerprint and your card."),
+    Slide(R.drawable.welcome_limits, "Limits that protect you", "Small payments are instant. Big ones wait."),
+    Slide(R.drawable.welcome_freeze, "Card lost? Freeze it", "One tap. Recover anytime."),
 )
+private const val ART_RATIO = 780f / 778f
+private const val SLIDE_MS = 5_500
+
+/** Mint: the welcome screen's call to action, the one colour that isn't in a slide panel. */
+private val Mint = Color(0xFF7CF5C4)
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun Welcome(vm: AppViewModel) {
     val others = vm.walletList.count { !it.active }
     val pager = rememberPagerState { slides.size }
-    // Gentle auto-advance until the user swipes.
-    LaunchedEffect(pager.currentPage, pager.isScrollInProgress) {
-        if (!pager.isScrollInProgress) { delay(5_500); pager.animateScrollToPage((pager.currentPage + 1) % slides.size) }
+    val scope = rememberCoroutineScope()
+    var more by remember { mutableStateOf(false) }
+    // Story style: the current segment fills up, then the next slide comes in. A swipe restarts the timer.
+    val fill = remember { Animatable(0f) }
+    LaunchedEffect(pager.settledPage, pager.isScrollInProgress) {
+        fill.snapTo(0f)
+        if (pager.isScrollInProgress) return@LaunchedEffect
+        fill.animateTo(1f, tween(SLIDE_MS, easing = LinearEasing))
+        pager.animateScrollToPage((pager.settledPage + 1) % slides.size)
     }
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Wordmark(30.dp)
-            Spacer(Modifier.weight(1f))
-            StatusPill("Testnet", Tv.Warn)
-        }
-        HorizontalPager(pager, Modifier.fillMaxWidth().weight(1f)) { i ->
-            // parallax: the art moves further than the text, and fades as it leaves
-            val off = (pager.currentPage - i) + pager.currentPageOffsetFraction
-            Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                Box(
-                    Modifier.fillMaxWidth().weight(1f).graphicsLayer {
-                        translationX = off * size.width * 0.45f
-                        alpha = 1f - kotlin.math.abs(off).coerceAtMost(1f) * 0.7f
-                        val sc = 1f - kotlin.math.abs(off).coerceAtMost(1f) * 0.12f
-                        scaleX = sc; scaleY = sc
-                    },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    when (i) {
-                        0 -> CardHeroArt()
-                        1 -> TwoKeysArt()
-                        else -> LimitsArt()
-                    }
-                }
-                Column(Modifier.graphicsLayer { translationX = off * size.width * 0.12f }, horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(slides[i].title, style = Type.Hero.copy(brush = Tv.titanium()), textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 8.dp))
-                    Spacer(Modifier.height(12.dp))
-                    Text(slides[i].body, style = Type.Body, color = Tv.Text2, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 12.dp))
-                }
-            }
-        }
-        Spacer(Modifier.height(22.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+        Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             repeat(slides.size) { i ->
-                val w by animateDpAsState(if (pager.currentPage == i) 22.dp else 7.dp, label = "dot")
-                val c by animateColorAsState(if (pager.currentPage == i) Tv.Accent else Tv.GlassStrong, label = "dotc")
-                Box(Modifier.padding(horizontal = 3.dp).size(w, 7.dp).background(c, CircleShape))
+                val f = when { i < pager.settledPage -> 1f; i == pager.settledPage -> fill.value; else -> 0f }
+                Box(Modifier.weight(1f).height(3.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.22f))) {
+                    Box(Modifier.fillMaxHeight().fillMaxWidth(f).background(Color.White, CircleShape))
+                }
             }
         }
-        Spacer(Modifier.height(22.dp))
-        NfcNotice(vm)
-        // the actions sit on one glass panel
-        Column(Modifier.fillMaxWidth().surface(30.dp).padding(10.dp)) {
-            TvButton("Create a new wallet", Modifier.fillMaxWidth(), icon = Ic.Plus) { vm.go(Screen.Limits) }
-            Spacer(Modifier.height(8.dp))
-            TvButton("Check my card first", Modifier.fillMaxWidth(), Btn.Secondary, icon = Ic.Scan) { vm.go(Screen.CardCheck) }
-            Row(Modifier.fillMaxWidth()) {
-                TvButton("Recover a wallet", Modifier.weight(1f), Btn.Ghost, height = 46.dp) { vm.go(Screen.Recover) }
-                TvButton("Be a guardian", Modifier.weight(1f), Btn.Ghost, height = 46.dp) { vm.go(Screen.Guardian) }
+        HorizontalPager(pager, Modifier.fillMaxWidth().weight(1f).padding(top = 18.dp), pageSpacing = 20.dp) { i ->
+            // parallax: the text trails the panel a little
+            val off = (pager.currentPage - i) + pager.currentPageOffsetFraction
+            Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+                // The panel takes the room the text leaves; it shrinks on short screens instead of pushing the text off.
+                Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                    Image(
+                        painterResource(slides[i].art), contentDescription = null, contentScale = ContentScale.Crop,
+                        modifier = Modifier.aspectRatio(ART_RATIO, matchHeightConstraintsFirst = true).clip(RoundedCornerShape(30.dp))
+                            .pointerInput(Unit) {
+                                // tap the left third to go back, anywhere else to go on
+                                detectTapGestures { p ->
+                                    val to = if (p.x < size.width / 3f) (i - 1).coerceAtLeast(0) else (i + 1) % slides.size
+                                    scope.launch { pager.animateScrollToPage(to) }
+                                }
+                            },
+                    )
+                }
+                // Every slide's text is laid out invisibly underneath, so the block is as tall as the longest
+                // one: the panel keeps one size across slides and the body sits right under its title.
+                Box(Modifier.padding(top = 24.dp).graphicsLayer { translationX = off * size.width * 0.12f }, contentAlignment = Alignment.TopCenter) {
+                    slides.forEach { SlideText(it, Modifier.alpha(0f).clearAndSetSemantics {}) }
+                    SlideText(slides[i])
+                }
             }
+        }
+        Spacer(Modifier.height(14.dp))
+        NfcChip(vm)
+        GlassButton(Ic.Plus, "Create wallet", Mint, Mint.copy(alpha = 0.14f)) { vm.go(Screen.Limits) }
+        Spacer(Modifier.height(10.dp))
+        GlassButton(Ic.Wallet, "I have a wallet") { more = true }
+        Row(
+            Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 8.dp).clip(RoundedCornerShape(12.dp)).pressable { vm.go(Screen.CardCheck) }.padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Testnet · ", style = Type.Caption, color = Tv.Text3, maxLines = 1)
+            Text("Check my card", style = Type.CaptionStrong, color = Mint, maxLines = 1)
+        }
+    }
+    if (more) GlassSheet({ more = false }) {
+        Text("I have a wallet", style = Type.H2, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+        Spacer(Modifier.height(18.dp))
+        Group {
+            Row_(Ic.Refresh, "Recover a wallet", "Move it to this phone", chevron = true, onClick = { more = false; vm.go(Screen.Recover) })
+            GroupDivider()
+            Row_(Ic.ShieldCheck, "Be a guardian", "Help a friend recover", chevron = true, onClick = { more = false; vm.go(Screen.Guardian) })
             if (others > 0) {
-                Spacer(Modifier.height(2.dp))
-                TvButton("Back to my wallets", Modifier.fillMaxWidth(), Btn.Ghost, height = 48.dp) { vm.cancelNewWallet() }
+                GroupDivider()
+                Row_(Ic.Wallet, "Back to my wallets", if (others == 1) "1 wallet on this phone" else "$others wallets on this phone", chevron = true, onClick = { more = false; vm.cancelNewWallet() })
             }
         }
-        Caption("Self-custody on NEAR testnet. Only test NEAR, no real money.", Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 8.dp), Tv.Text3, TextAlign.Center)
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun SlideText(slide: Slide, modifier: Modifier = Modifier) {
+    Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            slide.title, style = Type.Hero.copy(fontSize = 30.sp, lineHeight = 36.sp), color = Tv.Text,
+            textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 8.dp),
+        )
+        Spacer(Modifier.height(10.dp))
+        Text(slide.body, style = Type.Body, color = Tv.Text2, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 12.dp))
+    }
+}
+
+/** A welcome button on the same glass box as a [Group]: icon tile, label, chevron. */
+@Composable
+private fun GlassButton(icon: Ic, text: String, tint: Color = Tv.Text, tileBg: Color = Tv.GlassStrong, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().height(64.dp).surface(22.dp).clip(RoundedCornerShape(22.dp))
+            .pressable(haptic = true, onClick = onClick).semantics { role = Role.Button }
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconTile(icon, tint, tileBg)
+        Spacer(Modifier.width(14.dp))
+        Text(text, style = Type.BodyStrong, color = tint, maxLines = 1, modifier = Modifier.weight(1f))
+        TvIcon(Ic.Chevron, 18.dp, Tv.Text3)
+    }
+}
+
+/** A small amber chip when this phone can't read a card right now; the full notice waits on the limits screen. */
+@Composable
+private fun NfcChip(vm: AppViewModel) {
+    val ctx = LocalContext.current
+    val text = when {
+        !vm.hasNfc -> "No NFC on this phone"
+        !vm.nfcEnabled -> "NFC is off · Turn on"
+        else -> return
+    }
+    Box(Modifier.fillMaxWidth().padding(bottom = 12.dp), contentAlignment = Alignment.Center) {
+        Row(
+            Modifier.clip(RoundedCornerShape(50)).background(Tv.WarnSoft)
+                .pressable(enabled = vm.hasNfc) { runCatching { ctx.startActivity(Intent(Settings.ACTION_NFC_SETTINGS)) } }
+                .padding(horizontal = 12.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TvIcon(Ic.Nfc, 15.dp, Tv.Warn)
+            Spacer(Modifier.width(6.dp))
+            Text(text, style = Type.CaptionStrong, color = Tv.Warn, maxLines = 1)
+        }
     }
 }
 
@@ -139,6 +218,7 @@ fun NfcNotice(vm: AppViewModel, modifier: Modifier = Modifier) {
 
 @Composable
 fun ColumnScope.LimitsScreen(vm: AppViewModel) {
+    var limitsOn by remember { mutableStateOf(vm.store.limitsOn) }
     var instant by remember { mutableStateOf(vm.store.instantNear) }
     var daily by remember { mutableStateOf(vm.store.dailyNear) }
     fun clean(v: String) = v.replace(',', '.').filter { it.isDigit() || it == '.' }.take(12)
@@ -149,20 +229,34 @@ fun ColumnScope.LimitsScreen(vm: AppViewModel) {
         i > d -> "The daily limit must be at least the instant limit."
         else -> null
     }
+    val limitsOk = !limitsOn || (err == null && i != null && d != null)
+    PinnedTopBar("New wallet", onBack = { vm.go(Screen.Welcome) })
     Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
-    TopBar("New wallet", onBack = { vm.go(Screen.Welcome) })
-    Text("Set your spending limits", style = Type.H1, modifier = Modifier.padding(top = 8.dp))
-    Text("Payments within these go out instantly with your fingerprint and card. Anything bigger waits an hour, so you can cancel it.", style = Type.Body, color = Tv.Text2, modifier = Modifier.padding(top = 8.dp))
+    Text("Spending limits", style = Type.H1, modifier = Modifier.padding(top = 8.dp))
+    Text("Small payments go out instantly. Bigger ones wait 1 hour.", style = Type.Body, color = Tv.Text2, modifier = Modifier.padding(top = 8.dp))
     Spacer(Modifier.height(22.dp))
-    LimitInput("Instant payment limit", "Largest single payment that goes out at once", instant, { instant = clean(it) }, listOf("0.5", "1", "5"))
-    Spacer(Modifier.height(14.dp))
-    LimitInput("Daily limit", "Most that can go out instantly in 24 hours", daily, { daily = clean(it) }, listOf("2", "5", "20"), err)
+    Group {
+        Row_(
+            Ic.Timer, "Spending limits", if (limitsOn) "Small payments are instant" else "Every payment waits 1 hour",
+            value = if (limitsOn) "On" else "Off", chevron = true, tint = if (limitsOn) Tv.Positive else Tv.Text,
+            iconBg = if (limitsOn) Tv.PositiveSoft else Tv.GlassStrong,
+            onClick = { limitsOn = !limitsOn },
+        )
+    }
+    AnimatedVisibility(limitsOn) {
+        Column {
+            Spacer(Modifier.height(14.dp))
+            LimitInput("Instant payment limit", "Largest payment that goes out at once", instant, { instant = clean(it) }, listOf("0.5", "1", "5"))
+            Spacer(Modifier.height(14.dp))
+            LimitInput("Daily limit", "Most that goes out instantly in a day", daily, { daily = clean(it) }, listOf("2", "5", "20"), err)
+        }
+    }
     var backup by remember { mutableStateOf(vm.store.wantBackup) }
     var strict by remember { mutableStateOf(vm.store.strictKey) }
     SectionHeader("Extra protection")
     Group {
         Row_(
-            Ic.Card, "Add a backup card now", "A second card, added during setup with no wait. Keep it at home.",
+            Ic.Card, "Backup card", "Add a second card now. Keep it at home.",
             value = if (backup) "On" else "Off", chevron = true, tint = if (backup) Tv.Positive else Tv.Text,
             iconBg = if (backup) Tv.PositiveSoft else Tv.GlassStrong,
             onClick = { backup = !backup; vm.setSetupOptions(backup, strict) },
@@ -170,26 +264,17 @@ fun ColumnScope.LimitsScreen(vm: AppViewModel) {
         if (android.os.Build.VERSION.SDK_INT >= 30) {
             GroupDivider()
             Row_(
-                Ic.Fingerprint, "Fingerprint only", "Approvals refuse the PIN or pattern. If the fingerprint stops working, your cards recover the wallet.",
+                Ic.Fingerprint, "Fingerprint only", "No PIN or pattern for approvals",
                 value = if (strict) "On" else "Off", chevron = true, tint = if (strict) Tv.Positive else Tv.Text,
                 iconBg = if (strict) Tv.PositiveSoft else Tv.GlassStrong,
                 onClick = { strict = !strict; vm.setSetupOptions(backup, strict) },
             )
         }
     }
-    SectionHeader("What you'll need")
-    Group {
-        Row_(Ic.Card, "Your contactless bank card", "Visa, Mastercard, RuPay and others with a chip")
-        GroupDivider()
-        Row_(Ic.Fingerprint, "A screen lock on this phone", "Fingerprint, PIN, pattern or password")
-        GroupDivider()
-        Row_(Ic.Clock, "About a minute", "Three approvals and one card tap")
-    }
     Spacer(Modifier.height(22.dp))
     NfcNotice(vm)
-    Caption("Limits are enforced by your wallet's contract on NEAR, not by this app.", Modifier.fillMaxWidth().padding(bottom = 16.dp), Tv.Text3, TextAlign.Center)
     }
-    TvButton("Continue", Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), enabled = vm.hasNfc && err == null && i != null && d != null, icon = Ic.Chevron) { vm.beginSetup(instant, daily) }
+    TvButton("Continue", Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), enabled = vm.hasNfc && limitsOk, icon = Ic.Chevron) { vm.beginSetup(limitsOn, instant, daily) }
 }
 
 @Composable
@@ -198,10 +283,13 @@ private fun LimitInput(title: String, sub: String, value: String, onChange: (Str
         Text(title, style = Type.BodyStrong)
         Text(sub, style = Type.Caption, color = Tv.Text2)
         Spacer(Modifier.height(12.dp))
-        TvField("", value, onChange, number = true, placeholder = "0", error = error, trailing = { Text("NEAR", style = Type.BodyStrong, color = Tv.Text2, modifier = Modifier.padding(end = 8.dp)) })
+        val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+        TvField("", value, onChange, number = true, placeholder = "Amount", error = error, focus = focus, trailing = { Text("NEAR", style = Type.BodyStrong, color = Tv.Text2, modifier = Modifier.padding(end = 8.dp)) })
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            presets.forEach { p -> Chip("$p NEAR", selected = value == p) { onChange(p) } }
+            presets.forEach { p -> Chip(p, selected = value == p) { onChange(p) } }
+            // Custom: clear the field and type any amount
+            Chip("Custom", selected = value !in presets) { onChange(""); runCatching { focus.requestFocus() } }
         }
     }
 }
@@ -226,7 +314,6 @@ fun SetupProgress(vm: AppViewModel) {
     )
     val done = steps.count { it.third }
     val active = steps.indexOfFirst { !it.third }
-    TopBar("Creating ${vm.walletName}")
     Box(Modifier.fillMaxWidth().padding(vertical = 18.dp), contentAlignment = Alignment.Center) {
         ProgressRing(done, steps.size, vm.busy != null)
     }
@@ -316,85 +403,6 @@ private fun ProgressRing(done: Int, total: Int, running: Boolean) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text("$done/$total", style = Type.H1.copy(fontFeatureSettings = "tnum"))
             Text("steps", style = Type.Caption, color = Tv.Text3)
-        }
-    }
-}
-
-// ---------------------------------------------------------------- illustrations (vector, scale to any screen)
-
-@Composable
-private fun CardHeroArt() {
-    val inf = rememberInfiniteTransition(label = "hero")
-    val float by inf.animateFloat(-6f, 6f, infiniteRepeatable(tween(2600, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "f")
-    val wave by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(2200, easing = LinearEasing)), label = "w")
-    val tilt by rememberTilt()
-    Box(Modifier.fillMaxWidth().aspectRatio(1.1f), contentAlignment = Alignment.Center) {
-        Canvas(Modifier.fillMaxSize()) {
-            drawCircle(Brush.radialGradient(listOf(Tv.Accent.copy(alpha = 0.18f), Color.Transparent)), radius = size.minDimension * 0.5f)
-            for (i in 0..2) {
-                val p = (wave + i / 3f) % 1f
-                drawCircle(Tv.Accent.copy(alpha = (1f - p) * 0.25f), radius = size.minDimension * (0.28f + 0.22f * p), style = Stroke(1.5.dp.toPx()))
-            }
-        }
-        CardArt(Modifier.fillMaxWidth(0.74f).graphicsLayer { translationY = float * density; rotationZ = -8f; rotationX = 10f }, last4 = "4242", network = "Debit", tilt = tilt)
-    }
-}
-
-@Composable
-private fun TwoKeysArt() {
-    val inf = rememberInfiniteTransition(label = "keys")
-    val pulse by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(1800, easing = LinearEasing)), label = "p")
-    Box(Modifier.fillMaxWidth().aspectRatio(1.1f), contentAlignment = Alignment.Center) {
-        Canvas(Modifier.fillMaxSize()) {
-            drawCircle(Brush.radialGradient(listOf(Tv.Accent.copy(alpha = 0.14f), Color.Transparent)), radius = size.minDimension * 0.5f)
-            // a dashed link between the two keys with a travelling dot
-            val y = size.height * 0.5f
-            val x0 = size.width * 0.3f; val x1 = size.width * 0.7f
-            var x = x0
-            while (x < x1) { drawLine(Tv.StrokeStrong, Offset(x, y), Offset((x + 8.dp.toPx()).coerceAtMost(x1), y), 2.dp.toPx(), StrokeCap.Round); x += 16.dp.toPx() }
-            drawCircle(Tv.Accent, 5.dp.toPx(), Offset(x0 + (x1 - x0) * pulse, y))
-        }
-        Row(Modifier.fillMaxWidth(0.86f), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            KeyBubble(Ic.Fingerprint, "Phone")
-            Box(Modifier.size(64.dp).background(Tv.GlassStrong, CircleShape).glassRim(32.dp, shape = CircleShape), contentAlignment = Alignment.Center) { TvIcon(Ic.ShieldCheck, 30.dp, Tv.Accent) }
-            KeyBubble(Ic.Card, "Card")
-        }
-    }
-}
-
-@Composable
-private fun KeyBubble(icon: Ic, label: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.size(84.dp).background(Tv.GlassStrong, RoundedCornerShape(26.dp)).glassRim(26.dp), contentAlignment = Alignment.Center) {
-            TvIcon(icon, 38.dp, Tv.Text)
-        }
-        Spacer(Modifier.height(10.dp))
-        Text(label, style = Type.CaptionStrong, color = Tv.Text2)
-    }
-}
-
-@Composable
-private fun LimitsArt() {
-    val inf = rememberInfiniteTransition(label = "lim")
-    val f by inf.animateFloat(0.15f, 0.62f, infiniteRepeatable(tween(2600, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "f")
-    Box(Modifier.fillMaxWidth().aspectRatio(1.1f), contentAlignment = Alignment.Center) {
-        Canvas(Modifier.fillMaxSize()) { drawCircle(Brush.radialGradient(listOf(Tv.Accent.copy(alpha = 0.14f), Color.Transparent)), radius = size.minDimension * 0.5f) }
-        Column(Modifier.fillMaxWidth(0.82f).surface(26.dp, Tv.GlassStrong).padding(20.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconTile(Ic.Send, Tv.Positive, Tv.PositiveSoft)
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) { Text("0.5 NEAR", style = Type.Amount); Text("Instant", style = Type.Caption, color = Tv.Positive) }
-                TvIcon(Ic.CheckCircle, 20.dp, Tv.Positive)
-            }
-            Spacer(Modifier.height(14.dp))
-            Meter(f)
-            Spacer(Modifier.height(14.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconTile(Ic.Send, Tv.Warn, Tv.WarnSoft)
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) { Text("25 NEAR", style = Type.Amount); Text("Waits 1 h · cancel any time", style = Type.Caption, color = Tv.Warn) }
-                TvIcon(Ic.Timer, 20.dp, Tv.Warn)
-            }
         }
     }
 }

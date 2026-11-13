@@ -728,7 +728,7 @@ appear as "(N bytes, not TLV)".
 
 ### Where it comes from
 
-- **Card check:** Welcome → "Check my card first", or once a wallet exists
+- **Card check:** Welcome → "Check my card", or once a wallet exists
   tap the card on Home, or Settings → "Your card". Then the "Check a
   card" button and the tap sheet "Hold the card you want to check". Nothing
   touches the chain and nothing is saved.

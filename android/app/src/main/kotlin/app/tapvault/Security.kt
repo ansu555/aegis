@@ -42,7 +42,6 @@ fun SecurityScreen(vm: AppViewModel) {
     var strictOpen by remember { mutableStateOf(false) }
     var allowOpen by remember { mutableStateOf(false) }
     var confirmFreeze by remember { mutableStateOf(false) }
-    TopBar("Security", onBack = { vm.go(vm.cameFrom) })
 
     if (w == null) {
         Spacer(Modifier.height(12.dp))
@@ -60,7 +59,8 @@ fun SecurityScreen(vm: AppViewModel) {
     val points = listOf(
         cards.size >= 2,
         vm.alertsOn,
-        w.nearLimit?.let { l -> vm.balance?.let { b -> b.signum() > 0 && l.instantMax * java.math.BigInteger.TEN <= b } } ?: false,
+        // No limit at all: nothing goes out instantly, which meets this point.
+        w.nearLimit?.let { l -> vm.balance?.let { b -> b.signum() > 0 && l.instantMax * java.math.BigInteger.TEN <= b } ?: false } ?: true,
         report != null && report.ok && now - report.atSecs < 24 * 3600,
         !w.frozen,
     )
@@ -167,6 +167,9 @@ fun SecurityScreen(vm: AppViewModel) {
                 Row_(Ic.Send, "Instant limit", "Per payment, goes out at once", value = "${Near.format(l.instantMax)} NEAR")
                 GroupDivider()
                 Row_(Ic.Wallet, "Daily limit", "Most that goes out at once in a day", value = "${Near.format(l.dailyMax)} NEAR")
+                GroupDivider()
+            } ?: run {
+                Row_(Ic.Send, "Spending limits", "Every payment waits", value = "Off")
                 GroupDivider()
             }
             Row_(Ic.Timer, "Big transfer wait", "Over the limits; you can cancel meanwhile", value = hoursLabel(w.delays.transfer))

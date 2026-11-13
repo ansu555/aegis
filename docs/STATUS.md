@@ -78,13 +78,13 @@ bytes changed.
 ### 13 Nov: hardware-wallet phase 3 (app + client, same contract rules)
 
 Built: backup card during setup (a second `setup_add_signer`, no delay;
-"Add a backup card now" on the limits screen), recover on a new phone (plan
-5.5: Welcome → Recover a wallet; two cards propose and approve
+"Backup card" on the limits screen), recover on a new phone (plan
+5.5: Welcome → I have a wallet → Recover a wallet; two cards propose and approve
 `RemoveSigner(old phone) + AddSigner(this phone)`, 24 h, the old phone can
 cancel and its watchtower says "Someone is recovering this wallet"),
 fingerprint-only keys (5.8: a setup option, and for an existing wallet a key
-switch through one settings change), and a guardian phone (Welcome → Be a
-guardian shows a signed code; the owner adds it in Security Center with a
+switch through one settings change), and a guardian phone (Welcome → I have a
+wallet → Be a guardian shows a signed code; the owner adds it in Security Center with a
 "full co-signer" warning).
 
 | Check | Result |

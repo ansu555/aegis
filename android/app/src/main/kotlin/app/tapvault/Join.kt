@@ -46,8 +46,8 @@ private fun copy(ctx: Context, label: String, text: String) {
 fun ColumnScope.RecoverScreen(vm: AppViewModel) {
     val joining = vm.store.joinMode == "recover" && vm.store.walletAccount != null
     LaunchedEffect(joining) { if (joining) vm.refreshRecovery() }
+    PinnedTopBar("Recover a wallet", onBack = if (joining) null else ({ vm.recoverLookup = null; vm.go(Screen.Welcome) }))
     Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
-        TopBar("Recover a wallet", onBack = if (joining) null else ({ vm.recoverLookup = null; vm.go(Screen.Welcome) }))
         if (joining) RecoverProgress(vm) else RecoverStart(vm)
         Spacer(Modifier.height(24.dp))
     }
@@ -155,8 +155,8 @@ fun ColumnScope.GuardianScreen(vm: AppViewModel) {
     var account by remember { mutableStateOf("") }
     LaunchedEffect(vm.busy) { vm.loadGuardianCode() }
     val code = vm.guardianCode
+    PinnedTopBar("Be a guardian", onBack = if (code != null) null else ({ vm.go(Screen.Welcome) }))
     Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
-        TopBar("Be a guardian", onBack = if (code != null) null else ({ vm.go(Screen.Welcome) }))
         if (code == null) {
             Text("Help guard someone's wallet", style = Type.H1, modifier = Modifier.padding(top = 8.dp))
             Text(Guardian.WARNING, style = Type.Body, color = Tv.Text2, modifier = Modifier.padding(top = 8.dp, bottom = 18.dp))

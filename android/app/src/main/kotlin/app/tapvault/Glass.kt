@@ -208,8 +208,9 @@ fun GlassTabBar(items: List<NavItem>, current: Screen, badge: Int, go: (Screen) 
 
     val itemW = 86.dp
     val barH = 64.dp
-    val bubbleH = barH + 8.dp
     val pad = 6.dp
+    // the bubble sits inside the bar: the same gap (pad) above, below and at both ends
+    val bubbleH = barH - pad * 2
     val density = LocalDensity.current
     val itemPx = with(density) { itemW.toPx() }
     val padPx = with(density) { pad.toPx() }
@@ -219,8 +220,7 @@ fun GlassTabBar(items: List<NavItem>, current: Screen, badge: Int, go: (Screen) 
     fun stretchY() = 1f - (abs(pos.velocity) * 0.02f).coerceAtMost(0.10f)
 
     Box(modifier.navigationBarsPadding().padding(bottom = 6.dp), contentAlignment = Alignment.Center) {
-        // tall enough for the bubble, which stands a little proud of the bar
-        Box(Modifier.width(itemW * items.size + pad * 2).height(barH + 16.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.width(itemW * items.size + pad * 2).height(barH), contentAlignment = Alignment.Center) {
             // what the lens looks through: the frosted bar and the icons
             Box(
                 Modifier.matchParentSize().graphicsLayer {
@@ -347,7 +347,7 @@ private const val LENS_SRC = """
 fun Modifier.liquidBubble(): Modifier {
     val shape = RoundedCornerShape(50)
     return this
-        .shadow(10.dp, shape, ambientColor = Color.Black, spotColor = Color.Black.copy(alpha = 0.6f))
+        .shadow(4.dp, shape, ambientColor = Color.Black, spotColor = Color.Black.copy(alpha = 0.5f))
         .background(Color.White.copy(alpha = 0.10f), shape)
         .background(Brush.verticalGradient(0f to Color.White.copy(alpha = 0.16f), 0.35f to Color.Transparent, 0.8f to Color.Transparent, 1f to Color.White.copy(alpha = 0.06f)), shape)
         .border(

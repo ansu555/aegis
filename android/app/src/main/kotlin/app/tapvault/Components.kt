@@ -1,5 +1,6 @@
 package app.tapvault
 
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
@@ -265,6 +266,12 @@ fun TopBar(title: String = "", onBack: (() -> Unit)? = null, actions: @Composabl
     }
 }
 
+/** A [TopBar] above a screen's scrolling content, so it stays put while the content scrolls. */
+@Composable
+fun PinnedTopBar(title: String = "", onBack: (() -> Unit)? = null, actions: @Composable RowScope.() -> Unit = {}) {
+    Box(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) { TopBar(title, onBack, actions) }
+}
+
 /** Big left-aligned page title, as on the tab screens. */
 @Composable
 fun LargeTitle(text: String, sub: String? = null, trailing: @Composable RowScope.() -> Unit = {}) {
@@ -422,11 +429,13 @@ fun TvField(
     number: Boolean = false,
     error: String? = null,
     trailing: @Composable (RowScope.() -> Unit)? = null,
+    focus: androidx.compose.ui.focus.FocusRequester? = null,
 ) {
     Column(modifier) {
         if (label.isNotEmpty()) { Text(label, style = Type.CaptionStrong, color = Tv.Text2); Spacer(Modifier.height(8.dp)) }
         BasicTextField(
             value, onChange, singleLine = true,
+            modifier = if (focus != null) Modifier.focusRequester(focus) else Modifier,
             textStyle = Type.Body.copy(color = Tv.Text, fontWeight = FontWeight.Medium, fontSize = 16.sp),
             cursorBrush = SolidColor(Tv.Accent),
             keyboardOptions = KeyboardOptions(keyboardType = if (number) KeyboardType.Decimal else KeyboardType.Ascii, autoCorrectEnabled = false),

@@ -453,12 +453,11 @@ log. Only a crash is recorded by Android itself (**C**).
    install anyway.
 3. Open **Tapvault**.
 
-Expect the Welcome screen: the Tapvault logo with a "Testnet" pill, three
-swipeable slides (the first is "Your bank card is your hardware wallet"), the
-buttons **Create a new wallet** and **Check my card first**, and the line
-"Self-custody on NEAR testnet. Only test NEAR, no real money." With NFC off
-you also see "NFC is off" / "Turn it on to tap your card (Connected devices →
-NFC)." with **Open NFC settings**; turn it on.
+Expect the Welcome screen: a four-segment progress bar, four swipeable
+slides, each a colour panel (the first, mint, is "Your card is your key"), two glass buttons **Create wallet** (mint) and **I have a wallet**,
+and the line "Testnet · **Check my card**". With NFC off an amber chip above
+the buttons says "NFC is off · Turn on" (tap it for the
+NFC settings); turn it on.
 
 Record: phone model, Android version, install method, any installer warning.
 On failure: **S**.
@@ -467,7 +466,7 @@ On failure: **S**.
 
 For each card:
 
-1. Welcome → **Check my card first**. (After setup: tap the card on Home, or
+1. Welcome → **Check my card** (the link under the buttons). (After setup: tap the card on Home, or
    Settings → **Your card** → **Check a card**.)
 2. Tap **Check a card**. A sheet says "Hold the card you want to check".
 3. Hold the card flat against the back of the phone, near the camera, and keep
@@ -509,7 +508,7 @@ the report lines mean.
 Use a card that showed **Can sign**. Note which one.
 
 1. Back to Welcome (the back arrow at the top left of Card check) → **Create
-   a new wallet**. On "Set your spending limits" leave "Instant payment
+   wallet**. On "Spending limits" leave the switch On, "Instant payment
    limit" at 1 and "Daily limit" at 2.
 2. Tap **Continue**. The Setup screen ("Setting up your wallet", a progress
    ring "n/6 steps") lists six steps. Any earlier Card check report is

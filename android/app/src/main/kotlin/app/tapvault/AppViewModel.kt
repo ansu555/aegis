@@ -473,22 +473,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!act.nfcEnabled) throw IllegalStateException("Turn on NFC in Android settings (Connected devices → NFC), then try again.")
     }
 
-    fun beginSetup(instant: String, daily: String) {
+    fun beginSetup(limitsOn: Boolean, instant: String, daily: String) {
         val i = runCatching { Near.parse(instant.trim().replace(',', '.')) }.getOrNull()
         val d = runCatching { Near.parse(daily.trim().replace(',', '.')) }.getOrNull()
         val problem = when {
+            !limitsOn -> null
             i == null || d == null || i.signum() <= 0 || d.signum() <= 0 -> "Enter both limits as amounts like 1 or 0.5."
             i > d -> "The per-day limit must be at least the at-once limit."
+            else -> null
+        }
+        val nfcProblem = when {
             !hasNfc -> "This phone has no NFC, so it can't read a bank card."
             !nfcEnabled -> "Turn on NFC in Android settings (Connected devices → NFC) first."
             else -> null
         }
-        if (problem != null) {
-            outcome = Outcome(false, "Can't start yet", problem)
+        (problem ?: nfcProblem)?.let {
+            outcome = Outcome(false, "Can't start yet", it)
             return
         }
-        store.instantNear = instant.trim().replace(',', '.')
-        store.dailyNear = daily.trim().replace(',', '.')
+        store.limitsOn = limitsOn
+        if (limitsOn) {
+            store.instantNear = instant.trim().replace(',', '.')
+            store.dailyNear = daily.trim().replace(',', '.')
+        }
         cardReport = null
         go(Screen.Setup)
         continueSetup()
@@ -623,9 +630,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val args = FinalizeArgs(
                     threshold = 2,
                     delays = Delays.SHORTEST,
-                    limits = listOf(LimitInit(Asset.Near, Near.parse(store.instantNear), Near.parse(store.dailyNear))),
+                    // No limit: the contract treats every transfer as over the limit, so each one waits the transfer delay.
+                    limits = if (store.limitsOn) listOf(LimitInit(Asset.Near, Near.parse(store.instantNear), Near.parse(store.dailyNear))) else emptyList(),
                 )
-                phone.reason = "Lock the wallet: up to ${store.instantNear} NEAR at once, ${store.dailyNear} NEAR a day"
+                phone.reason = if (store.limitsOn) "Lock the wallet: up to ${store.instantNear} NEAR at once, ${store.dailyNear} NEAR a day"
+                else "Lock the wallet: no instant payments, every payment waits ${Delays.SHORTEST.transfer / 3600} hour"
                 ob.finalize(accounts, phone, args)
             }
             val keys = near.accessKeys(accounts.wallet)
@@ -737,7 +746,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             note("approved #$id; over the limit, executes after $hours h")
             outcome = Outcome(
                 true, "Approved, waiting $hours h",
-                (if (st.nearLimit?.isInstant(amount) == true) "$to isn't one of your instant receivers." else "This is over your instant limit.") + " In $hours h, open Activity and tap Execute. Until then you can cancel it or freeze the wallet.",
+                (when {
+                    st.nearLimit == null -> "Spending limits are off, so every payment waits."
+                    st.nearLimit?.isInstant(amount) == true -> "$to isn't one of your instant receivers."
+                    else -> "This is over your instant limit."
+                }) + " In $hours h, open Activity and tap Execute. Until then you can cancel it or freeze the wallet.",
                 near.explorerTx(r.hash),
             )
         }

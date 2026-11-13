@@ -117,6 +117,11 @@ class Store(context: Context, file: String = WalletIndex.prefsFile(WalletIndex.F
         get() = p.getString("pending_alias", null)
         set(v) { p.edit().putString("pending_alias", v).commit() }
 
+    /** Setup: false = the wallet gets no spending limit, so every payment waits the transfer delay. */
+    var limitsOn: Boolean
+        get() = p.getBoolean("limits_on", true)
+        set(v) { p.edit().putBoolean("limits_on", v).commit() }
+
     var instantNear: String
         get() = p.getString("instant", "1") ?: "1"
         set(v) { p.edit().putString("instant", v).commit() }

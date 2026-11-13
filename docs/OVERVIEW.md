@@ -63,7 +63,9 @@ What the app sets up, every time:
   Threshold 2, so every payment and every setting change needs both
   (freezing and cancelling need only one).
 - **Limit:** one, for NEAR, with the "Instant payment limit" and "Daily limit" amounts entered
-  on "Set your spending limits" (defaults 1 and 2 NEAR).
+  on "Spending limits" (defaults 1 and 2 NEAR). With the **Spending limits**
+  switch Off the wallet gets no limit at all: nothing is instant, so every
+  payment waits the transfer delay (1 h) and can be cancelled meanwhile.
 - **Delays:** the shortest the contract allows (`Delays.SHORTEST`): transfers
   1 h, setting changes 1 h, recovery 24 h.
 - **Accounts:** a wallet account `tv-<10 hex>.testnet` and a fee account
@@ -101,22 +103,25 @@ test plan for a real phone: [TESTING.md](TESTING.md).
 
 ### 2. Welcome
 
-- Three swipeable slides: "Your bank card is your hardware wallet", "Two
-  keys, every payment" and "Limits that have your back". A bank card is the
+- Four swipeable slides: "Your card is your key", "Two keys to pay", "Limits that protect you" and "Card lost? Freeze it". Under
+  them: **Create wallet**, **I have a wallet** (a sheet with **Recover a
+  wallet** and **Be a guardian**) and the link **Check my card**. A bank card is the
   only kind of signer; there is no demo or simulated card in the app.
-- **Check my card first** (optional) opens Card check: tap **Check a card** and
+- **Check my card** (optional) opens Card check: tap **Check a card** and
   hold the card to the phone. The app reads the chip, recovers the card's key
   through its certificates, tries the signing methods that fit the card one
   after another until one works, and says **Can sign** or **Can't sign**.
   Nothing touches the chain. **Share report** sends a text
   report: no card number, track data, name or certificates; only the last
   four digits. See [CARDS.md](CARDS.md).
-- **Create a new wallet** opens "Set your spending limits": "Instant payment
-  limit" (default 1 NEAR) and "Daily limit" (default 2 NEAR), each with
-  preset chips. Payments within both go through instantly; anything bigger
-  waits an hour. A comma works as the decimal point. The screen shows the
+- **Create wallet** opens "Spending limits". A **Spending limits** switch
+  (On by default) shows "Instant payment limit" (default 1 NEAR) and "Daily
+  limit" (default 2 NEAR), each with preset chips and a **Custom** chip. Payments within both go
+  through instantly; anything bigger waits an hour. Switched Off, the fields
+  hide and the wallet is created with no limit: every payment waits an hour. A comma works as the decimal point. The screen shows the
   problem under the field ("The daily limit must be at least the instant
-  limit.") and keeps **Continue** disabled until both are amounts above zero.
+  limit.") and keeps **Continue** disabled until both are amounts (only while the
+  switch is On).
 - **Continue** starts setup. It is disabled on a phone without NFC (so is
   **Check a card**). The screens show "This phone has no NFC" or "NFC is off"
   with an **Open NFC settings** button. While NFC is off, Continue is
