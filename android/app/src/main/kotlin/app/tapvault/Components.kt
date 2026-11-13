@@ -753,6 +753,10 @@ fun TapSheet(t: TapRequest, onCancel: () -> Unit) {
         ) {
             Box(Modifier.size(40.dp, 4.dp).background(Tv.StrokeStrong, RoundedCornerShape(2.dp)))
             Spacer(Modifier.height(18.dp))
+            if (t.hold != null) {
+                HoldPanel(t.hold, onCancel)
+                return@Column
+            }
             Text(if (t.reading) "Reading card" else "Ready to scan", style = Type.CaptionStrong.copy(letterSpacing = 0.4.sp), color = Tv.Text2)
             Spacer(Modifier.height(14.dp))
             Box(Modifier.size(240.dp), contentAlignment = Alignment.Center) {
@@ -793,6 +797,45 @@ fun TapSheet(t: TapRequest, onCancel: () -> Unit) {
             }
         }
     }
+}
+
+/**
+ * Hold-to-sign: the card was read and is one of the wallet's; it signs when
+ * the ring is full. Lifting the card restarts the count (the view model
+ * handles that). An app-side pause, and the text says so.
+ */
+@Composable
+private fun ColumnScope.HoldPanel(h: HoldProgress, onCancel: () -> Unit) {
+    val signing = h.leftMs <= 0
+    val target = if (h.totalMs <= 0) 1f else (1f - h.leftMs.toFloat() / h.totalMs).coerceIn(0f, 1f)
+    val p by animateFloatAsState(target, tween(if (signing) 200 else 480, easing = LinearEasing), label = "hold")
+    Text(if (signing) "Signing" else "Hold your card", style = Type.CaptionStrong.copy(letterSpacing = 0.4.sp), color = Tv.Text2)
+    Spacer(Modifier.height(18.dp))
+    Box(Modifier.size(196.dp), contentAlignment = Alignment.Center) {
+        Canvas(Modifier.fillMaxSize()) {
+            val sw = 7.dp.toPx()
+            val inset = Offset(sw / 2, sw / 2)
+            val box = Size(size.width - sw, size.height - sw)
+            drawArc(Color.White.copy(alpha = 0.09f), -90f, 360f, false, inset, box, style = Stroke(sw))
+            drawArc(Brush.sweepGradient(listOf(Tv.Text2, Tv.Positive, Tv.Positive)), -90f, 360f * p, false, inset, box, style = Stroke(sw, cap = StrokeCap.Round))
+        }
+        if (signing) Spinner(64.dp)
+        else Text("${(h.leftMs + 999) / 1000}", style = Type.Balance.copy(fontSize = 64.sp, brush = Tv.titanium()), modifier = Modifier.semantics { contentDescription = "${(h.leftMs + 999) / 1000} seconds left" })
+    }
+    Spacer(Modifier.height(18.dp))
+    Text("${h.card} found", style = Type.H2, textAlign = TextAlign.Center)
+    Spacer(Modifier.height(6.dp))
+    Text(
+        if (signing) "Signing now. Don't move the card." else "Keep the card on the phone. Card moved? The timer starts over.",
+        style = Type.Body, color = Tv.Text2, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 8.dp),
+    )
+    Spacer(Modifier.height(12.dp))
+    Text(
+        "Hold timer: a pause in this app so nothing signs by accident. Your real protection is the phone approval and the limits.",
+        style = Type.Caption, color = Tv.Text3, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 12.dp),
+    )
+    Spacer(Modifier.height(18.dp))
+    if (!signing) TvButton("Cancel", Modifier.fillMaxWidth(), Btn.Secondary) { onCancel() }
 }
 
 // ---------------------------------------------------------------- QR

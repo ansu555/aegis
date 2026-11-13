@@ -86,7 +86,7 @@ fun TapvaultApp(vm: AppViewModel) {
                 vm.go(
                     when {
                         vm.screen == Screen.Limits -> Screen.Welcome
-                        vm.screen == Screen.CardCheck && ready -> vm.cameFrom
+                        (vm.screen == Screen.CardCheck || vm.screen == Screen.Security) && ready -> vm.cameFrom
                         ready -> Screen.Home
                         else -> Screen.Welcome
                     },
@@ -122,6 +122,7 @@ fun TapvaultApp(vm: AppViewModel) {
                                     Screen.Activity -> ActivityScreen(vm)
                                     Screen.CardCheck -> CardCheck(vm)
                                     Screen.Settings -> SettingsScreen(vm)
+                                    Screen.Security -> SecurityScreen(vm)
                                 }
                                 // room for the floating tab bar
                                 Spacer(Modifier.height(if (s in tabScreens && ready) 104.dp else 28.dp))
@@ -153,6 +154,7 @@ fun TapvaultApp(vm: AppViewModel) {
                 vm.tap?.let { TapSheet(it) { vm.cancelTap() } }
                 // Setup shows its progress in place; everything else gets the overlay.
                 if (vm.tap == null && vm.screen != Screen.Setup) vm.busy?.let { BusyOverlay(it) }
+                if (vm.locked) LockOverlay(vm)
             }
         }
     }
@@ -163,11 +165,16 @@ fun TapvaultApp(vm: AppViewModel) {
 private fun camelWords(s: String) = s.replace(Regex("([a-z])([A-Z])"), "$1 $2").lowercase().replaceFirstChar { it.uppercase() }
 
 /** "Send" or the settings change in words ("Unfreeze", "Add signer"). */
-private fun proposalTitle(p: ProposalInfo): String =
-    if (p.isTransfer) "Send" else p.describe().removePrefix("Change settings: ").split(", ").joinToString(", ") { camelWords(it) }
+private fun proposalTitle(p: ProposalInfo): String = when {
+    p.isTransfer -> "Send"
+    p.addedCardKeyHashes().isNotEmpty() && p.removedKeyHashes().isEmpty() -> "Add backup card"
+    else -> p.describe().removePrefix("Change settings: ").split(", ").joinToString(", ") { camelWords(it) }
+}
 
-private fun proposalSubtitle(p: ProposalInfo): String =
-    p.transferReceiver()?.let { "To ${shortAccount(it)}" } ?: "Wallet setting"
+private fun proposalSubtitle(vm: AppViewModel, p: ProposalInfo): String =
+    p.transferReceiver()?.let { "To ${shortAccount(it)}" }
+        ?: p.addedCardKeyHashes().firstOrNull()?.let { h -> vm.cardBook.find(h)?.name ?: "A card not known on this phone" }
+        ?: "Wallet setting"
 
 private fun shortDescribe(p: ProposalInfo) = p.describe().removePrefix("Change settings: ")
 
@@ -277,7 +284,7 @@ private fun Home(vm: AppViewModel) {
     CardArt(
         Modifier.fillMaxWidth().padding(top = 24.dp, start = 6.dp, end = 6.dp).sharedCard()
             .pressable(haptic = true) { vm.go(Screen.CardCheck) }.semantics { contentDescription = "Your card" },
-        last4 = vm.store.cardLast4, network = vm.store.cardNetwork, frozen = frozen, tilt = tilt,
+        last4 = vm.mainCard?.last4, network = vm.mainCard?.network, frozen = frozen, tilt = tilt,
     )
 
     // balance
@@ -294,6 +301,10 @@ private fun Home(vm: AppViewModel) {
                 StatusPill("${Near.format(instant, 2)} NEAR available instantly", Tv.Text2)
             }
             w == null && vm.offline == null -> Shimmer(Modifier.size(170.dp, 26.dp))
+        }
+        securityPill(vm)?.let { (text, color, target) ->
+            Spacer(Modifier.height(8.dp))
+            StatusPill(text, color, modifier = Modifier.clip(RoundedCornerShape(50)).clickable(enabled = idle) { vm.go(target) })
         }
     }
 
@@ -351,6 +362,22 @@ private fun Home(vm: AppViewModel) {
     )
 }
 
+/**
+ * Home's at-a-glance security status (plan 4.2); the worst state wins.
+ */
+private fun securityPill(vm: AppViewModel): Triple<String, Color, Screen>? {
+    val w = vm.wallet ?: return null
+    val phoneIdx = runCatching { w.phoneIndexOf(vm.phone.publicKey) }.getOrNull()
+    val cards = w.cards().size
+    return when {
+        w.frozen -> Triple("Frozen · tap to unfreeze", Tv.Ice, Screen.Security)
+        vm.proposals.any { !it.stale && (phoneIdx == null || !it.approvedBy(phoneIdx)) } -> Triple("Unknown request · review", Tv.Danger, Screen.Activity)
+        vm.integrity?.ok == false -> Triple("Wallet check failed", Tv.Danger, Screen.Security)
+        cards < 2 -> Triple("No backup card · add one", Tv.Warn, Screen.Security)
+        else -> Triple("Protected · $cards cards · phone", Tv.Positive, Screen.Security)
+    }
+}
+
 /** Placeholder while values load: a soft light sweeping across glass. */
 @Composable
 fun Shimmer(modifier: Modifier) {
@@ -399,6 +426,8 @@ private fun ColumnScope.Send(vm: AppViewModel) {
     var to by remember { mutableStateOf("") }
     var amount by remember { mutableStateOf("") }
     var review by remember { mutableStateOf(false) }
+    // The receiver came from the clipboard (Paste button, or several characters inserted at once).
+    var pasted by remember { mutableStateOf(false) }
     val clip = LocalClipboardManager.current
     val focus = androidx.compose.ui.platform.LocalFocusManager.current
     val w = vm.wallet
@@ -421,8 +450,12 @@ private fun ColumnScope.Send(vm: AppViewModel) {
     Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
         TopBar("Send NEAR", onBack = { vm.go(Screen.Home) })
         Spacer(Modifier.height(6.dp))
-        TvField("To", to, { to = it.trim().lowercase() }, placeholder = "name.testnet", error = toError, trailing = {
-            Box(Modifier.clip(RoundedCornerShape(12.dp)).background(Tv.GlassStrong).clickable { clip.getText()?.text?.let { to = it.trim().lowercase() } }.padding(horizontal = 12.dp, vertical = 8.dp)) {
+        TvField("To", to, { v ->
+            val nv = v.trim().lowercase()
+            pasted = when { nv.isEmpty() -> false; nv.length - to.length > 1 -> true; else -> pasted }
+            to = nv
+        }, placeholder = "name.testnet", error = toError, trailing = {
+            Box(Modifier.clip(RoundedCornerShape(12.dp)).background(Tv.GlassStrong).clickable { clip.getText()?.text?.let { to = it.trim().lowercase(); pasted = true } }.padding(horizontal = 12.dp, vertical = 8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) { TvIcon(Ic.Paste, 16.dp, Tv.Text); Spacer(Modifier.width(6.dp)); Text("Paste", style = Type.CaptionStrong, color = Tv.Text) }
             }
         })
@@ -473,11 +506,37 @@ private fun ColumnScope.Send(vm: AppViewModel) {
             Spacer(Modifier.height(18.dp))
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { Amount(parsed, 4, Type.Balance.copy(fontSize = 40.sp), metal = true) }
             Spacer(Modifier.height(18.dp))
+            // The receiver in full, never cut, the last 6 characters bold: what an address swap changes is easy to see.
+            Column(Modifier.fillMaxWidth().surface(20.dp).padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Text("To", style = Type.Caption, color = Tv.Text2)
+                Text(
+                    androidx.compose.ui.text.buildAnnotatedString {
+                        val cut = (to.length - 6).coerceAtLeast(0)
+                        append(to.substring(0, cut))
+                        pushStyle(androidx.compose.ui.text.SpanStyle(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, color = Tv.Text))
+                        append(to.substring(cut))
+                        pop()
+                    },
+                    style = Type.Body, color = Tv.Text2, modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            val warnings = buildList {
+                val r = vm.receivers
+                val alike = r.lookAlike(to)
+                if (alike != null) add("Looks like $alike, which you paid before, but isn't the same account. Check every letter.")
+                else if (!r.isKnown(to)) add("First payment to this receiver from this phone.")
+                if (pasted) add("Pasted · check it: clipboard malware swaps addresses.")
+                if (spendable != null && spendable.signum() > 0 && parsed * BigInteger.TWO > spendable) add("More than half of this wallet's balance.")
+            }
+            if (warnings.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                Notice(Ic.Warning, if (warnings.size == 1) "Check this" else "Check these", warnings.joinToString("\n") { "• $it" }, Tv.Warn)
+            }
+            Spacer(Modifier.height(10.dp))
             Column(Modifier.fillMaxWidth().surface(20.dp).padding(horizontal = 16.dp, vertical = 8.dp)) {
-                InfoRow("To", to)
                 InfoRow("From", vm.walletName)
-                InfoRow("Speed", if (instant) "Instant" else "Waits ${hoursLabel(w?.delays?.transfer ?: 3600)}, cancellable", if (instant) Tv.Positive else Tv.Warn)
-                limit?.let { InfoRow("Instant allowance left", "${Near.format(it.availableNow(), 2)} NEAR") }
+                InfoRow("Arrives", if (instant) "Now (within your limit)" else "In ${hoursLabel(w?.delays?.transfer ?: 3600)} · you can cancel", if (instant) Tv.Positive else Tv.Warn)
+                limit?.let { InfoRow("Instant left today after", "${Near.format((if (instant) it.availableNow() - parsed else it.availableNow()).max(BigInteger.ZERO), 2)} NEAR") }
                 InfoRow("Network fee", "Paid by your fee account")
                 InfoRow("Network", "NEAR testnet")
             }
@@ -567,12 +626,13 @@ private enum class Node { Done, Waiting, Running, Failed }
 private fun ProposalCard(vm: AppViewModel, p: ProposalInfo, @Suppress("UNUSED_PARAMETER") tick: Long, modifier: Modifier = Modifier) {
     val w = vm.wallet
     val now = System.currentTimeMillis() / 1000
-    val cardIdx = w?.card()?.index
+    val cardIdxs = w?.cards()?.map { it.index }.orEmpty()
     val phoneIdx = runCatching { w?.phoneIndexOf(vm.phone.publicKey) }.getOrNull()
     val st = proposalStatus(vm, p)
     val idle = vm.busy == null
     val phoneOk = phoneIdx?.let { p.approvedBy(it) } ?: false
-    val cardOk = cardIdx?.let { p.approvedBy(it) } ?: false
+    // Any one of the wallet's cards counts.
+    val cardOk = cardIdxs.any { p.approvedBy(it) }
     val left = secondsToExecute(vm, p)
     val delay = delayFor(vm, p)
     val (runNode, runLabel, runProgress) = when {
@@ -587,7 +647,7 @@ private fun ProposalCard(vm: AppViewModel, p: ProposalInfo, @Suppress("UNUSED_PA
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(proposalTitle(p), style = Type.BodyStrong, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text("${proposalSubtitle(p)} · #${p.id}", style = Type.Caption, color = Tv.Text2, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${proposalSubtitle(vm, p)} · #${p.id}", style = Type.Caption, color = Tv.Text2, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             p.transferAmount()?.takeIf { p.isNearTransfer }?.let { Text("−${Near.format(it)} NEAR", style = Type.Amount) }
         }
@@ -600,7 +660,7 @@ private fun ProposalCard(vm: AppViewModel, p: ProposalInfo, @Suppress("UNUSED_PA
             TrackNode(if (runNode == Node.Done) Ic.Check else if (runNode == Node.Failed) Ic.XCircle else Ic.Timer, runLabel, runNode, runProgress)
         }
         if (st.text.isNotEmpty()) StatusPill(st.text, st.color, st.icon, Modifier.padding(top = 10.dp))
-        val canCard = cardIdx != null && !p.approvedBy(cardIdx) && (p.cardDeadlineTs ?: Long.MAX_VALUE) > now && !p.stale
+        val canCard = p.readyTs == null && cardIdxs.any { !p.approvedBy(it) } && (p.cardDeadlineTs ?: Long.MAX_VALUE) > now && !p.stale
         val canPhone = phoneIdx != null && !p.approvedBy(phoneIdx) && !p.stale
         val canExecute = secondsToExecute(vm, p) == 0L && !expired(vm, p) && !(w?.frozen == true && p.isTransfer)
         if (canCard || canPhone || canExecute) Spacer(Modifier.height(14.dp))
@@ -659,15 +719,22 @@ private fun CardCheck(vm: AppViewModel) {
     val r = vm.cardReport
     CardArt(
         Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 16.dp).sharedCard(),
-        last4 = r?.panLast4 ?: vm.store.cardLast4.takeIf { ready }, network = r?.network ?: vm.store.cardNetwork.takeIf { ready },
+        last4 = r?.panLast4 ?: vm.mainCard?.last4.takeIf { ready }, network = r?.network ?: vm.mainCard?.network.takeIf { ready },
         frozen = ready && vm.wallet?.frozen == true, tilt = tilt,
     )
     if (ready && r == null) {
-        val card = listOfNotNull(vm.store.cardNetwork, vm.store.cardLast4?.let { "•••• $it" }).joinToString(" ").ifBlank { "Bank card" }
         Group(Modifier.enter(1)) {
-            Row_(Ic.Card, card, app.tapvault.core.CardRecipe.decode(vm.store.cardRecipe)?.let { "Contactless · ${it.method.label}" } ?: "Contactless bank card over NFC", value = "RSA")
+            val signers = vm.wallet?.cards()
+            if (signers.isNullOrEmpty()) {
+                val c = vm.mainCard
+                Row_(Ic.Card, c?.name ?: "Bank card", c?.recipe?.let { "Contactless · ${it.method.label}" } ?: "Contactless bank card over NFC", value = "RSA")
+            } else signers.forEachIndexed { i, sgn ->
+                if (i > 0) GroupDivider()
+                val c = vm.cardBook.find(sgn.keyHash)
+                Row_(Ic.Card, vm.cardName(sgn), (if (i == 0) "Main card" else "Backup card") + (c?.recipe?.let { " · ${it.method.label}" } ?: ""), value = "RSA")
+            }
             GroupDivider()
-            Row_(Ic.ShieldCheck, "Co-signs every payment", "Together with this phone's key; neither alone moves funds", tint = Tv.Positive, iconBg = Tv.PositiveSoft)
+            Row_(Ic.ShieldCheck, "Co-signs every payment", "Any one of these cards together with this phone's key; no card alone moves funds", tint = Tv.Positive, iconBg = Tv.PositiveSoft)
         }
         SectionHeader("Check a card")
         Caption("See whether this or any other card can sign for Tapvault. Nothing is signed or stored.", Modifier.padding(start = 4.dp, bottom = 14.dp))
@@ -767,12 +834,13 @@ private fun SettingsScreen(vm: AppViewModel) {
     }
 
     Column(Modifier.enter(2)) {
-        SectionHeader("Your card")
+        SectionHeader(if ((w?.cards()?.size ?: 1) > 1) "Your cards" else "Your card")
         Group {
-            val card = listOfNotNull(vm.store.cardNetwork, vm.store.cardLast4?.let { "•••• $it" }).joinToString(" ")
+            val c = vm.mainCard
+            val more = ((w?.cards()?.size ?: 1) - 1).coerceAtLeast(0)
             Row_(
-                Ic.Card, if (card.isBlank()) "Bank card" else card,
-                app.tapvault.core.CardRecipe.decode(vm.store.cardRecipe)?.let { "Contactless · ${it.method.label}" } ?: "Contactless bank card over NFC",
+                Ic.Card, c?.name ?: "Bank card",
+                (c?.recipe?.let { "Contactless · ${it.method.label}" } ?: "Contactless bank card over NFC") + if (more > 0) " · +$more backup" else "",
                 chevron = true, onClick = { vm.go(Screen.CardCheck) },
             )
             GroupDivider()
@@ -783,6 +851,8 @@ private fun SettingsScreen(vm: AppViewModel) {
     Column(Modifier.enter(3)) {
         SectionHeader("Security")
         Group {
+            Row_(Ic.Shield, "Security Center", "Keys, backup cards, limits, delays and the hold timer", chevron = true, onClick = { vm.go(Screen.Security) })
+            GroupDivider()
             Row_(Ic.Fingerprint, "Phone key", if (vm.phoneKeyExists) "${vm.phone.hardwareLabel} · this wallet only" else "none", value = "P-256")
             w?.let {
                 GroupDivider()
@@ -894,5 +964,28 @@ fun WalletPicker(vm: AppViewModel, onDismiss: () -> Unit) {
         }
         Spacer(Modifier.height(16.dp))
         TvButton("Add a wallet", Modifier.fillMaxWidth(), Btn.Secondary, icon = Ic.Plus, enabled = vm.busy == null) { onDismiss(); vm.addWallet() }
+    }
+}
+
+/**
+ * App lock: shown after the app was away more than a minute (or on start).
+ * Hides balances and history until fingerprint or screen lock; it's a
+ * screen lock, not what protects the funds (the card and phone key do).
+ */
+@Composable
+private fun LockOverlay(vm: AppViewModel) {
+    LaunchedEffect(Unit) { vm.unlock() }
+    BackHandler(true) {}
+    Box(Modifier.fillMaxSize().background(Tv.Bg).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}, contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
+            TvIcon(Ic.Lock, 40.dp, Tv.Text)
+            Spacer(Modifier.height(16.dp))
+            Text("Tapvault is locked", style = Type.H2)
+            Text(
+                "Unlock with your fingerprint or screen lock to see balances and activity.",
+                style = Type.Body, color = Tv.Text2, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp, bottom = 22.dp),
+            )
+            TvButton("Unlock", Modifier.fillMaxWidth(), icon = Ic.Fingerprint) { vm.unlock() }
+        }
     }
 }

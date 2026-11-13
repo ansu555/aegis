@@ -9,11 +9,26 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.tapvault.core.Action
+import app.tapvault.core.AlreadySignerException
 import app.tapvault.core.Asset
 import app.tapvault.core.CapkStore
+import app.tapvault.core.CardBook
+import app.tapvault.core.CardCandidate
 import app.tapvault.core.CardCheckFailed
 import app.tapvault.core.CardRecipe
+import app.tapvault.core.CardSig
+import app.tapvault.core.KnownCard
+import app.tapvault.core.SignerInfo
+import app.tapvault.core.SignerKey
 import app.tapvault.core.WrongCardException
+import app.tapvault.core.Integrity
+import app.tapvault.core.Receivers
+import app.tapvault.core.Watch
+import app.tapvault.core.describe
+import app.tapvault.core.unhex
+import app.tapvault.core.hex
+import app.tapvault.core.provesPossession
+import app.tapvault.core.sha256
 import app.tapvault.core.CardReport
 import app.tapvault.core.CardService
 import app.tapvault.core.CardTransceiver
@@ -43,11 +58,25 @@ import java.util.Locale
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 
-enum class Screen { Welcome, Limits, Setup, Home, Send, Activity, CardCheck, Settings }
+enum class Screen { Welcome, Limits, Setup, Home, Send, Activity, CardCheck, Settings, Security }
 
-/** What the "tap your card" sheet shows. */
-/** A card tap the UI is waiting for; [reading] once a card is in the field. */
-data class TapRequest(val title: String, val reading: Boolean = false, val hint: String? = null)
+/**
+ * A card tap the UI is waiting for; [reading] once a card is in the field,
+ * [hold] while an identified card counts down before it signs.
+ */
+data class TapRequest(val title: String, val reading: Boolean = false, val hint: String? = null, val hold: HoldProgress? = null)
+
+/** Hold-to-sign countdown for [card] ("Visa •••• 0093"); [leftMs] of [totalMs] to go, 0 while signing. */
+data class HoldProgress(val card: String, val leftMs: Long, val totalMs: Long)
+
+/** The hold timer choices (seconds; 0 = off). */
+val HOLD_CHOICES = listOf(0, 3, 5, 10)
+
+/** A card read for "Add backup card" whose signature checked out on the phone, waiting for the user's review. */
+class BackupCandidate(val key: SignerKey.EmvCard, val recipe: CardRecipe, val network: String, val last4: String) {
+    val keyHash: String = key.keyHash().hex()
+    val name get() = KnownCard(keyHash, recipe, network, last4).name
+}
 
 /** A finished operation, shown as a result card. */
 data class Outcome(val ok: Boolean, val title: String, val detail: String = "", val link: String? = null)
@@ -104,8 +133,45 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun capks() = CapkStore.load()
 
-    private fun recipe() = CardRecipe.decode(store.cardRecipe)
     private fun cards() = CardService(capks())
+
+    /** The active wallet's cards known to this phone (Store.cards, kept here so the UI follows changes). */
+    var cardBook by mutableStateOf(store.cards)
+        private set
+
+    private fun saveCards(b: CardBook, s: Store = store) {
+        s.cards = b
+        if (s === store) cardBook = b
+    }
+
+    /** Card for display on Home and Your card: the first card of the book that is a signer, else the first known. */
+    val mainCard: KnownCard?
+        get() = wallet?.cards()?.firstNotNullOfOrNull { cardBook.find(it.keyHash) } ?: cardBook.cards.firstOrNull()
+
+    /** The name of the card signer [s]: from this phone's book, else "Card N" (network and digits aren't on chain). */
+    fun cardName(s: SignerInfo): String =
+        cardBook.find(s.keyHash)?.name ?: "Card ${(wallet?.cards()?.indexOfFirst { it.keyHash == s.keyHash } ?: 0) + 1}"
+
+    var holdSeconds by mutableStateOf(store.holdSeconds)
+        private set
+
+    /** A card read for "Add backup card", awaiting review. */
+    var backup by mutableStateOf<BackupCandidate?>(null)
+
+    /** Receivers paid before from this wallet (review warnings). */
+    var receivers by mutableStateOf(store.receivers)
+        private set
+
+    /** The last integrity check of the active wallet. */
+    var integrity by mutableStateOf(Integrity.Report.decode(store.integrity))
+        private set
+
+    /** App lock: balances hidden until the user unlocks (an app screen lock, not key security). */
+    var locked by mutableStateOf(false)
+        private set
+
+    var alertsOn by mutableStateOf(wallets.alertsOn)
+        private set
 
     fun note(s: String) {
         val t = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
@@ -173,13 +239,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * Wait for a real card tap over NFC and run [block] against it while it is
      * held. A card pulled away too early is retried with a fresh tap.
      */
-    private fun <T> withCard(title: String, block: (CardTransceiver) -> T): T {
+    private fun <T> withCard(title: String, holding: Boolean = false, block: (CardTransceiver) -> T): T {
         if (store.legacyDemoWallet) {
             throw IllegalStateException("This wallet was set up with the old simulated demo card. Forget it in Settings and set up again with your bank card.")
         }
         var hint: String? = null
         var wrongCard = false
-        repeat(3) { attempt ->
+        tapCancelled = false
+        // With the hold timer a lifted card restarts the countdown, so allow a few more tries.
+        repeat(if (holding) 6 else 3) { attempt ->
             val act = activity ?: throw IllegalStateException("app is not in the foreground")
             if (!act.hasNfc) throw IllegalStateException("This phone has no NFC, so it can't read a bank card.")
             if (!act.nfcEnabled) throw IllegalStateException("Turn on NFC in Android settings (Connected devices → NFC), then try again.")
@@ -187,14 +255,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val tag = awaitTag().get(2, TimeUnit.MINUTES)
                 tap = TapRequest(title, reading = true)
-                return IsoDepTransceiver(tag).use { block(it) }.also { activity?.vibrate() }
+                return IsoDepTransceiver(tag).use { block(it) }.also { activity?.vibrate(if (holding) 250 else 90) }
             } catch (e: java.util.concurrent.TimeoutException) {
                 throw IllegalStateException("No card was tapped. Try again and hold the card flat against the back of the phone.")
             } catch (e: java.util.concurrent.CancellationException) {
                 throw IllegalStateException("Card tap cancelled")
             } catch (e: android.nfc.TagLostException) {
                 note("card moved away (attempt ${attempt + 1}); hold it still")
-                hint = "The card moved away too soon. Tap again and keep it still until this screen closes."
+                hint = if (holding) "Card moved, hold it again. The timer starts over." else "The card moved away too soon. Tap again and keep it still until this screen closes."
             } catch (e: java.io.IOException) {
                 note("card link error: ${e.message}; tap again")
                 hint = "The card connection dropped. Tap again and keep it still until this screen closes."
@@ -203,20 +271,94 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 note("stale card connection: ${e.message}; tap again")
                 hint = "Tap the card again and keep it still until this screen closes."
             } catch (e: WrongCardException) {
-                note("a different card was tapped")
-                hint = "That's not the card in this wallet. Tap the card you added."
+                note("a card that isn't one of this wallet's was tapped; it signed nothing")
+                hint = "That card isn't one of this wallet's cards. Tap a card you added."
                 wrongCard = true
+            } catch (e: CardNotUsable) {
+                note("card not usable here: ${e.message}")
+                hint = e.message
             } finally {
                 pendingTag = null
                 tap = null
             }
         }
-        if (wrongCard) throw IllegalStateException("That's not the card in this wallet. Use the card you added during setup.")
+        if (wrongCard) throw IllegalStateException("That card isn't one of this wallet's cards. Use a card you added to this wallet.")
         throw IllegalStateException("Couldn't read the card. Hold it flat against the back of the phone, near the camera, for 3 seconds.")
     }
 
+    @Volatile private var tapCancelled = false
+
     fun cancelTap() {
+        tapCancelled = true
         pendingTag?.cancel(true)
+    }
+
+    /** A card of the wallet that can't be used for this tap (e.g. it already approved); the user may tap another. */
+    private class CardNotUsable(message: String) : Exception(message)
+
+    /** A wallet card's signature, with the signer it belongs to. */
+    private class Tapped(val signer: SignerInfo, val name: String, val sig: CardSig) {
+        val index get() = signer.index
+    }
+
+    /**
+     * One tap of any of the wallet's cards to sign [challenge]: read the card
+     * and find which signer it is by key hash (a card that isn't the wallet's
+     * is refused before it signs anything), refuse it if [unusable] says so,
+     * then, if [hold], wait the hold timer with a presence check about every
+     * 500 ms (the timer restarts if the card is lifted), and only then sign.
+     * The signer index comes from the tapped card, never a fixed index.
+     */
+    private fun tapWalletCard(
+        title: String,
+        st: WalletState,
+        challenge: ByteArray,
+        hold: Boolean = true,
+        unusable: (SignerInfo) -> String? = { null },
+    ): Tapped {
+        val book = store.cards
+        val signers = st.cards()
+        if (signers.isEmpty()) throw IllegalStateException("This wallet has no card signer.")
+        val candidates = signers.map { CardCandidate(it.keyHash, it.cardKey()!!, book.find(it.keyHash)?.recipe) }
+        val svc = cards()
+        val secs = if (hold) store.holdSeconds else 0
+        return withCard(title, holding = secs > 0) { link ->
+            val held = svc.identify(link, candidates)
+            val signer = signers.first { it.keyHash.equals(held.card.keyHash, ignoreCase = true) }
+            val name = cardName(signer)
+            unusable(signer)?.let { throw CardNotUsable(it) }
+            note("$name identified (signer ${signer.index})")
+            if (secs > 0) holdCard(title, name, secs * 1000L) { held.stillThere() }
+            tap = TapRequest(title, reading = true, hold = HoldProgress(name, 0, secs * 1000L).takeIf { secs > 0 })
+            Tapped(signer, name, held.sign(challenge))
+        }
+    }
+
+    /** The hold countdown: [present] about every 500 ms, a haptic tick each second; throws if the card goes or the user cancels. */
+    private fun holdCard(title: String, name: String, totalMs: Long, present: () -> Unit) {
+        val start = System.currentTimeMillis()
+        var lastSecond = (totalMs + 999) / 1000
+        while (true) {
+            if (tapCancelled) throw java.util.concurrent.CancellationException()
+            val left = totalMs - (System.currentTimeMillis() - start)
+            if (left <= 0) return
+            tap = TapRequest(title, reading = true, hold = HoldProgress(name, left, totalMs))
+            val second = (left + 999) / 1000
+            if (second != lastSecond) { activity?.vibrate(20); lastSecond = second }
+            Thread.sleep(minOf(500L, left))
+            present()
+        }
+    }
+
+    /** Change the hold timer; needs the phone's fingerprint or screen lock (an app-side setting). */
+    fun setHoldTimer(seconds: Int) = run("Confirm on your phone") {
+        require(seconds in HOLD_CHOICES)
+        phone.reason = "Set the card hold timer to ${if (seconds == 0) "off" else "$seconds s"}"
+        // A signature over an app-only message: just the user-verification gate, never sent anywhere.
+        phone.sign(sha256("tapvault/app/v1/hold-timer".toByteArray(), byteArrayOf(seconds.toByte())))
+        store.holdSeconds = seconds
+        withContext(Dispatchers.Main) { holdSeconds = seconds }
+        note("hold timer set to $seconds s")
     }
 
     // ---- wallet ----
@@ -258,9 +400,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     val s = w.state()
                     val (b, locked) = near.spendable(w.account)
                     val ps = w.proposals()
+                    // A card stored by an older build has no key hash yet: it's the card setup added.
+                    val bound = st.cards.bind(s)?.also { st.cards = it; note("card list migrated") }
+                    // Integrity check at most every 6 h; then remember what the user has now seen (no alert for it).
+                    val report = Integrity.Report.decode(st.integrity)
+                        .let { r -> if (r == null || System.currentTimeMillis() / 1000 - r.atSecs > 6 * 3600) runCatching { integrityNow(w, s, id, st) }.getOrNull() ?: r else r }
+                    st.watchMemory = Watch.memoryOf(s, ps, report?.ok ?: true).encode()
                     // The user may have switched wallets meanwhile: never show one wallet's state under another.
                     withContext(Dispatchers.Main) {
-                        if (activeId == id) { wallet = s; balance = b; storageLocked = locked; proposals = ps; offline = null }
+                        if (activeId == id) { wallet = s; balance = b; storageLocked = locked; proposals = ps; offline = null; bound?.let { cardBook = it }; integrity = report }
                     }
                 }
             } catch (e: Exception) {
@@ -382,9 +530,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 throw IllegalStateException("This card can't sign for Tapvault: ${e.message}. Tap Continue setup to try another contactless card, or Start over.")
             }
             cardReport = enrol.report
-            store.cardRecipe = enrol.recipe.encode()
-            store.cardNetwork = enrol.report.network
-            store.cardLast4 = enrol.report.panLast4
+            val known = KnownCard(enrol.key.keyHash().hex(), enrol.recipe, enrol.report.network, enrol.report.panLast4)
+            withContext(Dispatchers.Main) { saveCards(store.cards.put(known)) }
             pending = PendingCard(enrol.key, enrol.proof, enrol.report.network, enrol.report.panLast4 ?: "????")
             store.pendingCard = pending.encode()
             note("card ${enrol.report.network} ****${enrol.report.panLast4} read (${enrol.report.iccKeyBits}-bit key, ${enrol.recipe.method.label})")
@@ -489,7 +636,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val st = w.state()
         if (st.frozen) throw IllegalStateException("The wallet is frozen. Request an unfreeze first.")
         val phoneIdx = st.phoneIndexOf(phone.publicKey) ?: throw IllegalStateException("This phone isn't a signer of the wallet")
-        val card = st.card() ?: throw IllegalStateException("No card enrolled")
+        if (st.cards().isEmpty()) throw IllegalStateException("No card enrolled")
         require(to != w.account) { "That's this wallet's own account" }
         val (available, _) = near.spendable(w.account)
         require(amount <= available) { "The wallet only has ${Near.format(available, 4)} NEAR available to send" }
@@ -501,7 +648,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val now = System.currentTimeMillis() / 1000
         val existing = w.proposals().firstOrNull { p ->
             p.isNearTransfer && p.transferAmount() == amount && p.transferReceiver() == to && p.approvedBy(phoneIdx) &&
-                !p.approvedBy(card.index) && !p.stale && (p.cardDeadlineTs ?: Long.MAX_VALUE) > now + 30
+                st.cards().none { p.approvedBy(it.index) } && !p.stale && (p.cardDeadlineTs ?: Long.MAX_VALUE) > now + 30
         }
         val id = if (existing != null) {
             note("finishing unfinished payment #${existing.id}")
@@ -513,16 +660,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         progress("Waiting for the card challenge")
         val ch = w.awaitCardChallenge(id)
-        val svc = cards()
-        val sig = try {
-            withCard("Tap your card to approve sending ${Near.format(amount)} NEAR") { t -> svc.sign(t, card.cardKey()!!, ch, recipe()) }
+        val t = try {
+            tapWalletCard("Tap your card to approve sending ${Near.format(amount)} NEAR", st, ch)
         } catch (e: Exception) {
             refresh()
             throw IllegalStateException("${e.message}\n\nPayment #$id is saved and waits 10 minutes for your card: send the same amount again, or approve or cancel it in Activity.")
         }
         progress("Submitting")
+        rememberReceiver(to)
         val instant = st.nearLimit?.isInstant(amount) == true
-        val sent = if (instant) approveAndMaybeExecute(w, id, card.index, sig) else null
+        val sent = if (instant) approveAndMaybeExecute(w, id, t.index, t.sig) else null
         if (sent != null) {
             note("sent: ${near.explorerTx(sent.hash)}")
             outcome = Outcome(true, "Sent ${Near.format(amount)} NEAR", "to $to", near.explorerTx(sent.hash))
@@ -530,7 +677,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             note("approved #$id; the contract didn't count it as instant, so it waits")
             outcome = Outcome(true, "Approved, waiting", "The wallet didn't treat this as within your limits (the phone's clock may be off). Execute it from Activity when it's ready.")
         } else {
-            val r = w.approveCard(id, card.index, sig)
+            val r = w.approveCard(id, t.index, t.sig)
             val hours = st.delays.transfer / 3600
             note("approved #$id; over the limit, executes after $hours h")
             outcome = Outcome(
@@ -547,16 +694,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun approveWithCard(p: ProposalInfo) = run("Approving") {
         val w = walletClient()
         val st = w.state()
-        val card = st.card()!!
         val ch = p.cardChallenge ?: w.awaitCardChallenge(p.id)
-        val svc = cards()
         // A NEAR payment the phone already approved can go out in the same transaction if it's within the limits.
         val phoneIdx = phoneIndex(st)
         val canRunNow = !st.frozen && p.isNearTransfer && p.approvedBy(phoneIdx) &&
             st.nearLimit?.isInstant(p.transferAmount()!!) == true
-        val sig = withCard("Tap your card to approve: ${p.describe()}") { t -> svc.sign(t, card.cardKey()!!, ch, recipe()) }
-        val sent = if (canRunNow) approveAndMaybeExecute(w, p.id, card.index, sig) else null
-        val r = sent ?: w.approveCard(p.id, card.index, sig)
+        val t = tapWalletCard("Tap your card to approve: ${p.describe()}", st, ch) { s ->
+            if (p.approvedBy(s.index)) "${cardName(s)} already approved this. Tap another card of this wallet." else null
+        }
+        val sent = if (canRunNow) approveAndMaybeExecute(w, p.id, t.index, t.sig) else null
+        val r = sent ?: w.approveCard(p.id, t.index, t.sig)
         outcome = Outcome(true, if (sent != null) "Approved and sent" else "Approved", p.describe(), near.explorerTx(r.hash))
         refresh()
     }
@@ -582,8 +729,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun approveWithPhone(p: ProposalInfo) = run("Approving") {
         val w = walletClient()
         val idx = phoneIndex(w.state())
-        phone.reason = "Approve: ${p.describe()}"
-        val r = w.approvePhone(p.id, phone, idx)
+        // The phone recomputes the intent from the action and the prompt names that same action (gap 6b).
+        val r = w.approvePhone(p.id, phone, idx) { a -> phone.reason = "Approve: ${a.describe()}" }
         outcome = Outcome(true, "Approved", p.describe(), near.explorerTx(r.hash))
         refresh()
     }
@@ -597,8 +744,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun cancel(p: ProposalInfo) = run("Cancelling") {
         val w = walletClient()
         val idx = phoneIndex(w.state())
-        phone.reason = "Cancel: ${p.describe()}"
-        val r = w.cancelByPhone(p.id, phone, idx)
+        val r = w.cancelByPhone(p.id, phone, idx) { a -> phone.reason = a?.let { "Cancel: ${it.describe()}" } ?: "Cancel request #${p.id} (its details can't be checked)" }
         outcome = Outcome(true, "Cancelled", p.describe(), near.explorerTx(r.hash))
         refresh()
     }
@@ -621,9 +767,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun freezeWithCard() = run("Freezing") {
         val w = walletClient()
-        val card = w.state().card()!!
-        val svc = cards()
-        val r = w.freezeByCard(card.index) { ch -> withCard("Tap your card to FREEZE the wallet") { t -> svc.sign(t, card.cardKey()!!, ch, recipe()) } }
+        val st = w.state()
+        // No hold timer here: freezing only stops things, and it should be instant.
+        val t = tapWalletCard("Tap your card to FREEZE the wallet", st, w.cardFreezeChallenge(), hold = false)
+        val r = w.freezeByCard(t.index, t.sig)
         outcome = Outcome(true, "Wallet frozen", "Frozen with a card tap. Unfreezing needs your phone and card, plus a delay.", near.explorerTx(r.hash))
         refresh()
     }
@@ -632,11 +779,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val w = walletClient()
         val st = w.state()
         val idx = phoneIndex(st)
-        val card = st.card()!!
         requireNfc()
         val now = System.currentTimeMillis() / 1000
         val open = w.proposals().firstOrNull { p ->
-            !p.isTransfer && p.describe().contains("Unfreeze") && p.approvedBy(idx) && !p.approvedBy(card.index) && !p.stale &&
+            !p.isTransfer && p.describe().contains("Unfreeze") && p.approvedBy(idx) && st.cards().none { p.approvedBy(it.index) } && !p.stale &&
                 (p.cardDeadlineTs ?: Long.MAX_VALUE) > now + 30
         }
         val id = open?.id ?: run {
@@ -644,11 +790,222 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             w.proposeByPhone(Action.Config(listOf(ConfigOp.Unfreeze)), phone, idx)
         }
         val ch = w.awaitCardChallenge(id)
-        val svc = cards()
-        val sig = withCard("Tap your card to approve unfreezing") { t -> svc.sign(t, card.cardKey()!!, ch, recipe()) }
-        val r = w.approveCard(id, card.index, sig)
+        val t = tapWalletCard("Tap your card to approve unfreezing", st, ch)
+        val r = w.approveCard(id, t.index, t.sig)
         outcome = Outcome(true, "Unfreeze approved", "It can execute in ${st.delays.config / 3600} h (Activity tab).", near.explorerTx(r.hash))
         refresh()
+    }
+
+    // ---- backup card ----
+
+    /** Open config proposals that add a card, not yet void. */
+    val pendingCardAdds get() = proposals.filter { !it.stale && it.addedCardKeyHashes().isNotEmpty() }
+
+    /**
+     * Add backup card, step 1: read the new card (chain, key), refuse it if
+     * it's already a signer, and make it sign this wallet's enrolment-style
+     * challenge, verified here. After setup the contract checks no proof of
+     * possession for AddSigner (DESIGN gap 8), so this check is the app's.
+     */
+    fun readBackupCard() = run("Reading the new card") {
+        backup = null
+        requireNfc()
+        val w = walletClient()
+        val st = w.state()
+        if (st.signers.size >= 8) throw IllegalStateException("This wallet already has 8 signers, the most it can have.")
+        val existing = st.signers.map { it.keyHash.lowercase() }.toSet()
+        val count = st.signers.size
+        val svc = cards()
+        val e = try {
+            withCard("Hold the new card to the back of the phone") { t ->
+                svc.enrol(t) { k ->
+                    if (k.keyHash().hex() in existing) throw AlreadySignerException("already a signer")
+                    Domain.cardEnrollChallenge(w.account, count, k.keyHash())
+                }
+            }
+        } catch (e: AlreadySignerException) {
+            throw IllegalStateException("That card is already one of this wallet's cards. Hold a different card to add it as a backup.")
+        } catch (e: CardCheckFailed) {
+            cardReport = e.report
+            throw IllegalStateException("This card can't sign for Tapvault: ${e.message}. Try another contactless card.")
+        }
+        if (!provesPossession(e.key, e.proof, Domain.cardEnrollChallenge(w.account, count, e.key.keyHash()))) {
+            throw IllegalStateException("The card's test signature didn't check out, so it won't be added. Tap it again, or use another card.")
+        }
+        val b = BackupCandidate(e.key, e.recipe, e.report.network, e.report.panLast4 ?: "????")
+        note("backup card ${b.name} read: ${e.report.iccKeyBits}-bit key, ${e.recipe.method.label}; test signature verified")
+        withContext(Dispatchers.Main) { backup = b }
+    }
+
+    fun discardBackup() { backup = null }
+
+    /**
+     * Add backup card, step 2: the phone proposes Config{AddSigner(card)}
+     * (fingerprint), a card already in the wallet approves, and it can execute
+     * after the config delay. The config change voids other open proposals.
+     */
+    fun addBackupCard() = run("Adding backup card") {
+        val b = backup ?: throw IllegalStateException("Read the new card first.")
+        requireNfc()
+        val w = walletClient()
+        val st = w.state()
+        if (st.signerByKeyHash(b.keyHash) != null) throw IllegalStateException("${b.name} is already a signer of this wallet.")
+        val idx = phoneIndex(st)
+        val hours = hoursText(st.delays.config)
+        val now = System.currentTimeMillis() / 1000
+        // A request for this card that the phone approved but no card has yet is finished instead of made again.
+        val open = w.proposals().firstOrNull { p ->
+            b.keyHash in p.addedCardKeyHashes() && p.approvedBy(idx) && st.cards().none { p.approvedBy(it.index) } &&
+                !p.stale && (p.cardDeadlineTs ?: Long.MAX_VALUE) > now + 30
+        }
+        // Remember how it signs now, so it can sign as soon as it is a signer.
+        withContext(Dispatchers.Main) { saveCards(store.cards.put(KnownCard(b.keyHash, b.recipe, b.network, b.last4))) }
+        val id = open?.id ?: run {
+            progress("Approve on your phone")
+            phone.reason = "Add ${b.name} as a backup card (takes effect after $hours)"
+            w.proposeByPhone(Action.Config(listOf(ConfigOp.AddSigner(b.key))), phone, idx).also { note("proposal #$it: add ${b.name}") }
+        }
+        withContext(Dispatchers.Main) { backup = null }
+        progress("Waiting for the card challenge")
+        val ch = w.awaitCardChallenge(id)
+        val t = try {
+            tapWalletCard("Tap a card already in this wallet to approve adding ${b.name}", st, ch)
+        } catch (e: Exception) {
+            refresh()
+            throw IllegalStateException("${e.message}\n\nRequest #$id is saved: approve it with your card in Activity within 10 minutes, or cancel it there.")
+        }
+        val r = w.approveCard(id, t.index, t.sig)
+        note("approved adding ${b.name} with ${t.name}; executes after $hours")
+        outcome = Outcome(
+            true, "Backup card added in $hours",
+            "${b.name} becomes a signer after the $hours wait. Then open Activity and tap Execute. Until then you can cancel it.",
+            near.explorerTx(r.hash),
+        )
+        refresh()
+    }
+
+    private fun hoursText(secs: Long) = if (secs % 3600 == 0L) "${secs / 3600} h" else "${secs / 60} min"
+
+    private suspend fun rememberReceiver(to: String) {
+        val r = store.receivers.add(to)
+        store.receivers = r
+        withContext(Dispatchers.Main) { receivers = r }
+    }
+
+    // ---- lost card ----
+
+    /**
+     * "I lost this card": optionally freeze first (phone), then the phone
+     * proposes Config{RemoveSigner(card)} (plus Unfreeze when the wallet is or
+     * gets frozen, so one wait covers both), another card of the wallet
+     * approves, and it executes after the config delay. The card being
+     * removed can't cancel its own removal (contract rule).
+     */
+    fun removeCard(keyHash: String, freezeFirst: Boolean) = run("Removing the card") {
+        requireNfc()
+        val w = walletClient()
+        var st = w.state()
+        val gone = st.signerByKeyHash(keyHash) ?: throw IllegalStateException("That card isn't a signer of this wallet any more.")
+        val name = cardName(gone)
+        if (st.cards().size < 2) throw IllegalStateException("$name is this wallet's only card. Add a backup card first; then you can remove this one.")
+        if (st.signers.size - 1 < st.threshold) throw IllegalStateException("Removing $name would leave fewer signers than the ${st.threshold} approvals needed.")
+        val idx = phoneIndex(st)
+        if (freezeFirst && !st.frozen) {
+            progress("Freeze first: approve on your phone")
+            phone.reason = "FREEZE the wallet (blocks all transfers)"
+            w.freezeByPhone(phone, idx)
+            note("frozen before removing $name")
+            st = w.state()
+        }
+        val ops = listOfNotNull(ConfigOp.RemoveSigner(gone.keyHash.unhex()), ConfigOp.Unfreeze.takeIf { st.frozen })
+        val hours = hoursText(st.delays.config)
+        progress("Approve the removal on your phone")
+        phone.reason = "Remove $name from this wallet" + (if (st.frozen) " and unfreeze" else "") + " (takes effect after $hours)"
+        val id = w.proposeByPhone(Action.Config(ops), phone, idx).also { note("proposal #$it: remove $name") }
+        progress("Waiting for the card challenge")
+        val ch = w.awaitCardChallenge(id)
+        val t = try {
+            tapWalletCard("Tap your other card to approve removing $name", st, ch) { s ->
+                if (s.keyHash.equals(keyHash, true)) "That's $name, the card you're removing. Tap another card of this wallet." else null
+            }
+        } catch (e: Exception) {
+            refresh()
+            throw IllegalStateException("${e.message}\n\nRequest #$id is saved: approve it with your other card in Activity within 10 minutes, or cancel it there.")
+        }
+        val r = w.approveCard(id, t.index, t.sig)
+        outcome = Outcome(
+            true, "$name removed in $hours",
+            "After the $hours wait, open Activity and tap Execute." + (if (st.frozen) " The same change unfreezes the wallet." else "") +
+                " The removed card can't cancel this.",
+            near.explorerTx(r.hash),
+        )
+        refresh()
+    }
+
+    // ---- integrity ----
+
+    /** Base58 code hash of the wasm this APK ships (the one every new wallet runs). */
+    private val shippedCodeHash: String by lazy {
+        Integrity.codeHashOf(getApplication<Application>().assets.open("tapvault_contract.wasm").use { it.readBytes() })
+    }
+
+    private fun integrityNow(w: TapvaultWallet, s: WalletState, id: String = activeId, st: Store = store): Integrity.Report {
+        // That wallet's own phone key, even if the user switched wallets meanwhile.
+        val pub = runCatching { KeystoreSigner({ WalletIndex.keyAlias(id) }) { null }.publicKey }.getOrNull()
+        val r = Integrity.evaluate(near.codeHash(w.account), near.accessKeys(w.account), s, pub, shippedCodeHash)
+        st.integrity = r.encode()
+        note("integrity check: " + if (r.ok) "passed" else "FAILED: " + r.failed.joinToString { it.name })
+        return r
+    }
+
+    /** Security Center → Check now. */
+    fun checkIntegrity() = run("Checking the wallet") {
+        val w = walletClient()
+        val r = integrityNow(w, w.state())
+        withContext(Dispatchers.Main) { integrity = r }
+        outcome = if (r.ok) Outcome(true, "Wallet check passed", r.checks.joinToString(" · ") { it.name })
+        else Outcome(false, "Wallet check failed", r.failed.joinToString("\n") { "${it.name}: ${it.detail}" })
+    }
+
+    // ---- app lock ----
+
+    /** Called when the app comes to the foreground: lock if it was away more than 60 s (or just started) and a wallet exists. */
+    fun lockIfAway() {
+        val away = System.currentTimeMillis() - wallets.backgroundAt
+        val anyReady = wallets.ids.any { wallets.store(it).setupStep >= 4 }
+        if (anyReady && busy == null && (wallets.backgroundAt == 0L || away > 60_000)) locked = true
+    }
+
+    fun wentToBackground() { wallets.backgroundAt = System.currentTimeMillis() }
+
+    fun unlock() {
+        val act = activity ?: return
+        AppLock.prompt(act) { locked = false }
+    }
+
+    // ---- alerts (watchtower) ----
+
+    fun setAlerts(on: Boolean) {
+        wallets.alertsOn = on
+        alertsOn = on
+        val act = activity ?: return
+        if (on) {
+            act.askNotificationPermission()
+            Watchtower.schedule(act)
+            note("alerts on: checked about every 15 minutes")
+        } else {
+            Watchtower.cancel(act)
+            note("alerts off")
+        }
+    }
+
+    /** A notification was tapped: show its wallet and screen. */
+    fun openFromAlert(walletId: String?, target: String?) {
+        if (walletId != null && walletId != activeId && walletId in wallets.ids && busy == null) activate(walletId)
+        when (target) {
+            "activity" -> go(Screen.Activity)
+            "security" -> go(Screen.Security)
+        }
     }
 
     // ---- card check ----
@@ -731,6 +1088,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         store = wallets.store(id)
         setupStep = store.setupStep
         wallet = null; balance = null; storageLocked = null; proposals = emptyList(); cardReport = null; offline = null
+        cardBook = store.cards; holdSeconds = store.holdSeconds; backup = null
+        receivers = store.receivers; integrity = Integrity.Report.decode(store.integrity)
         outcome = null
         screen = startScreen(store)
         reloadWalletList()
@@ -755,6 +1114,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         runCatching { KeystoreSigner.delete(WalletIndex.keyAlias(activeId)) }
         setStep(0)
         wallet = null; balance = null; storageLocked = null; proposals = emptyList(); cardReport = null
+        cardBook = store.cards; holdSeconds = store.holdSeconds; backup = null
+        receivers = store.receivers; integrity = null
         screen = Screen.Welcome
         reloadWalletList()
     }

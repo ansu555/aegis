@@ -1,5 +1,8 @@
 package app.tapvault
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.nfc.NfcAdapter
 import android.nfc.Tag
 import android.nfc.tech.IsoDep
@@ -8,6 +11,7 @@ import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.view.WindowManager
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -26,9 +30,42 @@ class MainActivity : FragmentActivity() {
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
         )
         super.onCreate(savedInstanceState)
+        // Wallet screens never appear in screenshots, screen recordings, casts or the recent-apps preview.
+        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         nfc = NfcAdapter.getDefaultAdapter(this)
         vm.attach(this)
         setContent { TapvaultApp(vm) }
+        openAlert(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        openAlert(intent)
+    }
+
+    /** A watchtower notification was tapped. */
+    private fun openAlert(i: Intent?) {
+        val target = i?.getStringExtra(Watchtower.EXTRA_TARGET) ?: return
+        vm.openFromAlert(i.getStringExtra(Watchtower.EXTRA_WALLET), target)
+        i.removeExtra(Watchtower.EXTRA_TARGET)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        vm.lockIfAway()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Not when the activity is only recreated, nor while a card / prompt flow runs in the background.
+        if (!isChangingConfigurations) vm.wentToBackground()
+    }
+
+    /** Android 13+: ask once for the alerts' notifications. */
+    fun askNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7)
+        }
     }
 
     override fun onResume() {
@@ -56,11 +93,11 @@ class MainActivity : FragmentActivity() {
     val hasNfc get() = nfc != null
     val nfcEnabled get() = nfc?.isEnabled == true
 
-    /** A short buzz: the card has been read and can be taken away. */
-    fun vibrate() {
+    /** A short buzz: the card has been read and can be taken away ([ms] = 20 for the hold timer's tick). */
+    fun vibrate(ms: Long = 90) {
         val v = if (Build.VERSION.SDK_INT >= 31) getSystemService(VibratorManager::class.java)?.defaultVibrator
         else @Suppress("DEPRECATION") getSystemService(Vibrator::class.java)
-        runCatching { v?.vibrate(VibrationEffect.createOneShot(90, VibrationEffect.DEFAULT_AMPLITUDE)) }
+        runCatching { v?.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE)) }
     }
 }
 

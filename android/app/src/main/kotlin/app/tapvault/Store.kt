@@ -1,6 +1,8 @@
 package app.tapvault
 
 import android.content.Context
+import app.tapvault.core.CardBook
+import app.tapvault.core.Receivers
 
 /**
  * App-private settings. Testnet only: the gas key just pays fees, and the
@@ -46,19 +48,37 @@ class Store(context: Context, file: String = WalletIndex.prefsFile(WalletIndex.F
         get() = p.getString("pending_card", null)
         set(v) { p.edit().putString("pending_card", v).commit() }
 
-    /** How the enrolled card signs ([app.tapvault.core.CardRecipe], encoded). */
-    var cardRecipe: String?
-        get() = p.getString("card_recipe", null)
-        set(v) { p.edit().putString("card_recipe", v).commit() }
+    /**
+     * The wallet's cards known to this phone (how each signs, network, last
+     * four digits), keyed by card key hash. A wallet made before several cards
+     * per wallet stored one card under `card_recipe`, `card_network` and
+     * `card_last4`; it is read as entry 1 (its key hash is filled in from the
+     * chain, [app.tapvault.core.CardBook.bind]) and the old keys are dropped on
+     * the first write.
+     */
+    var cards: CardBook
+        get() = CardBook.load(p.getString("cards", null), p.getString("card_recipe", null), p.getString("card_network", null), p.getString("card_last4", null))
+        set(v) { p.edit().putString("cards", v.encode()).remove("card_recipe").remove("card_network").remove("card_last4").commit() }
 
-    /** The enrolled card's network ("Visa") and last four digits, for display only. Nothing else about the card is kept. */
-    var cardNetwork: String?
-        get() = p.getString("card_network", null)
-        set(v) { p.edit().putString("card_network", v).commit() }
+    /** Hold-to-sign: seconds a card must stay on the phone before it signs (0 = off). An app-side pause, not a card feature. */
+    var holdSeconds: Int
+        get() = p.getInt("hold_seconds", 5)
+        set(v) { p.edit().putInt("hold_seconds", v).commit() }
 
-    var cardLast4: String?
-        get() = p.getString("card_last4", null)
-        set(v) { p.edit().putString("card_last4", v).commit() }
+    /** Receivers this phone has paid from this wallet, with when first ([app.tapvault.core.Receivers]); for the review warnings. */
+    var receivers: Receivers
+        get() = Receivers.decode(p.getString("receivers", null))
+        set(v) { p.edit().putString("receivers", v.encode()).commit() }
+
+    /** The last wallet integrity check ([app.tapvault.core.Integrity.Report], encoded). */
+    var integrity: String?
+        get() = p.getString("integrity", null)
+        set(v) { p.edit().putString("integrity", v).commit() }
+
+    /** What the watchtower saw last ([app.tapvault.core.Watch.Memory], encoded). */
+    var watchMemory: String?
+        get() = p.getString("watch", null)
+        set(v) { p.edit().putString("watch", v).commit() }
 
     var instantNear: String
         get() = p.getString("instant", "1") ?: "1"
@@ -73,7 +93,7 @@ class Store(context: Context, file: String = WalletIndex.prefsFile(WalletIndex.F
 
 /**
  * The wallets on this phone. Each one is a separate NEAR account with its own
- * contract, fee account, enrolled card, [Store] file and phone key (its own
+ * contract, fee account, cards, [Store] file and phone key (its own
  * Keystore alias). Nothing is shared between them, so forgetting one leaves
  * the others untouched.
  *
@@ -100,6 +120,16 @@ class WalletIndex(context: Context) {
     fun name(id: String): String = p.getString("name_$id", null) ?: "Wallet"
 
     fun rename(id: String, name: String) { p.edit().putString("name_$id", name).commit() }
+
+    /** When the app last went to the background (ms), for the app lock; 0 if never recorded. */
+    var backgroundAt: Long
+        get() = p.getLong("background_at", 0)
+        set(v) { p.edit().putLong("background_at", v).commit() }
+
+    /** Whether the user turned on watchtower alerts. */
+    var alertsOn: Boolean
+        get() = p.getBoolean("alerts_on", false)
+        set(v) { p.edit().putBoolean("alerts_on", v).commit() }
 
     fun store(id: String) = Store(ctx, prefsFile(id))
 
