@@ -19,6 +19,9 @@
 //! - A config change with a user-verifying approval waits `config_delay`.
 //!   Without one (e.g. phone lost, recovering with two cards) it waits the
 //!   longer `recovery_delay`.
+//! - v0.3, phone-only wallet: a wallet whose only signer is the phone key may
+//!   use threshold 1 until a card is added (`threshold_is_valid`). Adding a
+//!   key to it must raise the threshold to 2 in the same change.
 
 pub const DAY: i64 = 86_400;
 pub const EXECUTION_WINDOW: i64 = 7 * DAY;
@@ -29,6 +32,8 @@ pub const MIN_RECOVERY_DELAY: i64 = DAY;
 pub const MAX_DELAY: i64 = 30 * DAY;
 
 pub const MIN_THRESHOLD: u8 = 2;
+/// v0.3: the threshold of a phone-only wallet (one signer, a P-256 key).
+pub const PHONE_ONLY_THRESHOLD: u8 = 1;
 pub const MAX_SIGNERS: usize = 8;
 pub const MAX_PROPOSALS_PER_DAY: u16 = 24;
 
@@ -52,6 +57,15 @@ impl Delays {
     pub fn max(&self) -> i64 {
         self.transfer.max(self.config).max(self.recovery)
     }
+}
+
+/// Whether `threshold` approvals out of `signers` is an allowed rule: at
+/// least `MIN_THRESHOLD`, or 1 when the wallet has a single signer (the
+/// phone key; the contract checks that it is a P-256 key). With two or more
+/// signers no single key, card or phone, can act alone.
+pub fn threshold_is_valid(threshold: u8, signers: usize) -> bool {
+    let min = if signers == 1 { PHONE_ONLY_THRESHOLD } else { MIN_THRESHOLD };
+    threshold >= min && (threshold as usize) <= signers
 }
 
 /// A leaky-bucket allowance: `used` drains at `daily_max` per day.
@@ -236,6 +250,20 @@ mod tests {
         assert_eq!(check_execution(Upgrade, 2, 1, 2, &d, t, t + d.config), Err(Refusal::TooEarly));
         assert_eq!(check_execution(Upgrade, 2, 1, 2, &d, t, t + d.recovery), Ok(()));
         assert_eq!(check_execution(Upgrade, 1, 1, 2, &d, t, t + d.recovery), Err(Refusal::NotEnoughApprovals));
+    }
+
+    #[test]
+    fn threshold_rules() {
+        assert!(threshold_is_valid(1, 1));
+        assert!(!threshold_is_valid(2, 1));
+        assert!(!threshold_is_valid(0, 1));
+        // once a second key exists, one approval is never enough
+        assert!(!threshold_is_valid(1, 2));
+        assert!(threshold_is_valid(2, 2));
+        assert!(!threshold_is_valid(3, 2));
+        assert!(threshold_is_valid(2, 3));
+        assert!(!threshold_is_valid(1, 3));
+        assert!(!threshold_is_valid(0, 0));
     }
 
     #[test]

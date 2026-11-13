@@ -11,7 +11,7 @@ object Integrity {
     /** The build wallets ran before 12 Nov (it refuses Visa online fDDA signatures; AGENTS.md invariant 4). */
     const val PREVIOUS_BUILD = "GniW1i9n8vAH6ers3jAZTnpCox3u5VwWvsmN9cY9Foow"
 
-    /** The v0.1 build shipped from 12 Nov (before contract v0.2): official, no possession proofs or upgrade path. */
+    /** The v0.1 build shipped from 12 Nov to 14 Nov (before contract v0.3): official, no possession proofs or upgrade path. */
     const val V01_BUILD = "5Db4uQQKpTkTtUspdQcx5iVcnvT7MSXCNMdKwhQibwcf"
 
     enum class Status { OK, NOTE, FAIL }

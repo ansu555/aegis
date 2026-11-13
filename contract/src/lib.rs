@@ -53,7 +53,7 @@ pub struct Tapvault {
 }
 
 /// Reported by the `contract_version` view (absent before v0.2).
-pub const CONTRACT_VERSION: &str = "0.2.0";
+pub const CONTRACT_VERSION: &str = "0.3.0";
 
 #[near]
 impl Tapvault {
@@ -106,7 +106,9 @@ impl Tapvault {
     fn validate_config(&self) {
         let n = self.signers.len();
         check(n <= MAX_SIGNERS, ERR_TOO_MANY_SIGNERS);
-        check(self.threshold >= policy::MIN_THRESHOLD && (self.threshold as usize) <= n, ERR_INVALID_THRESHOLD);
+        // v0.3: threshold 1 only for a phone-only wallet; the deliberate-signer
+        // check below then makes that one signer a P-256 key, never a card.
+        check(policy::threshold_is_valid(self.threshold, n), ERR_INVALID_THRESHOLD);
         check(self.signers.iter().any(|s| s.is_deliberate()), ERR_NO_DELIBERATE_SIGNER);
         let hashes: Vec<[u8; 32]> = self.signers.iter().map(|s| s.key_hash()).collect();
         for (i, s) in self.signers.iter().enumerate() {

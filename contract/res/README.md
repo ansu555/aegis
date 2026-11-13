@@ -6,9 +6,9 @@ without the Rust toolchain and always carries exactly this code.
 
 | | |
 |---|---|
-| SHA-256 (hex) | `3ea83cc88fecda3c727d624e5a935ed1fe20cc5623cafafa4e86969bf7cdc2ec` |
-| SHA-256 (base58, NEAR `code_hash`) | `5Db4uQQKpTkTtUspdQcx5iVcnvT7MSXCNMdKwhQibwcf` |
-| Size | 334,258 bytes |
+| SHA-256 (hex) | `bbb34d0898d18ab7bb8687c61ba8605def6e7c9a33be91659b199d0834ca2f1c` |
+| SHA-256 (base58, NEAR `code_hash`) | `DdhpDh3c2gbVJK4iFQLU7C3c2W4Bgg6JYTBSBtBDRcS7` |
+| Size | 352,170 bytes (contract v0.3.0: phone-only wallets, plus v0.2) |
 | Built with | rustc 1.86.0, cargo-near 0.17.0, `cargo near build non-reproducible-wasm` |
 
 The Android build (`android/app/build.gradle.kts`, task `verifyWasm`) refuses

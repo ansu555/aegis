@@ -203,7 +203,7 @@ async fn full_flow_and_gas() -> anyhow::Result<()> {
 
     // ---- v0.2: version view, seed in the proposal view, guardian with possession, upgrade ----
     let v: String = contract.view("contract_version").await?.json()?;
-    assert_eq!(v, "0.2.0");
+    assert_eq!(v, "0.3.0");
 
     let propose_config = |ops: Vec<ConfigOp>, possession: Value| {
         let relayer = relayer.clone();
@@ -308,5 +308,136 @@ async fn full_flow_and_gas() -> anyhow::Result<()> {
 
     println!("\n  most expensive single receipt: {worst:.1} Tgas (limit {MAX_TGAS})\n");
     assert!(worst < MAX_TGAS as f64);
+    Ok(())
+}
+
+/// v0.3 on the compiled wasm: a wallet set up without a card pays with the
+/// phone alone; adding the card later (with `SetThreshold(2)`) makes it an
+/// ordinary two-key wallet.
+#[tokio::test]
+#[ignore = "downloads a nearcore sandbox binary; run with --ignored"]
+async fn phone_only_wallet_then_add_the_card() -> anyhow::Result<()> {
+    let worker = near_workspaces::sandbox_with_version("2.6.5").await?;
+    let wasm = near_workspaces::compile_project("./").await?;
+    let wallet = worker.dev_create_account().await?;
+    let relayer = worker.dev_create_account().await?;
+    let bob = worker.dev_create_account().await?;
+    let acct = wallet.id().as_str().as_bytes().to_vec();
+    let phone = SigningKey::from_slice(&[7; 32]).unwrap();
+    let mut card = TestCard::default();
+    println!("\n  phone-only step                       gas");
+
+    let pk = phone_key(&phone);
+    let r = wallet
+        .batch(wallet.id())
+        .deploy(&wasm)
+        .call(
+            Function::new("new")
+                .args_json(json!({ "first_signer": pk, "sig": phone_sign(&phone, &domain::create_message::<S>(&acct, &key_hash(&pk))) }))
+                .gas(NearGas::from_tgas(100)),
+        )
+        .transact()
+        .await?;
+    report("deploy + new", &r, wallet.id());
+    let contract = near_workspaces::Contract::from_secret_key(wallet.id().clone(), wallet.secret_key().clone(), &worker);
+
+    let args = FinalizeArgs {
+        threshold: 1,
+        delays: DelaysCfg { transfer: 3_600, config: 3_600, recovery: 86_400 },
+        limits: vec![LimitInit {
+            asset: Asset::Near,
+            instant_max: U128(NearToken::from_near(2).as_yoctonear()),
+            daily_max: U128(NearToken::from_near(5).as_yoctonear()),
+        }],
+    };
+    let msg = domain::finalize_message::<S>(&acct, &near_sdk::borsh::to_vec(&args)?);
+    let r = wallet
+        .call(contract.id(), "setup_finalize")
+        .args_json(json!({ "args": args, "authorizer_index": 0, "sig": phone_sign(&phone, &msg) }))
+        .max_gas()
+        .transact()
+        .await?;
+    report("setup_finalize (threshold 1)", &r, wallet.id());
+    assert!(wallet.view_access_keys().await?.is_empty(), "deployer key should be deleted");
+
+    let propose = |action: Action, possession: Value| {
+        let relayer = relayer.clone();
+        let contract = contract.clone();
+        let acct = acct.clone();
+        let phone = phone.clone();
+        async move {
+            let state: Value = contract.view("get_wallet").await?.json()?;
+            let id: u64 = state["next_proposal_id"].as_str().unwrap().parse()?;
+            let intent = domain::intent_hash::<S>(&acct, id, &near_sdk::borsh::to_vec(&action)?);
+            let r = relayer
+                .call(contract.id(), "propose")
+                .args_json(json!({ "action": action, "proof": SignerProof::P256 { signer_index: 0, sig: phone_sign(&phone, &intent) }, "possession": possession }))
+                .max_gas()
+                .transact()
+                .await?;
+            anyhow::Ok((id, intent, r))
+        }
+    };
+    let pay = || Action::Transfer {
+        asset: Asset::Near,
+        amount: U128(NearToken::from_near(1).as_yoctonear()),
+        receiver: bob.id().as_str().parse().unwrap(),
+    };
+    let execute = |id: u64| {
+        let relayer = relayer.clone();
+        let contract = contract.clone();
+        async move { relayer.call(contract.id(), "execute").args_json(json!({ "id": id.to_string() })).max_gas().transact().await }
+    };
+
+    // the phone alone pays within the limits
+    let (id, _, r) = propose(pay(), Value::Null).await?;
+    report("propose (phone only)", &r, wallet.id());
+    let before = bob.view_account().await?.balance;
+    let r = execute(id).await?;
+    report("execute (NEAR transfer)", &r, wallet.id());
+    let after = bob.view_account().await?.balance;
+    assert_eq!(after.as_yoctonear() - before.as_yoctonear(), NearToken::from_near(1).as_yoctonear());
+
+    // add the card: AddSigner + SetThreshold(2), approved by the phone's proposal, waits the config delay
+    let ck = card_key(&card);
+    let poss = PossessionProof::Card(card_tap(&mut card, &domain::card_possession_challenge::<S>(&acct, &key_hash(&ck))));
+    let (cid, cintent, r) = propose(
+        Action::Config { ops: vec![ConfigOp::AddSigner(ck), ConfigOp::SetThreshold(2)] },
+        json!([OpPossession { op: 0, proof: poss }]),
+    )
+    .await?;
+    report("propose AddSigner(card) + threshold 2", &r, wallet.id());
+    let early = execute(cid).await?;
+    assert!(format!("{:?}", early.failures()).contains("Delay has not elapsed"), "{:?}", early.failures());
+    {
+        use near_sdk::borsh::{self, BorshDeserialize};
+        let state = worker.view_state(contract.id()).await?;
+        let mut patched = false;
+        for (k, v) in state.iter() {
+            let mut rest: &[u8] = v;
+            let Ok(mut prop) = Proposal::deserialize(&mut rest) else { continue };
+            if prop.intent_hash != cintent {
+                continue;
+            }
+            prop.ready_ts = Some(prop.ready_ts.expect("ready with the phone's approval") - 2 * 3600);
+            let mut bytes = borsh::to_vec(&prop)?;
+            bytes.extend_from_slice(rest);
+            worker.patch_state(contract.id(), k, &bytes).await?;
+            patched = true;
+        }
+        assert!(patched, "add-card proposal found in state");
+    }
+    let r = execute(cid).await?;
+    report("execute (card added)", &r, wallet.id());
+    let state: Value = contract.view("get_wallet").await?.json()?;
+    assert_eq!(state["threshold"], 2);
+    assert_eq!(state["signers"].as_array().unwrap().len(), 2);
+
+    // now the phone alone can't pay
+    let (id, _, r) = propose(pay(), Value::Null).await?;
+    assert!(r.is_success(), "{:?}", r.failures());
+    let refused = execute(id).await?;
+    assert!(format!("{:?}", refused.failures()).contains("Not enough approvals"), "{:?}", refused.failures());
+    println!("  phone alone after the card was added: refused\n");
     Ok(())
 }

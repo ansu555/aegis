@@ -146,6 +146,22 @@ impl Wallet {
         Wallet { c, phone, card, t: T0, seed: 1 }
     }
 
+    /// v0.3: a wallet set up without a card. Signer 0 = phone, threshold 1;
+    /// `card` is a card that isn't enrolled yet.
+    fn phone_only() -> Self {
+        let phone = Phone::new(7);
+        ctx(WALLET, T0, 1);
+        let mut c = Tapvault::new(phone.key(), phone.sign(&domain::create_message::<S>(acct(), &key_hash(&phone.key()))));
+        let args = FinalizeArgs {
+            threshold: 1,
+            delays: DelaysCfg { transfer: DAY, config: DAY, recovery: 3 * DAY },
+            limits: vec![LimitInit { asset: Asset::Near, instant_max: U128(5 * NEAR), daily_max: U128(8 * NEAR) }],
+        };
+        let msg = domain::finalize_message::<S>(acct(), &near_sdk::borsh::to_vec(&args).unwrap());
+        c.setup_finalize(args, 0, phone.sign(&msg));
+        Wallet { c, phone, card: Card::new(), t: T0, seed: 1 }
+    }
+
     fn as_relayer(&self) {
         ctx(RELAYER, self.t, self.seed);
     }
@@ -632,7 +648,7 @@ fn the_view_returns_the_seed_so_clients_can_check_the_card_challenge() {
     hex_into(p.card_seed.as_deref().unwrap(), &mut seed);
     // recomputed from the intent the client computed itself, not from the view's hash
     assert_eq!(domain::card_approve_challenge::<S>(&intent(id, &send_near(NEAR)), &seed), ch);
-    assert_eq!(w.c.contract_version(), "0.2.0");
+    assert_eq!(w.c.contract_version(), "0.3.0");
 }
 
 #[test]
@@ -724,4 +740,93 @@ fn an_upgrade_waits_the_recovery_delay_and_needs_the_exact_code() {
     w.c.execute_upgrade(id, code);
     assert!(w.c.get_proposal(U64(id)).is_none());
     assert_eq!(w.c.get_wallet().signer_epoch, epoch + 1, "open proposals are voided");
+}
+
+// ---- contract v0.3: phone-only wallets ----
+
+fn finalize_threshold(c: &mut Tapvault, phone: &Phone, threshold: u8) {
+    let args = FinalizeArgs { threshold, delays: DelaysCfg { transfer: DAY, config: DAY, recovery: 3 * DAY }, limits: vec![] };
+    let sig = phone.sign(&domain::finalize_message::<S>(acct(), &near_sdk::borsh::to_vec(&args).unwrap()));
+    c.setup_finalize(args, 0, sig);
+}
+
+#[test]
+fn a_phone_only_wallet_needs_threshold_one_and_sends_with_the_phone_alone() {
+    // one signer: threshold 2 can never be met, so it is refused
+    let phone = Phone::new(7);
+    let mut c = new_wallet_in_setup(&phone);
+    fails("Invalid threshold", || finalize_threshold(&mut c, &phone, 2));
+
+    let mut w = Wallet::phone_only();
+    let v = w.c.get_wallet();
+    assert!(!v.setup_mode);
+    assert_eq!((v.threshold, v.signers.len()), (1, 1));
+    // within the limits: the phone's proposal is its approval, so it executes at once
+    let id = w.propose_by_phone(send_near(3 * NEAR));
+    assert!(matches!(w.c.execute(U64(id)), PromiseOrValue::Promise(_)));
+    assert_eq!(spent_near(&w.c), 3 * NEAR);
+    // over the limit it still waits the transfer delay, and can be cancelled meanwhile
+    let id = w.propose_by_phone(send_near(6 * NEAR));
+    fails("Delay has not elapsed", || {
+        w.c.execute(U64(id));
+    });
+    w.advance(DAY);
+    w.c.execute(U64(id));
+}
+
+#[test]
+fn threshold_one_is_refused_once_a_card_is_a_signer() {
+    let phone = Phone::new(7);
+    let mut card = Card::new();
+    let mut c = new_wallet_in_setup(&phone);
+    let ck = card.key();
+    let ch = domain::card_enroll_challenge::<S>(acct(), 1, &key_hash(&ck));
+    let auth = phone.sign(&domain::setup_add_message::<S>(acct(), 1, &key_hash(&ck)));
+    c.setup_add_signer(ck, 0, auth, Possession::Card(card.tap(&ch)));
+    fails("Invalid threshold", || finalize_threshold(&mut c, &phone, 1));
+
+    // and a finished two-key wallet can't drop to one approval
+    let mut w = Wallet::new();
+    let id = w.propose_by_phone(Action::Config { ops: vec![ConfigOp::SetThreshold(1)] });
+    w.card_approves(id);
+    w.advance(DAY);
+    fails("Invalid threshold", || {
+        w.c.execute(U64(id));
+    });
+}
+
+#[test]
+fn adding_the_first_card_later_must_raise_the_threshold() {
+    let mut w = Wallet::phone_only();
+    let ck = w.card.key();
+    let poss = PossessionProof::Card(w.card.tap(&domain::card_possession_challenge::<S>(acct(), &key_hash(&ck))));
+
+    // the card alone, threshold left at 1: refused, or the card could act alone.
+    // (Another wallet: the mocked runtime keeps a failed call's writes; the chain doesn't.)
+    let mut other = Wallet::phone_only();
+    let lone = other.propose_by_phone(Action::Config { ops: vec![ConfigOp::AddSigner(ck.clone())] });
+    other.c.prove_possession(U64(lone), 0, poss.clone());
+    other.advance(DAY);
+    fails("Invalid threshold", || {
+        other.c.execute(U64(lone));
+    });
+
+    // with SetThreshold(2): the phone's approval is enough, after the config delay
+    let id = w.propose_by_phone(Action::Config { ops: vec![ConfigOp::AddSigner(ck), ConfigOp::SetThreshold(2)] });
+    w.c.prove_possession(U64(id), 0, poss);
+    fails("Delay has not elapsed", || {
+        w.c.execute(U64(id));
+    });
+    w.advance(DAY);
+    w.c.execute(U64(id));
+    let v = w.c.get_wallet();
+    assert_eq!((v.threshold, v.signers.len()), (2, 2));
+
+    // from now on it is an ordinary two-key wallet: the phone alone can't pay
+    let pay = w.propose_by_phone(send_near(NEAR));
+    fails("Not enough approvals", || {
+        w.c.execute(U64(pay));
+    });
+    w.card_approves(pay);
+    assert!(matches!(w.c.execute(U64(pay)), PromiseOrValue::Promise(_)));
 }

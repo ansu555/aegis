@@ -81,7 +81,7 @@ class Phase2Test {
     @Test
     fun shippedWasmHasTheDocumentedCodeHash() {
         val wasm = File(System.getenv("TAPVAULT_WASM") ?: return).readBytes()
-        assertEquals("5Db4uQQKpTkTtUspdQcx5iVcnvT7MSXCNMdKwhQibwcf", Integrity.codeHashOf(wasm))
+        assertEquals("DdhpDh3c2gbVJK4iFQLU7C3c2W4Bgg6JYTBSBtBDRcS7", Integrity.codeHashOf(wasm))
     }
 
     @Test

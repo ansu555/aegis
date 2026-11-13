@@ -191,17 +191,20 @@ The app deploys `contract/res/tapvault_contract.wasm` to every new wallet:
 
 | | |
 |---|---|
-| SHA-256 (base58, NEAR `code_hash`) | `5Db4uQQKpTkTtUspdQcx5iVcnvT7MSXCNMdKwhQibwcf` |
-| SHA-256 (hex) | `3ea83cc88fecda3c727d624e5a935ed1fe20cc5623cafafa4e86969bf7cdc2ec` |
-| Size | 334,258 bytes (3.34 NEAR of storage; with the account and the wallet's state, each wallet locks about 3.35 NEAR) |
+| SHA-256 (base58, NEAR `code_hash`) | `DdhpDh3c2gbVJK4iFQLU7C3c2W4Bgg6JYTBSBtBDRcS7` |
+| SHA-256 (hex) | `bbb34d0898d18ab7bb8687c61ba8605def6e7c9a33be91659b199d0834ca2f1c` |
+| Size | 352,170 bytes (3.52 NEAR of storage; with the account and the wallet's state, each wallet locks about 3.53 NEAR) |
 | Built with | rustc 1.86.0, cargo-near 0.17.0, `cargo near build non-reproducible-wasm` |
 
 Every wallet created with the current app should show this `code_hash` on
-chain, for example
-[`tv-e2e-cc807a553f.testnet`](https://testnet.nearblocks.io/address/tv-e2e-cc807a553f.testnet)
-from the 12 Nov live run, which has no access keys. Wallets created before
-12 Nov run the previous build (`GniW1i9n8vAH6ers3jAZTnpCox3u5VwWvsmN9cY9Foow`),
-which rejects Visa online signatures; wallets can't be upgraded. Rebuilding
+chain and have no access keys. This build (14 Nov, contract v0.3.0) adds
+phone-only wallets (set up without a card, card added later) and is the first
+shipped build with the v0.2 features. Wallets created from 12 Nov until it run
+`5Db4uQQKpTkTtUspdQcx5iVcnvT7MSXCNMdKwhQibwcf` (for example
+[`tv-e2e-cc807a553f.testnet`](https://testnet.nearblocks.io/address/tv-e2e-cc807a553f.testnet));
+wallets created before 12 Nov run the previous build
+(`GniW1i9n8vAH6ers3jAZTnpCox3u5VwWvsmN9cY9Foow`), which rejects Visa online
+signatures. Existing wallets keep their code. Rebuilding
 gives a different hash (non-reproducible build); how to ship a new build:
 [contract/res/README.md](contract/res/README.md).
 

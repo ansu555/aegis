@@ -54,7 +54,35 @@ Where things are:
 - [Creating a wallet](#creating-a-wallet)
 - [The shipped build](#the-shipped-build)
 - [Changing the contract safely](#changing-the-contract-safely)
+- [Contract v0.3](#contract-v03)
 - [Contract v0.2](#contract-v02): possession proofs, seed in the view, receiver allowlist, `UpgradeCode`
+
+## Contract v0.3
+
+14 Nov 2026: **phone-only wallets.** The app's "Create wallet" offers
+"Without a card for now": setup skips the card and finalizes with
+threshold 1. The first build shipped with v0.3 is also the first shipped
+build with everything in v0.2 below. `contract_version` returns `"0.3.0"`
+(`isV02` is true for it).
+
+| Change | Where | Why |
+|---|---|---|
+| Threshold 1 is allowed only while the wallet has exactly one signer (`policy::threshold_is_valid`, `PHONE_ONLY_THRESHOLD`); `validate_config` already requires a P-256 signer, so that one signer is the phone, never a card. With two or more signers the minimum stays 2 | `lib.rs` `validate_config` (setup and every config change) | A wallet can start without a card and get one later |
+| Adding a key to a threshold-1 wallet must raise the threshold in the same change: `Config { ops: [AddSigner(card), SetThreshold(2)] }`. `AddSigner` alone fails `validate_config` (`Invalid threshold`), so no card ever acts alone | No new op; existing `SetThreshold` | After the change it's an ordinary two-key wallet |
+| A phone-only wallet's proposals are ready as soon as the phone proposes (its approval meets threshold 1). Transfers within the limits execute at once; others wait `delays.transfer`; adding the card waits `delays.config`, during which the phone can cancel | No code change: `update_ready`, `check_execution` | Same delays and limits as any wallet |
+
+What a phone-only wallet gives up until its card is added: anyone holding
+the phone's key (an unlocked phone and the fingerprint or screen lock) can
+pay within the limits; recovery on a new phone needs cards, so a lost phone
+means a lost wallet; a guardian can't be added (it would be a second signer
+on threshold 1). The app says so on the choice sheet and keeps an "Add your
+card" banner on Home until the card is added.
+
+Tests: `flows.rs` 3 new (threshold 1 only with one signer, the phone alone
+pays, the first card must come with `SetThreshold(2)` and then the phone
+alone is refused), `policy::threshold_rules`, `sandbox.rs`
+`phone_only_wallet_then_add_the_card` (compiled wasm), Kotlin `Phase5Test`,
+live `PhoneOnlyE2ETest`.
 
 ## Contract v0.2
 
@@ -429,7 +457,8 @@ pub fn setup_finalize(&mut self, args: FinalizeArgs, authorizer_index: u8, sig: 
   configuration is applied and `validate_config` runs:
   - at most 8 signers (`Too many signers`);
   - `2 <= threshold <= number of signers` (`Invalid threshold`), so at least
-    two signers must be enrolled first;
+    two signers must be enrolled first; v0.3: or threshold 1 with exactly
+    one signer, the phone (a phone-only wallet, [Contract v0.3](#contract-v03));
   - at least one P-256 signer (`At least one P-256 (phone / security key)
     signer is required`);
   - every key valid (`Invalid signer key`) and unique (`Signer already
@@ -856,7 +885,7 @@ Every message from `contract/src/error.rs`, and where it comes from.
 | `ERR_MISSING_WEBAUTHN` | `WebAuthn signer requires an assertion payload` | WebAuthn signer without `webauthn` in its `P256Sig` |
 | `ERR_WEBAUTHN_INVALID` | `WebAuthn assertion invalid` | assertion checks failed (reason logged as `webauthn: ...`) |
 | `ERR_CARD_INVALID` | `Card signature verification failed` | any card check failed (reason logged as `emv: ...`) |
-| `ERR_INVALID_THRESHOLD` | `Invalid threshold` | threshold below 2 or above the signer count |
+| `ERR_INVALID_THRESHOLD` | `Invalid threshold` | threshold below 2 (v0.3: below 1 with one signer) or above the signer count |
 | `ERR_NO_DELIBERATE_SIGNER` | `At least one P-256 (phone / security key) signer is required` | config leaves no P-256 signer |
 | `ERR_INVALID_DELAYS` | `Invalid delays` | delays out of bounds |
 | `ERR_INVALID_LIMITS` | `Invalid limits` | more than 8 limits, `instant_max > daily_max`, duplicate asset |
@@ -901,7 +930,8 @@ What the app says for each of these: [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 | `EXECUTION_WINDOW` | 604,800 s (7 days) | `policy.rs` | Time to execute after the delay ends |
 | `MAX_PROPOSALS_PER_DAY` | 24 | `policy.rs` | Proposals per signer per rate window |
 | `DAY` | 86,400 s | `policy.rs` | Rate window; allowance refill period |
-| `MIN_THRESHOLD` | 2 | `policy.rs` | Lowest threshold after setup |
+| `MIN_THRESHOLD` | 2 | `policy.rs` | Lowest threshold after setup with two or more signers |
+| `PHONE_ONLY_THRESHOLD` | 1 | `policy.rs` | v0.3: threshold of a wallet whose one signer is the phone |
 | `MAX_SIGNERS` | 8 | `types.rs`, `policy.rs` (asserted equal) | The approval bitmap is a `u8` |
 | `MAX_LIMITS` | 8 | `types.rs` | Assets with a limit |
 | `MAX_CONFIG_OPS` | 4 | `types.rs` | Ops per config action |
@@ -1258,11 +1288,11 @@ deploys to every new wallet. Details: [`contract/res/README.md`](../contract/res
 
 | | |
 |---|---|
-| SHA-256 (hex) | `3ea83cc88fecda3c727d624e5a935ed1fe20cc5623cafafa4e86969bf7cdc2ec` |
-| SHA-256 (base58, NEAR `code_hash`) | `5Db4uQQKpTkTtUspdQcx5iVcnvT7MSXCNMdKwhQibwcf` |
-| Size | 334,258 bytes |
+| SHA-256 (hex) | `bbb34d0898d18ab7bb8687c61ba8605def6e7c9a33be91659b199d0834ca2f1c` |
+| SHA-256 (base58, NEAR `code_hash`) | `DdhpDh3c2gbVJK4iFQLU7C3c2W4Bgg6JYTBSBtBDRcS7` |
+| Size | 352,170 bytes |
 | Built with | rustc 1.86.0 (`rust-toolchain.toml`), cargo-near 0.17.0, `cargo near build non-reproducible-wasm` |
-| Shipped since | 12 Nov 2026 (accepts Signed Data Format `05` and `95`) |
+| Shipped since | 14 Nov 2026: contract v0.3.0 (phone-only wallets, plus everything in v0.2). Wallets made from 12 Nov until then run `5Db4uQQKpTkTtUspdQcx5iVcnvT7MSXCNMdKwhQibwcf` (v0.1; accepts Signed Data Format `05` and `95`) |
 | Previous build | `GniW1i9n8vAH6ers3jAZTnpCox3u5VwWvsmN9cY9Foow` (wallets created before 12 Nov): accepts only `05`, so it refuses Visa online fDDA signatures |
 
 - **Hash-checked by the Android build.** In `android/app/build.gradle.kts`,
@@ -1294,7 +1324,7 @@ curl -s "$RPC" -H 'Content-Type: application/json' -d '{
   "jsonrpc": "2.0", "id": "tv", "method": "query",
   "params": {"request_type": "view_account", "finality": "final", "account_id": "'"$ACCOUNT"'"}
 }' | python3 -c 'import json, sys; print(json.load(sys.stdin)["result"]["code_hash"])'
-# 5Db4uQQKpTkTtUspdQcx5iVcnvT7MSXCNMdKwhQibwcf
+# DdhpDh3c2gbVJK4iFQLU7C3c2W4Bgg6JYTBSBtBDRcS7
 
 curl -s "$RPC" -H 'Content-Type: application/json' -d '{
   "jsonrpc": "2.0", "id": "tv", "method": "query",

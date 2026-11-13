@@ -627,7 +627,7 @@ byte for byte:
 
 - `android/app/build.gradle.kts`: task `verifyWasm` checks that
   `contract/res/tapvault_contract.wasm` has SHA-256 `contractWasmSha256`
-  (`3ea83cc8…c2ec`, base58 `5Db4uQQKpTkTtUspdQcx5iVcnvT7MSXCNMdKwhQibwcf`),
+  (`bbb34d08…2f1c`, base58 `DdhpDh3c2gbVJK4iFQLU7C3c2W4Bgg6JYTBSBtBDRcS7`),
   then `copyWasm` copies it into `app/src/main/assets/` (gitignored) before
   `preBuild`. `Onboarding.deployAndInit` deploys those bytes.
 - The same file reads `tapvault.sponsor.account` and `tapvault.sponsor.key`

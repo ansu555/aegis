@@ -188,7 +188,7 @@ fresh clone needs no preparation. To confirm which build that is:
 ```bash
 # from the repo root
 shasum -a 256 contract/res/tapvault_contract.wasm
-# 3ea83cc88fecda3c727d624e5a935ed1fe20cc5623cafafa4e86969bf7cdc2ec
+# bbb34d0898d18ab7bb8687c61ba8605def6e7c9a33be91659b199d0834ca2f1c
 ```
 
 To test a local build instead, set `TAPVAULT_WASM` to its absolute path.
@@ -592,7 +592,7 @@ Exact check (on a computer, or send the account name to the developer):
 W=tv-0123456789.testnet      # your wallet account
 RPC=https://rpc.testnet.fastnear.com
 curl -s $RPC -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":"1","method":"query","params":{"request_type":"view_account","finality":"final","account_id":"'$W'"}}' | jq -r .result.code_hash
-# 5Db4uQQKpTkTtUspdQcx5iVcnvT7MSXCNMdKwhQibwcf
+# DdhpDh3c2gbVJK4iFQLU7C3c2W4Bgg6JYTBSBtBDRcS7   (wallets made from 12 Nov until 14 Nov: 5Db4uQQKpTkTtUspdQcx5iVcnvT7MSXCNMdKwhQibwcf)
 curl -s $RPC -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":"1","method":"query","params":{"request_type":"view_access_key_list","finality":"final","account_id":"'$W'"}}' | jq .result.keys
 # []
 curl -s $RPC -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":"1","method":"query","params":{"request_type":"call_function","finality":"final","account_id":"'$W'","method_name":"get_wallet","args_base64":"e30="}}' | jq -r '.result.result | implode' | jq .
@@ -904,7 +904,7 @@ Record: the messages, the explorer link of the execute. On failure: **S**,
 | 2 | Card check | Every card gives a report; at least one **Can sign**; shared reports show only the last 4 digits | |
 | 3 | Setup | Home opens with "Your wallet is ready"; Log has "wallet account locked: no keys left" and no "WARNING" line | |
 | 4 | Phone key | Settings → "Phone key" is "Trusted Execution Environment" or "secure hardware", not "software (no secure hardware!)" | |
-| 5 | Explorer | `code_hash` is `5Db4uQQKpTkTtUspdQcx5iVcnvT7MSXCNMdKwhQibwcf`; no access keys | |
+| 5 | Explorer | `code_hash` is `DdhpDh3c2gbVJK4iFQLU7C3c2W4Bgg6JYTBSBtBDRcS7`; no access keys | |
 | 6 | Prompt text | Every prompt named the exact amount and receiver | |
 | 7 | Instant payment | "Sent 0.1 NEAR"; one transaction with `approve_card` + `execute`; `<receiver>` got 0.1 | |
 | 8 | Over-limit payment | "Approved, waiting 1 h"; balance unchanged | |
