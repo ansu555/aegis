@@ -156,18 +156,17 @@ fun WelcomeMenuSheet(vm: AppViewModel, menu: WelcomeMenu) {
     LaunchedEffect(Unit) { appear.animateTo(1f, spring(dampingRatio = 0.86f, stiffness = 420f)) }
     fun close(then: () -> Unit = {}) = scope.launch { appear.animateTo(0f, tween(160)); vm.welcomeMenu = null; then() }
     BackHandler { close() }
-    val shape = RoundedCornerShape(36.dp)
+    val shape = RoundedCornerShape(PopupGlass.Radius)
     Box(
-        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f * appear.value))
+        Modifier.fillMaxSize().background(Color.Black.copy(alpha = PopupGlass.SCRIM * appear.value.coerceIn(0f, 1f)))
             .clickable(remember { MutableInteractionSource() }, indication = null) { close() },
         contentAlignment = Alignment.BottomCenter,
     ) {
         Column(
-            Modifier.navigationBarsPadding().padding(horizontal = 12.dp, vertical = 12.dp).fillMaxWidth()
+            Modifier.navigationBarsPadding().padding(PopupGlass.Margin).fillMaxWidth()
                 .offset { IntOffset(0, ((1f - appear.value) * 600f).toInt()) }
                 .alpha(appear.value.coerceIn(0f, 1f))
-                .shadow(30.dp, shape)
-                .frosted(shape, tint = Color(0xFF0A0A0C), strength = 0.82f).glassRim(36.dp, shape = shape)
+                .popupGlass(shape)
                 // swallow taps so they don't reach the scrim
                 .clickable(remember { MutableInteractionSource() }, indication = null) {}
                 .padding(start = 8.dp, end = 8.dp, top = 12.dp, bottom = 16.dp),

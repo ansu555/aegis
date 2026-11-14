@@ -139,11 +139,9 @@ fun MarketsPanel(vm: AppViewModel, onTrade: (IntentToken) -> Unit) {
         Spacer(Modifier.height(20.dp))
     }
 
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        MarketList.entries.forEach { l -> Chip(l.label, selected = l == list) { list = l } }
-    }
+    GlassScrollTabs(MarketList.entries.map { it.label }, list.ordinal) { list = MarketList.entries[it] }
     Spacer(Modifier.height(12.dp))
-    TvField("", query, { query = it }, placeholder = "Search coins")
+    TvField("", query, { query = it }, placeholder = "Search coins", leading = Ic.Search)
     Spacer(Modifier.height(12.dp))
 
     val tradable = coins.filter { it.tradable }
@@ -309,9 +307,7 @@ private fun MarketSheet(vm: AppViewModel, item: MarketItem, onDismiss: () -> Uni
                 }
             }
             Spacer(Modifier.height(12.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                ChartRange.entries.forEach { r -> Chip(r.label, selected = r == range) { range = r } }
-            }
+            GlassTabs(ChartRange.entries.map { it.label }, range.ordinal, height = 40.dp) { range = ChartRange.entries[it] }
             Spacer(Modifier.height(18.dp))
             Column(Modifier.fillMaxWidth().surface(20.dp).padding(horizontal = 16.dp, vertical = 8.dp)) {
                 item.marketCap?.let { InfoRow("Market cap", Markets.compact(it)) }

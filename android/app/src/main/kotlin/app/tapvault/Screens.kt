@@ -87,6 +87,7 @@ fun TapvaultApp(vm: AppViewModel) {
     TapvaultTheme {
         val frozen = vm.wallet?.frozen == true
         val haze = remember { HazeState() }
+        val overlays = remember { OverlayHost() }
         AppBackground(vm.screen, frozen && vm.screen == Screen.Home) {
             LaunchedEffect(Unit) { vm.refresh(); vm.startAutoRefresh() }
             val ready = vm.ready
@@ -108,7 +109,7 @@ fun TapvaultApp(vm: AppViewModel) {
             // Home's header floats over the content as glass, so its sheet state lives out here
             val homeUi = remember { HomeUi() }
             LaunchedEffect(vm.screen) { if (vm.screen != Screen.Home) { homeUi.picker = false; homeUi.receive = false } }
-            CompositionLocalProvider(LocalHaze provides haze) {
+            CompositionLocalProvider(LocalHaze provides haze, LocalOverlayHost provides overlays) {
                 // Everything on screen is the blur source for the floating glass (tab bar, banners, sheets).
                 Box(Modifier.fillMaxSize().hazeSource(haze)) { androidx.compose.animation.SharedTransitionLayout { CompositionLocalProvider(LocalSharedScope provides this) {
                     AnimatedContent(
@@ -184,14 +185,16 @@ fun TapvaultApp(vm: AppViewModel) {
                         } else body()
                     } }
                 } } }
-                // Frosted strip behind the status bar so scrolled content never runs under the clock.
-                Box(Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars).frosted(RectangleShape, strength = 0.6f))
+                // Frosted strip behind the status bar so scrolled content never runs under the clock (Home's header covers it there).
+                AnimatedVisibility(vm.screen != Screen.Home, enter = fadeIn(tween(240, delayMillis = 70)), exit = fadeOut(tween(90))) {
+                    Box(Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars).frosted(RectangleShape, strength = 0.6f))
+                }
                 // Home's header: frosted glass over the scrolling content (outside the blur source, so it can blur it)
                 AnimatedVisibility(
                     vm.screen == Screen.Home, Modifier.align(Alignment.TopCenter),
                     enter = fadeIn(tween(240, delayMillis = 70)), exit = fadeOut(tween(90)),
                 ) {
-                    Box(Modifier.statusBarsPadding().padding(horizontal = 14.dp)) { HomeHeader(vm, homeUi) }
+                    HomeHeader(vm, homeUi)
                 }
                 AnimatedVisibility(
                     tabs, Modifier.align(Alignment.BottomCenter),
@@ -200,10 +203,12 @@ fun TapvaultApp(vm: AppViewModel) {
                 ) {
                     GlassTabBar(navItems, vm.screen, vm.proposals.size, { vm.go(it) })
                 }
-                OutcomeBanner(vm.outcome, { l -> uri.openUri(l) }, { vm.outcome = null }, Modifier.align(Alignment.TopCenter))
                 if (vm.screen == Screen.Welcome) vm.welcomeMenu?.let { WelcomeMenuSheet(vm, it) }
-                vm.tap?.let { TapSheet(it) { vm.cancelTap() } }
                 vm.keyPrompt?.let { SecurityKeySheet(vm, it) }
+                // every sheet and dialog, drawn here so its glass frosts the screen
+                OverlayLayer(overlays)
+                OutcomeBanner(vm.outcome, { l -> uri.openUri(l) }, { vm.outcome = null }, Modifier.align(Alignment.TopCenter))
+                vm.tap?.let { TapSheet(it) { vm.cancelTap() } }
                 // Setup shows its progress in place; everything else gets the overlay.
                 if (vm.tap == null && vm.keyPrompt == null && vm.screen != Screen.Setup) vm.busy?.let { BusyOverlay(it) }
                 if (vm.locked) LockOverlay(vm)
@@ -416,19 +421,29 @@ class HomeUi {
     var receive by mutableStateOf(false)
 }
 
-/** Height Home keeps free at its top for [HomeHeader]: the capsule and the gap above it. */
+/** Height Home keeps free at its top for [HomeHeader]: the header row and the gap above it. */
 private val HOME_HEADER_SPACE = 70.dp
 
-/** Home's header (wallet switcher + receive): a floating capsule of frosted glass; Home scrolls beneath it. */
+/**
+ * Home's header (wallet switcher + receive): no capsule and no edge, just frosted glass from the
+ * top of the screen that melts into the content below; Home scrolls beneath it. Its row is as
+ * wide as the tab bar, so the two line up.
+ */
 @Composable
 private fun HomeHeader(vm: AppViewModel, ui: HomeUi) {
     val idle = vm.busy == null
     val shape = RoundedCornerShape(50)
+    Box(Modifier.fillMaxWidth()) {
+        Box(
+            Modifier.matchParentSize().frosted(
+                RectangleShape, strength = 0.5f,
+                mask = Brush.verticalGradient(0f to Color.Black, 0.7f to Color.Black, 1f to Color.Transparent),
+            ),
+        )
     Row(
-        Modifier.fillMaxWidth().padding(top = 8.dp).height(60.dp)
-            .shadow(24.dp, shape, ambientColor = Color.Black, spotColor = Color.Black)
-            .frosted(shape, strength = 0.38f).glassRim(30.dp, shape = shape)
-            .padding(start = 8.dp, end = 8.dp),
+        Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 8.dp, bottom = 24.dp)
+            .widthIn(max = tabBarWidth(navItems.size)).fillMaxWidth().height(60.dp)
+            .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.weight(1f)) { Row(
@@ -448,6 +463,7 @@ private fun HomeHeader(vm: AppViewModel, ui: HomeUi) {
         } }
         Spacer(Modifier.width(12.dp))
         RoundIcon(Ic.Qr, "Receive", 44.dp, bg = Color.White.copy(alpha = 0.07f)) { ui.receive = true }
+    }
     }
 }
 
@@ -492,7 +508,7 @@ private fun ReceiveSheet(vm: AppViewModel, onDismiss: () -> Unit) {
         Text("Receive NEAR", style = Type.H2, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
         Text("Scan, or share your account name", style = Type.Body, color = Tv.Text2, modifier = Modifier.fillMaxWidth().padding(top = 4.dp), textAlign = TextAlign.Center)
         Spacer(Modifier.height(22.dp))
-        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { QrCode(acct, Modifier.size(232.dp)) }
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { QrCode(acct, Modifier.size(232.dp), reveal = true) }
         Spacer(Modifier.height(20.dp))
         Column(Modifier.fillMaxWidth().surface(20.dp).padding(16.dp)) {
             Text("${vm.walletName} · ${vm.network.displayName}", style = Type.CaptionStrong, color = Tv.Text2)

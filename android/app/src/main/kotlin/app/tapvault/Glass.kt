@@ -20,6 +20,21 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -47,6 +62,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -97,9 +113,12 @@ fun Modifier.glassRim(radius: Dp, stroke: Color = Tv.Stroke, shape: Shape = Roun
 /** The blur source for floating glass: the screen content. Null in previews and before the app sets it. */
 val LocalHaze = staticCompositionLocalOf<HazeState?> { null }
 
-/** Frosted chrome: blurs the screen content behind it (Android 12+); a dense tint on older phones. */
+/**
+ * Frosted chrome: blurs the screen content behind it (Android 12+); a dense tint on older phones.
+ * [mask] fades the whole effect (blur and tint) out, so an edge can melt into the screen instead of ending in a line.
+ */
 @Composable
-fun Modifier.frosted(shape: Shape, tint: Color = Color(0xFF141417), strength: Float = 0.62f): Modifier {
+fun Modifier.frosted(shape: Shape, tint: Color = Color(0xFF141417), strength: Float = 0.62f, mask: Brush? = null): Modifier {
     val haze = LocalHaze.current ?: return background(tint.copy(alpha = 0.96f), shape)
     return clip(shape).hazeEffect(
         haze,
@@ -110,8 +129,289 @@ fun Modifier.frosted(shape: Shape, tint: Color = Color(0xFF141417), strength: Fl
             noiseFactor = 0.06f,
             fallbackTint = HazeTint(tint.copy(alpha = 0.95f)),
         ),
-    )
+    ) { if (mask != null) this.mask = mask }
 }
+
+// ---------------------------------------------------------------- pop-up glass
+
+/** The one glass every pop-up is made of (welcome menus, sheets, dialogs, the card tap): the same tint, frost, scrim and corners. */
+object PopupGlass {
+    val Tint = Color(0xFF0A0A0C)
+    const val STRENGTH = 0.82f
+    const val SCRIM = 0.6f
+    val Radius = 36.dp
+    /** Gap between a bottom pop-up and the screen's edges. */
+    val Margin = 12.dp
+}
+
+/** A pop-up's body: soft shadow, frosted glass in [PopupGlass]'s tint, the lit glass rim. */
+@Composable
+fun Modifier.popupGlass(shape: Shape = RoundedCornerShape(PopupGlass.Radius), radius: Dp = PopupGlass.Radius): Modifier =
+    shadow(30.dp, shape).frosted(shape, tint = PopupGlass.Tint, strength = PopupGlass.STRENGTH).glassRim(radius, shape = shape)
+
+/**
+ * Where sheets and dialogs are drawn: above the blur source (so their glass
+ * frosts the screen behind them, like the welcome menus) instead of in a
+ * window of their own, which can't blur what's under it.
+ */
+class OverlayHost {
+    internal val entries = androidx.compose.runtime.mutableStateListOf<OverlayEntry>()
+}
+
+internal class OverlayEntry(val center: Boolean, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    var onDismiss by mutableStateOf(onDismiss)
+    var content by mutableStateOf(content)
+    /** The caller let go of it: it animates out, then leaves the host. */
+    var leaving by mutableStateOf(false)
+}
+
+val LocalOverlayHost = staticCompositionLocalOf<OverlayHost?> { null }
+
+/**
+ * Puts [content] in the [OverlayHost] while this is composed: a bottom sheet,
+ * or a centred dialog when [center]. Leaving composition animates it out.
+ * Without a host (previews) the content is drawn in place.
+ */
+@Composable
+fun Overlay(center: Boolean, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    val host = LocalOverlayHost.current
+    if (host == null) { Column(content = content); return }
+    val entry = remember { OverlayEntry(center, onDismiss, content) }
+    androidx.compose.runtime.SideEffect { entry.onDismiss = onDismiss; entry.content = content }
+    androidx.compose.runtime.DisposableEffect(host) {
+        entry.leaving = false
+        if (entry !in host.entries) host.entries.add(entry)
+        onDispose { entry.leaving = true }
+    }
+}
+
+/** Draws the host's pop-ups, oldest at the bottom. */
+@Composable
+fun OverlayLayer(host: OverlayHost) {
+    host.entries.forEach { e -> androidx.compose.runtime.key(e) { OverlayFrame(host, e) } }
+}
+
+@Composable
+private fun OverlayFrame(host: OverlayHost, e: OverlayEntry) {
+    val appear = remember { Animatable(0f) }
+    val drag = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    LaunchedEffect(e.leaving) {
+        if (e.leaving) { appear.animateTo(0f, tween(180)); host.entries.remove(e) }
+        else appear.animateTo(1f, if (e.center) spring(dampingRatio = 0.72f, stiffness = 420f) else spring(dampingRatio = 0.86f, stiffness = 420f))
+    }
+    val dismiss = { if (!e.leaving) e.onDismiss() }
+    androidx.activity.compose.BackHandler(enabled = !e.leaving) { dismiss() }
+    val swallow = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    Box(Modifier.fillMaxSize()) {
+        // the scrim: tapping it closes the pop-up
+        Box(
+            Modifier.matchParentSize().graphicsLayer { alpha = appear.value.coerceIn(0f, 1f) }.background(Color.Black.copy(alpha = PopupGlass.SCRIM))
+                .clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null, enabled = !e.leaving) { dismiss() },
+        )
+        if (e.center) {
+            val shape = RoundedCornerShape(32.dp)
+            Column(
+                Modifier.align(Alignment.Center).windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))
+                    .padding(horizontal = 26.dp).fillMaxWidth()
+                    .graphicsLayer { val s = 0.9f + 0.1f * appear.value; scaleX = s; scaleY = s; alpha = appear.value.coerceIn(0f, 1f) }
+                    .popupGlass(shape, 32.dp)
+                    .clickable(swallow, indication = null, enabled = !e.leaving) {}
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                content = e.content,
+            )
+        } else {
+            val shape = RoundedCornerShape(PopupGlass.Radius)
+            Column(
+                Modifier.align(Alignment.BottomCenter)
+                    .windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))
+                    .padding(start = PopupGlass.Margin, end = PopupGlass.Margin, top = 28.dp, bottom = PopupGlass.Margin)
+                    .fillMaxWidth()
+                    .graphicsLayer {
+                        translationY = (1f - appear.value) * (size.height + 40.dp.toPx()) + drag.value
+                        alpha = appear.value.coerceIn(0f, 1f)
+                    }
+                    .popupGlass(shape)
+                    .clickable(swallow, indication = null, enabled = !e.leaving) {},
+            ) {
+                // the handle: drag it down to close
+                Box(
+                    Modifier.fillMaxWidth().height(30.dp).draggable(
+                        rememberDraggableState { dy -> scope.launch { drag.snapTo((drag.value + dy).coerceAtLeast(0f)) } },
+                        Orientation.Vertical,
+                        enabled = !e.leaving,
+                        onDragStopped = { v ->
+                            if (drag.value > with(density) { 110.dp.toPx() } || v > 1800f) dismiss()
+                            else drag.animateTo(0f, spring(dampingRatio = 0.6f, stiffness = 420f))
+                        },
+                    ),
+                    contentAlignment = Alignment.Center,
+                ) { Box(Modifier.size(40.dp, 4.dp).background(Tv.StrokeStrong, RoundedCornerShape(2.dp))) }
+                Column(
+                    Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 18.dp),
+                    content = e.content,
+                )
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- liquid glass tabs
+
+/**
+ * A row of tabs in the tab bar's liquid glass: a frosted track and the
+ * bubble, which springs (stretching as it moves) to the chosen tab; dragging
+ * along the track slides it. On Android 13+ the bubble is a lens over the
+ * labels, as in [GlassTabBar]. Every tab is the same width.
+ */
+@Composable
+fun GlassTabs(labels: List<String>, selected: Int, modifier: Modifier = Modifier, height: Dp = 46.dp, onSelect: (Int) -> Unit) {
+    val n = labels.size.coerceAtLeast(1)
+    val pos = remember { Animatable(selected.toFloat()) }
+    val scope = rememberCoroutineScope()
+    val haptic = LocalHapticFeedback.current
+    var dragging by remember { mutableStateOf(false) }
+    val settle = spring<Float>(dampingRatio = 0.62f, stiffness = 340f)
+    LaunchedEffect(selected) { if (!dragging) pos.animateTo(selected.toFloat(), settle) }
+    var widthPx by remember { mutableStateOf(0f) }
+    val density = LocalDensity.current
+    val pad = 4.dp
+    val padPx = with(density) { pad.toPx() }
+    val itemPx = ((widthPx - padPx * 2) / n).coerceAtLeast(0f)
+    val shape = RoundedCornerShape(50)
+    val lens = remember { createLiquidLens() }
+    fun stretchX() = 1f + (abs(pos.velocity) * 0.045f).coerceAtMost(0.22f)
+    fun stretchY() = 1f - (abs(pos.velocity) * 0.02f).coerceAtMost(0.10f)
+
+    Box(modifier.fillMaxWidth().height(height).onSizeChanged { widthPx = it.width.toFloat() }) {
+        Box(
+            Modifier.matchParentSize().graphicsLayer {
+                if (lens != null && itemPx > 0f && android.os.Build.VERSION.SDK_INT >= 33) {
+                    renderEffect = lens.effect(
+                        center = Offset(padPx + pos.value * itemPx + itemPx / 2, size.height / 2),
+                        half = Offset(itemPx / 2 * stretchX(), (size.height / 2 - padPx) * stretchY()),
+                        edge = 12.dp.toPx(),
+                    )
+                }
+            },
+        ) {
+            Box(Modifier.matchParentSize().frosted(shape, strength = 0.42f).background(Color.White.copy(alpha = 0.05f), shape).glassRim(height / 2, shape = shape))
+            Row(
+                Modifier.matchParentSize().padding(horizontal = pad).pointerInput(n, itemPx) {
+                    if (itemPx <= 0f) return@pointerInput
+                    detectHorizontalDragGestures(
+                        onDragStart = { dragging = true },
+                        onDragEnd = {
+                            dragging = false
+                            val target = pos.value.roundToInt().coerceIn(0, n - 1)
+                            scope.launch { pos.animateTo(target.toFloat(), settle) }
+                            if (target != selected) { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onSelect(target) }
+                        },
+                        onDragCancel = { dragging = false; scope.launch { pos.animateTo(selected.toFloat(), settle) } },
+                    ) { change, dx ->
+                        change.consume()
+                        scope.launch { pos.snapTo((pos.value + dx / itemPx).coerceIn(-0.15f, n - 1 + 0.15f)) }
+                    }
+                },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                labels.forEachIndexed { i, label ->
+                    val sel = i == selected
+                    val tint by animateColorAsState(if (sel) Tv.Text else Tv.Text2, label = "seg")
+                    Box(
+                        Modifier.weight(1f).fillMaxHeight().clip(shape)
+                            .pressable(haptic = true) { if (!sel) onSelect(i) }
+                            .semantics { contentDescription = label; role = Role.Tab; this.selected = sel },
+                        contentAlignment = Alignment.Center,
+                    ) { Text(label, style = Type.CaptionStrong.copy(fontSize = 14.sp), color = tint, maxLines = 1) }
+                }
+            }
+        }
+        if (itemPx > 0f) Box(
+            Modifier.align(Alignment.CenterStart).padding(start = pad)
+                .size(with(density) { itemPx.toDp() }, height - pad * 2)
+                .graphicsLayer { translationX = pos.value * itemPx; scaleX = stretchX(); scaleY = stretchY() }
+                .liquidBubble(),
+        )
+    }
+}
+
+/**
+ * Tabs for more than fit across: plain labels with no track, and the tab bar's liquid bubble
+ * behind the chosen one. The bubble springs to the chosen tab's place and width, the row
+ * scrolls the choice into view, and the ends fade out softly instead of cutting a label off.
+ */
+@Composable
+fun GlassScrollTabs(labels: List<String>, selected: Int, modifier: Modifier = Modifier, height: Dp = 42.dp, onSelect: (Int) -> Unit) {
+    val lefts = remember(labels.size) { androidx.compose.runtime.mutableStateListOf<Float>().apply { repeat(labels.size) { add(0f) } } }
+    val widths = remember(labels.size) { androidx.compose.runtime.mutableStateListOf<Float>().apply { repeat(labels.size) { add(0f) } } }
+    val x = remember { Animatable(0f) }
+    val w = remember { Animatable(0f) }
+    var placed by remember { mutableStateOf(false) }
+    var viewport by remember { mutableStateOf(0) }
+    val scroll = rememberScrollState()
+    val tx = lefts.getOrElse(selected) { 0f }
+    val tw = widths.getOrElse(selected) { 0f }
+    LaunchedEffect(selected, tx, tw) {
+        if (tw <= 0f) return@LaunchedEffect
+        if (viewport > 0) launch { scroll.animateScrollTo((tx + tw / 2 - viewport / 2f).roundToInt().coerceIn(0, scroll.maxValue)) }
+        if (!placed) { x.snapTo(tx); w.snapTo(tw); placed = true; return@LaunchedEffect }
+        launch { w.animateTo(tw, spring(dampingRatio = 0.7f, stiffness = 340f)) }
+        x.animateTo(tx, spring(dampingRatio = 0.62f, stiffness = 340f))
+    }
+    val density = LocalDensity.current
+    val shape = RoundedCornerShape(50)
+    Box(
+        modifier.fillMaxWidth().height(height).onSizeChanged { viewport = it.width }
+            .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+            .drawWithContent {
+                drawContent()
+                // soft ends: fade a label out where the row runs on past the edge
+                val f = (28.dp.toPx() / size.width).coerceAtMost(0.3f)
+                val l = if (scroll.value > 0) 0f else 1f
+                val r = if (scroll.value < scroll.maxValue) 0f else 1f
+                drawRect(
+                    Brush.horizontalGradient(0f to Color.Black.copy(alpha = l), f to Color.Black, 1f - f to Color.Black, 1f to Color.Black.copy(alpha = r)),
+                    blendMode = androidx.compose.ui.graphics.BlendMode.DstIn,
+                )
+            },
+    ) {
+        Box(Modifier.fillMaxSize().horizontalScroll(scroll)) {
+            // the bubble sits behind the labels, so they stay crisp
+            if (w.value > 0f) Box(
+                Modifier.align(Alignment.CenterStart)
+                    .size(with(density) { w.value.toDp() }, height - 4.dp)
+                    .graphicsLayer {
+                        translationX = x.value
+                        scaleX = 1f + (abs(x.velocity) / size.width.coerceAtLeast(1f) * 0.012f).coerceAtMost(0.2f)
+                        scaleY = 1f - (abs(x.velocity) / size.width.coerceAtLeast(1f) * 0.005f).coerceAtMost(0.08f)
+                    }
+                    .liquidBubble(),
+            )
+            Row(Modifier.fillMaxHeight(), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                labels.forEachIndexed { i, label ->
+                    val sel = i == selected
+                    val tint by animateColorAsState(if (sel) Tv.Text else Tv.Text3, label = "stab")
+                    Box(
+                        Modifier.fillMaxHeight().padding(vertical = 2.dp)
+                            .onPlaced { lefts[i] = it.positionInParent().x; widths[i] = it.size.width.toFloat() }
+                            .clip(shape).pressable(haptic = true) { if (!sel) onSelect(i) }
+                            .semantics { contentDescription = label; role = Role.Tab; this.selected = sel }
+                            .padding(horizontal = 18.dp),
+                        contentAlignment = Alignment.Center,
+                    ) { Text(label, style = Type.CaptionStrong.copy(fontSize = 15.sp), color = tint, maxLines = 1) }
+                }
+            }
+        }
+    }
+}
+
+/** How wide [GlassTabBar] is with [count] tabs, so other chrome (Home's header) can line up with it. */
+fun tabBarWidth(count: Int): Dp = TAB_ITEM_W * count + TAB_PAD * 2
+private val TAB_ITEM_W = 86.dp
+private val TAB_PAD = 6.dp
 
 // ---------------------------------------------------------------- ambient background
 
@@ -209,9 +509,9 @@ fun GlassTabBar(items: List<NavItem>, current: Screen, badge: Int, go: (Screen) 
     var dragging by remember { mutableStateOf(false) }
     LaunchedEffect(index) { if (!dragging) pos.animateTo(index.toFloat(), spring(dampingRatio = 0.62f, stiffness = 340f)) }
 
-    val itemW = 86.dp
+    val itemW = TAB_ITEM_W
     val barH = 64.dp
-    val pad = 6.dp
+    val pad = TAB_PAD
     // the bubble sits inside the bar: the same gap (pad) above, below and at both ends
     val bubbleH = barH - pad * 2
     val density = LocalDensity.current

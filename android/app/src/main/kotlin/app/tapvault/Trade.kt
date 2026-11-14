@@ -81,9 +81,7 @@ fun TradeScreen(vm: AppViewModel) {
     }
     var tab by remember { mutableStateOf(TradeTab.Markets) }
     var preset by remember { mutableStateOf<IntentToken?>(null) }
-    Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        TradeTab.entries.forEach { t -> Chip(t.label, selected = t == tab) { tab = t } }
-    }
+    GlassScrollTabs(TradeTab.entries.map { it.label }, tab.ordinal, Modifier.padding(top = 6.dp)) { tab = TradeTab.entries[it] }
     Spacer(Modifier.height(16.dp))
     when (tab) {
         TradeTab.Markets -> MarketsPanel(vm) { a -> preset = a; tab = TradeTab.Swap }
@@ -386,7 +384,7 @@ private fun TokenPicker(vm: AppViewModel, title: String, items: List<IntentToken
     GlassSheet(onDismiss) {
         Text(title, style = Type.H2)
         Spacer(Modifier.height(12.dp))
-        TvField("", q, { q = it }, placeholder = "Search name or chain")
+        TvField("", q, { q = it }, placeholder = "Search name or chain", leading = Ic.Search)
         Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()).padding(top = 10.dp)) {
             val shown = items.filter { q.isBlank() || it.symbol.contains(q.trim(), true) || chainName(it).contains(q.trim(), true) }
             if (shown.isEmpty()) Caption("Nothing matches.", Modifier.padding(8.dp), color = Tv.Text3)
@@ -480,7 +478,7 @@ private fun DepositSheet(r: SwapRecord, onDismiss: () -> Unit) {
         Text("Send ${r.amountIn}", style = Type.H2, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
         Caption("on ${r.chain}, to this address. This wallet gets ${r.amountOut}.", Modifier.fillMaxWidth().padding(top = 4.dp), align = TextAlign.Center)
         Spacer(Modifier.height(16.dp))
-        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { QrCode(r.depositAddress, Modifier.size(220.dp)) }
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { QrCode(r.depositAddress, Modifier.size(220.dp), reveal = true) }
         Spacer(Modifier.height(14.dp))
         Column(Modifier.fillMaxWidth().surface(20.dp).clickable { clip.setText(AnnotatedString(r.depositAddress)) }.padding(horizontal = 16.dp, vertical = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {

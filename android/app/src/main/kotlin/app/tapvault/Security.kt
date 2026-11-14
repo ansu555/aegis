@@ -377,12 +377,9 @@ private fun HoldTimerSheet(vm: AppViewModel, onDismiss: () -> Unit) {
             "After a card is read and recognised, it has to stay on the phone this long before it signs. Lift it and the timer starts over.",
             style = Type.Body, color = Tv.Text2, modifier = Modifier.padding(top = 6.dp, bottom = 16.dp),
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            HOLD_CHOICES.forEach { s ->
-                Chip(if (s == 0) "Off" else "$s s", selected = vm.holdSeconds == s) {
-                    if (s != vm.holdSeconds) { onDismiss(); vm.setHoldTimer(s) }
-                }
-            }
+        GlassTabs(HOLD_CHOICES.map { if (it == 0) "Off" else "$it s" }, HOLD_CHOICES.indexOf(vm.holdSeconds).coerceAtLeast(0)) { i ->
+            val s = HOLD_CHOICES[i]
+            if (s != vm.holdSeconds) { onDismiss(); vm.setHoldTimer(s) }
         }
         Spacer(Modifier.height(16.dp))
         Notice(

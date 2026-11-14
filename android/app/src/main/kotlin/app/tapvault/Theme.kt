@@ -162,7 +162,7 @@ fun Modifier.surface(radius: Dp = 20.dp, color: Color = Tv.Glass, stroke: Color 
 // Line icons from Lucide (ISC licence), converted to vector drawables in res/drawable.
 
 enum class Ic(@DrawableRes val res: Int) {
-    Send(R.drawable.ic_arrow_up_right), Receive(R.drawable.ic_arrow_down_left), Freeze(R.drawable.ic_snowflake),
+    Send(R.drawable.ic_arrow_up), Receive(R.drawable.ic_arrow_down), Freeze(R.drawable.ic_snowflake),
     History(R.drawable.ic_history), Home(R.drawable.ic_house), Card(R.drawable.ic_credit_card), Settings(R.drawable.ic_settings),
     Back(R.drawable.ic_chevron_left), Check(R.drawable.ic_check), ShieldCheck(R.drawable.ic_shield_check), Shield(R.drawable.ic_shield),
     Phone(R.drawable.ic_smartphone), Plus(R.drawable.ic_plus), Chevron(R.drawable.ic_chevron_right), ChevronDown(R.drawable.ic_chevron_down),
@@ -170,7 +170,7 @@ enum class Ic(@DrawableRes val res: Int) {
     Lock(R.drawable.ic_lock), Fingerprint(R.drawable.ic_fingerprint), External(R.drawable.ic_external_link), Info(R.drawable.ic_info),
     Wallet(R.drawable.ic_wallet), Clock(R.drawable.ic_clock), Paste(R.drawable.ic_clipboard_paste), Nfc(R.drawable.ic_nfc),
     Trash(R.drawable.ic_trash_2), Refresh(R.drawable.ic_refresh_cw), Warning(R.drawable.ic_triangle_alert), CheckCircle(R.drawable.ic_circle_check),
-    XCircle(R.drawable.ic_circle_x), Key(R.drawable.ic_key_round), Timer(R.drawable.ic_timer), Down(R.drawable.ic_arrow_down),
+    XCircle(R.drawable.ic_circle_x), Key(R.drawable.ic_key_round), Timer(R.drawable.ic_timer), Down(R.drawable.ic_arrow_down), Search(R.drawable.ic_search),
     Edit(R.drawable.ic_pencil), Offline(R.drawable.ic_wifi_off), Layers(R.drawable.ic_layers), Scan(R.drawable.ic_scan_line),
     Hourglass(R.drawable.ic_hourglass),
 }

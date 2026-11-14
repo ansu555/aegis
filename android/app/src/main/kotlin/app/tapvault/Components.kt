@@ -55,11 +55,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.ModalBottomSheetDefaults
-import androidx.compose.material3.ModalBottomSheetProperties
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.ImageShader
 import androidx.compose.ui.graphics.Path
@@ -67,14 +62,9 @@ import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.TileMode
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
@@ -232,14 +222,14 @@ fun RoundIcon(icon: Ic, label: String, size: Dp = 44.dp, tint: Color = Tv.Text, 
     }
 }
 
-/** Small selectable chip ("Half", "Max", presets). */
+/** Small selectable chip ("Half", "Max", presets): clear glass, and the tab bar's liquid bubble when [selected]. */
 @Composable
 fun Chip(text: String, selected: Boolean = false, onClick: () -> Unit) {
-    val bg by animateColorAsState(if (selected) Tv.Accent else Tv.GlassStrong, label = "chip")
-    val fg by animateColorAsState(if (selected) Tv.OnAccent else Tv.Text, label = "chipFg")
+    val fg by animateColorAsState(if (selected) Tv.Text else Tv.Text2, label = "chipFg")
+    val shape = RoundedCornerShape(50)
     Box(
-        Modifier.clip(RoundedCornerShape(50)).background(bg).let { if (selected) it else it.glassRim(18.dp, shape = RoundedCornerShape(50)) }
-            .pressable(haptic = true, onClick = onClick).padding(horizontal = 14.dp, vertical = 8.dp),
+        Modifier.let { if (selected) it.liquidBubble() else it.clip(shape).background(Tv.GlassStrong).glassRim(18.dp, shape = shape) }
+            .clip(shape).pressable(haptic = true, onClick = onClick).padding(horizontal = 14.dp, vertical = 8.dp),
     ) { Text(text, style = Type.CaptionStrong, color = fg) }
 }
 
@@ -451,6 +441,8 @@ fun TvField(
     focus: androidx.compose.ui.focus.FocusRequester? = null,
     /** Hidden input (dots), password keyboard, no suggestions: for the security key. */
     secret: Boolean = false,
+    /** A pill as round as the tab bar, with this icon in front (search boxes). */
+    leading: Ic? = null,
 ) {
     Column(modifier) {
         if (label.isNotEmpty()) { Text(label, style = Type.CaptionStrong, color = Tv.Text2); Spacer(Modifier.height(8.dp)) }
@@ -465,10 +457,14 @@ fun TvField(
                 autoCorrectEnabled = false,
             ),
             decorationBox = { inner ->
+                val stroke = if (error != null) Tv.Danger.copy(alpha = 0.6f) else Tv.Stroke
+                val pill = RoundedCornerShape(50)
                 Row(
-                    Modifier.fillMaxWidth().heightIn(min = 56.dp).surface(18.dp, Tv.Glass, if (error != null) Tv.Danger.copy(alpha = 0.6f) else Tv.Stroke).padding(start = 16.dp, end = 8.dp),
+                    Modifier.fillMaxWidth().heightIn(min = 56.dp)
+                        .let { if (leading != null) it.background(Tv.Glass, pill).glassRim(28.dp, stroke, shape = pill).padding(start = 20.dp, end = 12.dp) else it.surface(18.dp, Tv.Glass, stroke).padding(start = 16.dp, end = 8.dp) },
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    leading?.let { TvIcon(it, 20.dp, Tv.Text3); Spacer(Modifier.width(12.dp)) }
                     Box(Modifier.weight(1f).padding(vertical = 14.dp)) {
                         if (value.isEmpty()) Text(placeholder, style = Type.Body.copy(fontSize = 16.sp), color = Tv.Text3)
                         inner()
@@ -630,33 +626,9 @@ fun Spinner(size: Dp = 28.dp, color: Color = Tv.Accent) {
     }
 }
 
-/**
- * A centred glass dialog. On Android 12+ the screen behind it is blurred by the
- * system (where the device allows cross-window blur); elsewhere it is dimmed.
- */
+/** A centred dialog in the pop-up glass ([PopupGlass]), frosting the screen behind it. */
 @Composable
-fun GlassDialog(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
-    Dialog(onDismiss, DialogProperties(usePlatformDefaultWidth = false)) {
-        val window = (LocalView.current.parent as? DialogWindowProvider)?.window
-        LaunchedEffect(window) {
-            if (window != null && android.os.Build.VERSION.SDK_INT >= 31) {
-                window.addFlags(android.view.WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
-                window.attributes = window.attributes.apply { blurBehindRadius = 48 }
-                window.setDimAmount(0.45f)
-            }
-        }
-        val appear = remember { Animatable(0f) }
-        LaunchedEffect(Unit) { appear.animateTo(1f, spring(dampingRatio = 0.72f, stiffness = 420f)) }
-        val shape = RoundedCornerShape(32.dp)
-        Column(
-            Modifier.padding(horizontal = 26.dp).fillMaxWidth()
-                .graphicsLayer { val s = 0.9f + 0.1f * appear.value; scaleX = s; scaleY = s; alpha = appear.value.coerceIn(0f, 1f) }
-                .shadow(40.dp, shape).background(Tv.Sheet, shape).glassRim(32.dp).padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            content = content,
-        )
-    }
-}
+fun GlassDialog(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) = Overlay(center = true, onDismiss, content)
 
 /** Confirmation dialog in the app's style. */
 @Composable
@@ -686,20 +658,15 @@ fun ConfirmDialog(
     }
 }
 
-/** A bottom sheet in dark glass (sheets are their own window, so they can't blur what's behind). */
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * A bottom sheet in the pop-up glass ([PopupGlass]): a floating frosted card that blurs the screen
+ * behind it, like the welcome menus. Drag the handle down, tap outside or go back to close it.
+ * [secure] is kept for the callers that show secrets: the sheet is drawn in the activity's own
+ * window, which is FLAG_SECURE (MainActivity), so it never appears in screenshots or recordings.
+ */
+@Suppress("UNUSED_PARAMETER")
 @Composable
-fun GlassSheet(onDismiss: () -> Unit, secure: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
-    val shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)
-    ModalBottomSheet(
-        onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = Tv.Sheet, shape = shape, scrimColor = Color.Black.copy(alpha = 0.6f),
-        // [secure]: kept out of screenshots, recordings and the recent-apps preview (the sheet is its own window).
-        properties = if (secure) ModalBottomSheetProperties(securePolicy = androidx.compose.ui.window.SecureFlagPolicy.SecureOn) else ModalBottomSheetDefaults.properties,
-        dragHandle = { Box(Modifier.padding(top = 12.dp, bottom = 10.dp).size(40.dp, 4.dp).background(Tv.StrokeStrong, RoundedCornerShape(2.dp))) },
-        modifier = Modifier.glassRim(32.dp, shape = shape),
-    ) { SheetColumn(content) }
-}
+fun GlassSheet(onDismiss: () -> Unit, secure: Boolean = false, content: @Composable ColumnScope.() -> Unit) = Overlay(center = false, onDismiss, content)
 
 // ---------------------------------------------------------------- the card
 
@@ -818,15 +785,15 @@ fun TapSheet(t: TapRequest, onCancel: () -> Unit) {
     val wave by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(1600, easing = LinearEasing)), label = "wave")
     val appear = remember { Animatable(0f) }
     LaunchedEffect(Unit) { appear.animateTo(1f, spring(dampingRatio = 0.85f, stiffness = 380f)) }
-    val shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp)
+    val shape = RoundedCornerShape(PopupGlass.Radius)
     Box(
-        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f * appear.value)).clickable(remember { MutableInteractionSource() }, indication = null) {},
+        Modifier.fillMaxSize().background(Color.Black.copy(alpha = PopupGlass.SCRIM * appear.value.coerceIn(0f, 1f))).clickable(remember { MutableInteractionSource() }, indication = null) {},
         contentAlignment = Alignment.BottomCenter,
     ) {
         Column(
-            Modifier.fillMaxWidth().offset { IntOffset(0, ((1f - appear.value) * 700f).toInt()) }
-                .shadow(30.dp, shape).frosted(shape, strength = 0.78f).glassRim(34.dp, shape = shape)
-                .navigationBarsPadding().padding(horizontal = 24.dp).padding(top = 12.dp, bottom = 20.dp),
+            Modifier.navigationBarsPadding().padding(PopupGlass.Margin).fillMaxWidth().offset { IntOffset(0, ((1f - appear.value) * 700f).toInt()) }
+                .popupGlass(shape)
+                .padding(horizontal = 24.dp).padding(top = 12.dp, bottom = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Box(Modifier.size(40.dp, 4.dp).background(Tv.StrokeStrong, RoundedCornerShape(2.dp)))
@@ -918,23 +885,105 @@ private fun ColumnScope.HoldPanel(h: HoldProgress, onCancel: () -> Unit) {
 
 // ---------------------------------------------------------------- QR
 
-/** A QR code drawn as crisp squares on a white tile. */
+/**
+ * A QR code drawn as crisp squares on a white tile. With [reveal] it makes an entrance: the tile
+ * flips in on a spring, the squares burst out from the centre in a wave of colour and settle to
+ * black, a light sweeps down the code, and rings ripple out behind it. Still when animations are off.
+ */
 @Composable
-fun QrCode(text: String, modifier: Modifier = Modifier) {
+fun QrCode(text: String, modifier: Modifier = Modifier, reveal: Boolean = false) {
     val m = remember(text) {
         QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, 0, 0, mapOf(EncodeHintType.MARGIN to 0, EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M))
     }
-    Box(modifier.background(Color.White, RoundedCornerShape(24.dp)).padding(18.dp)) {
+    val animate = reveal && !rememberReduceMotion()
+    // build: 0…1 the squares land (each in its own slot, centre first), 1…1.5 their colour drains to black
+    val build = remember(text, animate) { Animatable(if (animate) 0f else 1.5f) }
+    val flip = remember(text, animate) { Animatable(if (animate) 0f else 1f) }
+    val scan = remember(text, animate) { Animatable(if (animate) 0f else 1f) }
+    val haptic = LocalHapticFeedback.current
+    LaunchedEffect(text, animate) {
+        if (!animate) return@LaunchedEffect
+        launch { flip.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 150f)) }
+        build.animateTo(1.5f, tween(1900, easing = LinearEasing))
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        scan.animateTo(1f, tween(850, easing = FastOutSlowInEasing))
+    }
+    val modules = remember(m) { qrModules(m) }
+    val ink = Color(0xFF0A0B0D)
+    Box(
+        modifier
+            .drawBehind {
+                // ripples behind the tile while it arrives
+                if (build.value < 1.5f) for (i in 0..2) {
+                    val t = ((build.value / 1.2f) - i * 0.18f).coerceIn(0f, 1f)
+                    if (t <= 0f || t >= 1f) continue
+                    val r = size.minDimension * (0.45f + 0.32f * t)
+                    drawCircle(Brush.sweepGradient(listOf(Color(0xFF7CF5C4), Color(0xFF8AB4FF), Color(0xFFC59BFF), Color(0xFF7CF5C4)), center), r, style = Stroke((3f - 2f * t) * density), alpha = (1f - t) * 0.7f)
+                }
+            }
+            .graphicsLayer {
+                val f = flip.value
+                rotationY = (1f - f) * -75f
+                rotationZ = (1f - f) * 8f
+                val sc = 0.55f + 0.45f * f
+                scaleX = sc; scaleY = sc
+                alpha = (f * 1.6f).coerceIn(0f, 1f)
+                cameraDistance = 14f * density
+            }
+            .shadow(if (animate && scan.value < 1f) 28.dp else 0.dp, RoundedCornerShape(24.dp), ambientColor = Color(0xFF7CF5C4), spotColor = Color(0xFF8AB4FF))
+            .background(Color.White, RoundedCornerShape(24.dp)).padding(18.dp),
+    ) {
         Canvas(Modifier.fillMaxSize()) {
             // Whole-pixel modules, centred: no seams between neighbouring squares.
             val n = m.width
             val cell = kotlin.math.floor(size.minDimension / n)
             val o = kotlin.math.floor((size.minDimension - cell * n) / 2)
-            for (y in 0 until n) for (x in 0 until n) if (m.get(x, y)) {
-                drawRect(Color(0xFF0A0B0D), Offset(o + x * cell, o + y * cell), Size(cell, cell))
+            val b = build.value
+            for (q in modules) {
+                val local = ((b - q.start) / 0.28f).coerceIn(0f, 1f)
+                if (local <= 0f) continue
+                val x = o + q.x * cell
+                val y = o + q.y * cell
+                if (local >= 1f && b >= q.start + 0.78f) { drawRect(ink, Offset(x, y), Size(cell, cell)); continue }
+                // easeOutBack: a pop past full size, then back
+                val k = local - 1f
+                val sc = 1f + 2.70158f * k * k * k + 1.70158f * k * k
+                val drain = ((b - q.start - 0.3f) / 0.48f).coerceIn(0f, 1f)
+                val c = androidx.compose.ui.graphics.lerp(q.color, ink, drain * drain)
+                val w = cell * sc
+                drawRect(c, Offset(x + (cell - w) / 2, y + (cell - w) / 2), Size(w, w))
+            }
+            // a light sweeps down once the code is built
+            val sv = scan.value
+            if (sv > 0f && sv < 1f) {
+                val yy = size.height * sv
+                val h = size.height * 0.22f
+                drawRect(
+                    Brush.verticalGradient(listOf(Color.Transparent, Color(0xFF7CF5C4).copy(alpha = 0.55f), Color.Transparent), startY = yy - h, endY = yy + h * 0.25f),
+                    Offset(0f, yy - h), Size(size.width, h * 1.25f),
+                )
+                drawLine(Color(0xFF7CF5C4).copy(alpha = 0.9f * (1f - sv)), Offset(0f, yy), Offset(size.width, yy), 2.dp.toPx())
             }
         }
     }
+}
+
+private class QrModule(val x: Int, val y: Int, val start: Float, val color: Color)
+
+/** The dark modules of [m], each with when it lands (centre first, a little jitter) and its colour by angle round the centre. */
+private fun qrModules(m: com.google.zxing.common.BitMatrix): List<QrModule> {
+    val n = m.width
+    val c = (n - 1) / 2f
+    val maxD = kotlin.math.sqrt(2f) * c
+    val rnd = java.util.Random(n.toLong() * 31 + m.height)
+    val out = ArrayList<QrModule>(n * n / 2)
+    for (y in 0 until n) for (x in 0 until n) if (m.get(x, y)) {
+        val dx = x - c; val dy = y - c
+        val d = (kotlin.math.sqrt(dx * dx + dy * dy) / maxD).coerceIn(0f, 1f)
+        val hue = ((Math.toDegrees(kotlin.math.atan2(dy, dx).toDouble()).toFloat() + 360f + d * 120f) % 360f)
+        out += QrModule(x, y, d * 0.6f + rnd.nextFloat() * 0.12f, Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, 0.55f, 1f))))
+    }
+    return out
 }
 
 // ---------------------------------------------------------------- brand
@@ -966,12 +1015,6 @@ fun Wordmark(size: Dp = 32.dp) {
         Spacer(Modifier.width(10.dp))
         Text("tapvault", style = Type.Title.copy(fontSize = (size.value * 0.6f).sp, letterSpacing = (-0.3).sp))
     }
-}
-
-/** Generic sheet body: drag handle, padded column. */
-@Composable
-fun SheetColumn(content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 16.dp), content = content)
 }
 
 // ---------------------------------------------------------------- slide to confirm
