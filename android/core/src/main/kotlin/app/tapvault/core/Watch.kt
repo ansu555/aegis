@@ -23,7 +23,7 @@ object Watch {
         }
     }
 
-    enum class Kind { UNKNOWN_REQUEST, FROZEN, SIGNERS_CHANGED, INTEGRITY }
+    enum class Kind { UNKNOWN_REQUEST, FROZEN, SIGNERS_CHANGED, INTEGRITY, INHERITANCE }
 
     data class Alert(val kind: Kind, val title: String, val text: String, val proposalId: Long? = null)
 
@@ -69,5 +69,35 @@ object Watch {
         }
         if (!integrityOk && before.integrityOk) alerts += Alert(Kind.INTEGRITY, "Wallet check failed", "The wallet account doesn't look the way this phone expects. Open Security Center.")
         return alerts to now
+    }
+
+    /**
+     * v0.4 inheritance: an alert when an heir's claim is open or can open
+     * (the owner should check in now if they're alive), or when the
+     * inactivity period is nearly over (under a tenth of it, at most 7 days,
+     * left). Returns a key with it: post the alert only when the key differs
+     * from the last one posted, so a state is announced once.
+     */
+    fun inheritance(info: InheritanceInfo?, nowSecs: Long = System.currentTimeMillis() / 1000): Pair<String, Alert>? {
+        if (info?.heir == null) return null
+        val heir = info.heir
+        return when (info.stage(nowSecs)) {
+            Inheritance.Stage.CLAIMED, Inheritance.Stage.RELEASABLE -> "claim:${info.claimTs}" to Alert(
+                Kind.INHERITANCE, "Inheritance claim open",
+                "A claim to send this wallet to $heir has started. If you're here, open the app and check in: that voids the claim.",
+            )
+            Inheritance.Stage.CLAIMABLE -> "claimable:${info.claimableAt}" to Alert(
+                Kind.INHERITANCE, "Your heir can claim this wallet",
+                "No key of this wallet has signed for ${Inheritance.describePeriod(info.inactivity)}. Check in now, or $heir can start a claim.",
+            )
+            Inheritance.Stage.WATCHING -> {
+                val left = info.secondsToClaimable(nowSecs)
+                if (left < minOf(info.inactivity / 10, 7 * Inheritance.DAY)) "soon:${info.claimableAt}" to Alert(
+                    Kind.INHERITANCE, "Check in soon",
+                    "In ${Inheritance.describeLeft(left)} your heir $heir can claim this wallet. Open the app and tap I'm still here.",
+                ) else null
+            }
+            Inheritance.Stage.NONE -> null
+        }
     }
 }

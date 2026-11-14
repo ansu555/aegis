@@ -413,6 +413,58 @@ class TapvaultWallet(
         call(NearAction.FunctionCall("freeze", jsonArgs { put("proof", SignerProof.Card(cardIndex, sig).json()) }))
 
     fun closeStale(id: Long) = call(NearAction.FunctionCall("close_stale", jsonArgs { put("id", id.toString()) }))
+
+    // ---- v0.4: inheritance ----
+
+    /** True when this wallet runs contract v0.4 or later (inheritance). */
+    fun isV04(): Boolean = contractVersion()?.let { v ->
+        val parts = v.split('.').map { it.toIntOrNull() ?: 0 }
+        (parts.getOrElse(0) { 0 }) > 0 || (parts.getOrElse(1) { 0 }) >= 4
+    } == true
+
+    fun inheritance(): InheritanceInfo = InheritanceInfo.parse(near.viewFunction(account, "get_inheritance").jsonObject)
+
+    /** "I'm still here": the phone signs the check-in for the current nonce (computed here, not taken from a view). */
+    fun checkInByPhone(phone: P256Signer, phoneIndex: Int): TxResult {
+        val sig = phone.sign(Domain.aliveMessage(account, inheritance().aliveNonce))
+        return call(NearAction.FunctionCall("check_in", jsonArgs { put("proof", SignerProof.P256(phoneIndex, sig).json()) }))
+    }
+
+    /** What a card signs to check in now. */
+    fun cardAliveChallenge(): ByteArray = Domain.cardAliveChallenge(account, inheritance().aliveNonce)
+
+    fun checkInByCard(cardIndex: Int, sig: CardSig): TxResult =
+        call(NearAction.FunctionCall("check_in", jsonArgs { put("proof", SignerProof.Card(cardIndex, sig).json()) }))
+
+    /** Permissionless: open a claim once the owner has been inactive for the whole period. */
+    fun startInheritanceClaim(): TxResult = call(NearAction.FunctionCall("start_inheritance_claim", jsonArgs { }))
+
+    /**
+     * Permissionless, after the grace period: send everything to the heir.
+     * NEAR goes whole (above the storage reserve); each token the wallet holds
+     * goes in full, after registering the heir with it if needed (paid by the
+     * gas account). Returns what was released and what failed, per asset.
+     */
+    fun releaseAllToHeir(heir: String, tokens: Map<String, java.math.BigInteger>): List<Pair<String, String?>> {
+        val out = mutableListOf<Pair<String, String?>>()
+        val ft = Tokens(near)
+        for ((token, amount) in tokens) {
+            if (amount.signum() <= 0) continue
+            out += token to runCatching {
+                if (ft.isRegistered(token, heir) == false) ft.register(token, heir, gasAccount, gasKey)
+                call(NearAction.FunctionCall("release_to_heir", jsonArgs {
+                    put("asset", Asset.Ft(token).json())
+                    put("amount", amount.toString())
+                }, gasTgas = 60))
+                null
+            }.exceptionOrNull()?.let { it.message ?: "failed" }
+        }
+        out += "NEAR" to runCatching {
+            call(NearAction.FunctionCall("release_to_heir", jsonArgs { put("asset", Asset.Near.json()); put("amount", JsonNull) }, gasTgas = 30))
+            null
+        }.exceptionOrNull()?.let { it.message ?: "failed" }
+        return out
+    }
 }
 
 /**
