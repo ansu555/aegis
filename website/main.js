@@ -5,18 +5,25 @@
   // ---- Asset slots ----------------------------------------------------------
   // <div class="asset" data-src="assets/img/x.webp" [data-video="…mp4"] data-label="…">
   // Shows the image when the file exists, otherwise a labelled placeholder.
+  // A lazy image loads only once it is in the page and near the viewport, so the image goes
+  // into its slot before it has a src and stays invisible until it has loaded.
   document.querySelectorAll('.asset[data-src]').forEach((slot) => {
     const img = new Image();
     img.alt = '';
     img.decoding = 'async';
     img.loading = slot.closest('.hero') ? 'eager' : 'lazy';
+    img.style.opacity = '0';
     img.onload = () => {
+      img.style.opacity = '';
       slot.classList.remove('is-empty');
-      slot.prepend(img);
       const v = slot.dataset.video;
       if (v && !reduce) addVideo(slot, v);
     };
-    img.onerror = () => slot.classList.add('is-empty');
+    img.onerror = () => {
+      img.remove();
+      slot.classList.add('is-empty');
+    };
+    slot.prepend(img);
     img.src = slot.dataset.src;
   });
 
