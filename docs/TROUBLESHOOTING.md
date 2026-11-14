@@ -268,6 +268,16 @@ prompt).
 | `Enter a NEAR account, like bob.testnet` (`bob.near` on mainnet) | `AppViewModel.changeAllowlist` | The receiver typed in Instant receivers isn't a valid account name | Type the full account (`name.testnet`, or `name.near` on mainnet) |
 | `This wallet runs an older contract without an allowlist. …` | `AppViewModel.changeAllowlist` | The wallet was created before v0.2 (invariant 4: it keeps its code) | Nothing; the row only shows on v0.2 wallets |
 | `<receiver> is already on the list.` / `<receiver> isn't on the list.` / `The list is full (16 receivers).` | `AppViewModel.changeAllowlist` | The change would do nothing, or the contract's limit (`MAX_ALLOWLIST`) is reached | Pull to refresh; remove one first when full |
+| `This wallet runs an older contract without inheritance. Wallets created with this app version have it.` | `AppViewModel.changeHeir` | The wallet was created before v0.4 (invariant 4) | Nothing; the Inheritance row only shows on v0.4 wallets |
+| `The heir must be another account, not this wallet.` / `Pick a period from 1 hour to 10 years.` | `AppViewModel.setHeir` | The heir typed is this wallet, or the period is out of the contract's bounds | Type another account |
+| `This wallet has no heir.` | `AppViewModel.checkIn`, `lookupInheritance`; contract `ERR_NO_HEIR` | Check-in or claim on a wallet without an heir (or the heir was removed) | Nothing to do; name an heir first |
+| `Open a Tapvault wallet on this phone first: its fee account pays the network fee.` | `AppViewModel` (Claim an inheritance) | The phone has no Tapvault wallet whose fee account can pay | Create or recover a wallet, then claim from its Security Center |
+| `<account> isn't a Tapvault wallet with inheritance (contract v0.4).` / `<account> has no heir.` | `AppViewModel.lookupInheritance` | The account typed runs older code, isn't a Tapvault wallet, or names no heir | Check the account with its owner's family |
+| `The owner has been active within the inactivity period` | contract `ERR_STILL_ACTIVE` (`start_inheritance_claim`) | A key of the wallet signed something within the period | Expected; the sheet shows when a claim becomes possible |
+| `No inheritance claim is open (or the owner was active since it started)` | contract `ERR_NO_CLAIM` (`release_to_heir`) | No claim was started, or the owner checked in (or signed anything) after it | Start a claim when the sheet offers it |
+| `The claim's grace period has not elapsed` | contract `ERR_GRACE` | Release pressed before `claim + config delay` | Wait for the time the sheet shows |
+| `Invalid heir: the inactivity period must be 1 hour to 10 years, and the heir can't be the wallet itself` | contract `ERR_INVALID_HEIR` | A script proposed an out-of-range period or the wallet as its own heir | Not reachable from the app |
+| `Released in part` with a token line | `AppViewModel.releaseInheritance` | A token's `ft_transfer` (or the heir's registration with it) failed | Press Release again; NEAR and other tokens already went |
 | A payment that was instant now waits the transfer delay | Contract v0.2 allowlist | The wallet has at least one instant receiver, and this receiver isn't on the list | Expected. Add the receiver (it takes the settings delay), or wait and execute |
 
 ## Network and RPC

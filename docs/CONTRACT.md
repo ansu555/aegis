@@ -54,8 +54,52 @@ Where things are:
 - [Creating a wallet](#creating-a-wallet)
 - [The shipped build](#the-shipped-build)
 - [Changing the contract safely](#changing-the-contract-safely)
+- [Contract v0.4](#contract-v04): inheritance (`SetHeir`, `check_in`, `start_inheritance_claim`, `release_to_heir`)
 - [Contract v0.3](#contract-v03)
 - [Contract v0.2](#contract-v02): possession proofs, seed in the view, receiver allowlist, `UpgradeCode`
+
+## Contract v0.4
+
+14 Nov 2026 (afternoon): **inheritance.** The owner names an heir and an
+inactivity period. If no key of the wallet signs anything for that long,
+anyone may start a claim; if the owner still doesn't sign within a grace
+period (the wallet's `config` delay), the funds can go only to the heir.
+`contract_version` returns `"0.4.0"`. Only wallets created from this build
+have it (existing wallets keep their code).
+
+| Change | Where | Why |
+|---|---|---|
+| `ConfigOp::SetHeir { heir, inactivity }` (Borsh tag 10) and `ConfigOp::RemoveHeir` (tag 11), appended so earlier tags stay put. Ordinary config proposals: threshold, then `delays.config`; they bump `signer_epoch` like every config change. `inactivity` is 1 hour to 3650 days (`policy::MIN_INACTIVITY`, `MAX_INACTIVITY`, checked when proposed); the heir can't be the wallet itself (checked at execute). Both reset the timer and close any open claim | `types.rs`, `execute.rs` `apply_config`, `inherit.rs` `set_heir` | Naming or changing the heir needs the same approvals as any settings change |
+| **Activity**: every signer signature the contract verifies sets `last_active = now` and voids an open claim: `propose`, `approve_p256`, `approve_card`, `cancel`, `freeze`, and the new `check_in`. Nothing is written on a wallet without an heir | `inherit::touch`, called from `proposals.rs`, `guard.rs` | Any use of the wallet shows the owner is alive |
+| `check_in(proof: SignerProof)`: a phone signs `alive_message(account, alive_nonce)`, a card signs `card_alive_challenge(account, alive_nonce)`. The nonce goes up on every check-in, so a signature works once. Refused without an heir | `inherit.rs` | "I'm still here" without moving funds |
+| `start_inheritance_claim()`, permissionless: needs an heir and `now > last_active + inactivity` (`policy::inheritance_claimable`). Sets `claim_ts` (a repeat keeps the first one) | `inherit.rs` | Anyone (the heir, a relayer) can start it; it only opens the grace period |
+| `release_to_heir(asset, amount?)`, permissionless: needs an open claim with no activity since (`last_active < claim_ts`) and `now >= claim_ts + delays.config` (`policy::releasable`). NEAR: `amount` null sends everything above the storage reserve (storage in use + 2,000 bytes); a token needs an amount (`ft_transfer` to the heir, 1 yocto). Freeze and limits don't apply; proposals are untouched. Callback `on_release` logs a failed send | `inherit.rs` | Funds can go only to the heir the owner named |
+| View `get_inheritance()`: `heir`, `inactivity`, `last_active`, `claim_ts`, `claimable_at`, `releasable_at` (null without an open claim), `alive_nonce`, and the current `alive_message` / `card_alive_challenge` (hex) for cross-checking | `inherit.rs` | Clients compute what they sign themselves and compare |
+| State lives under its own storage key `b"heir"` (Borsh `Inheritance`), so the `Tapvault` layout is unchanged from v0.3 and `migrate` reads it as before | `inherit.rs` `read_inheritance`, `write_inheritance` | A v0.3 wallet that upgrades simply has no heir |
+
+Events: `checked_in`, `inheritance_claim_started` (`heir`, `releasable_at`),
+`inheritance_released` (`heir`, `asset`, `amount`),
+`inheritance_release_failed`. Errors: `Invalid heir: …`, `This wallet has no
+heir`, `The owner has been active within the inactivity period`, `No
+inheritance claim is open (or the owner was active since it started)`, `The
+claim's grace period has not elapsed`, `Nothing to release`.
+
+What it means for the threat model (DESIGN.md, "Inheritance"): a stolen card
+alone can keep a claim from ever completing (a card tap is activity) but
+can't move funds; a compromised heir account gets nothing while the owner
+signs anything at least once per period; whoever holds the heir account gets
+everything once the owner is silent for the period plus the grace period, so
+the period should be long (the app offers 30 days to 1 year; 1 hour on
+testnet only). The watchtower alerts the owner's phone when the period is
+nearly over and when a claim opens.
+
+Tests: `flows.rs` 5 new (set heir and bounds, claim after the period then
+the grace period, every kind of owner signature voids a claim, remove heir,
+phone-only wallet), `policy::inheritance_rules`, `domain` tags,
+`sandbox.rs` `inheritance_releases_to_the_heir_after_inactivity` (compiled
+wasm: the heir received 96.27 of 100 NEAR, the wallet kept its storage),
+Kotlin `InheritanceTest`, `VectorsTest` (`config_v04_ops`, `alive_3`), live
+`InheritanceE2ETest`.
 
 ## Contract v0.3
 

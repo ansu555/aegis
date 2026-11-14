@@ -13,8 +13,15 @@ wallet to buy. NEAR testnet only.
 - A NEAR contract verifies both **on-chain** and enforces spending limits,
   delays and freeze. The contract also supports recovery and passkey / FIDO2
   signers; the app doesn't use them yet.
+- **Inheritance, enforced on chain** (contract v0.4): name an heir and a period
+  (30 days to 1 year). If no key of the wallet signs anything for that long,
+  anyone can start a claim; if you still don't check in within the settings
+  delay, everything can go **only to your heir**. Any payment, approval,
+  freeze or a one-tap "I'm still here" restarts the clock and voids a claim,
+  and the watchtower warns your phone before it runs out. No custodian, no
+  lawyer, no seed phrase in a drawer.
 
-> **Status, 12 Nov 2026.** The contract, the Kotlin client and the Android
+> **Status, 14 Nov 2026.** The contract, the Kotlin client and the Android
 > app work end to end on NEAR testnet with simulated cards of all three kinds.
 > Nothing has been run against a real bank card or a real phone's NFC yet;
 > that is the next step and the main risk. Details:
@@ -49,6 +56,7 @@ Rules the contract enforces:
 | Over the limits | waits a delay (1 h in wallets the app creates; contract default 24 h); meanwhile a signer can cancel it or freeze the wallet |
 | Config changes | always delayed; longer if no phone approved (lost-phone recovery) |
 | Freeze | any single signer, phone or card tap |
+| Inheritance (v0.4) | after the heir's period with no signature, plus the settings delay, funds can go only to the named heir; any signature voids the claim |
 | After setup | the account's own key is deleted; only the contract moves funds |
 
 The full rule table, the user journey and a glossary are in
@@ -234,8 +242,8 @@ cost. The most expensive receipt is 56.4 Tgas.
 
 | Part | State |
 |---|---|
-| Core crate | 20 unit tests + 7 EMV vector tests pass |
-| NEAR contract | 24 flow tests (including a Visa online fDDA card) + vectors test pass; the compiled wasm passes the sandbox run |
+| Core crate | 22 unit tests + 7 EMV vector tests pass |
+| NEAR contract | 37 flow tests (including a Visa online fDDA card, phone-only wallets and inheritance) + vectors test pass; the compiled wasm passes all three sandbox runs (full flow, phone-only, inheritance released to the heir) |
 | Security review | An earlier contract review (7 findings, all fixed; [DESIGN.md](docs/DESIGN.md) section 9), then the 12 Nov review of the EMV protocol, NFC, keystore, client, contract and build: blockers fixed, and the contract re-check found no fund-moving issue ([STATUS.md](docs/STATUS.md#the-12-nov-review)). Still open: the app takes the card challenge and the hash it signs for "Approve · phone" from the RPC without recomputing them ([DESIGN.md](docs/DESIGN.md), known gaps). Not a professional audit |
 | Kotlin client | Vectors match the contract byte for byte; EMV tests pass for DDA, Visa-style fDDA and Mastercard-style CDA simulated cards; the live testnet run passes with all three |
 | Android app | Emulator only (no NFC there). The screens and flows last ran there on 11 Nov, before the built-in demo card was removed; on 12 Nov a build from before the latest app fixes (`941865c`) was checked to launch and to refuse setup cleanly without NFC. Real cards are the only cards it supports |
@@ -255,7 +263,8 @@ Verified and unverified items, known issues and next steps:
 Built for NEAR HACKATHON (nearhackathon.com). Submission deadline
 **14 Nov 2026, 23:59 UTC**. Tracks: **Real-World Money** (pay with the card
 you already carry), **AI Security & Defense** (spending limits and a policy
-engine an agent or a person can't bypass), **Open Innovation**.
+engine an agent or a person can't bypass), **Open Innovation** (on-chain
+inheritance with a dead man's switch that a stolen card can't trigger).
 
 The protocol design started as a Solana prototype on 9 Nov 2026 (not in this
 repo). Everything here is the NEAR implementation, built during the

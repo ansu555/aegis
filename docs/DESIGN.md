@@ -374,6 +374,41 @@ without that cost.
 
 ---
 
+### Inheritance (contract v0.4)
+
+A wallet can name an **heir** and an **inactivity period** (`ConfigOp::SetHeir`,
+an ordinary delayed settings change). The rule:
+
+1. Every signer signature the contract verifies is *activity*: a proposal, an
+   approval, a cancel, a freeze, or a `check_in` ("I'm still here", which
+   moves nothing). Activity restarts the period and voids an open claim.
+2. After the whole period with no activity, **anyone** may
+   `start_inheritance_claim`. That moves nothing; it starts a grace period
+   equal to the `config` delay.
+3. If the grace period passes with still no activity, **anyone** may
+   `release_to_heir`, and NEAR (everything above the storage reserve) and
+   tokens go **only to the heir** the owner named.
+
+Why it's permissionless: the heir may have no NEAR account keys of their own
+(another Tapvault wallet has none), so any account (their app's fee account)
+can press the button; the destination is fixed on chain.
+
+| Who | Can they take funds? |
+|---|---|
+| A thief with one card | No. A card tap counts as activity, so they can stop a claim from finishing, but a card still can't move funds alone |
+| A thief who controls the heir account | Not while the owner signs anything at least once per period. The watchtower warns the owner's phone when the period is nearly over and when a claim opens; a check-in voids it |
+| Anyone, after the owner is silent for the period plus the grace period | Only by sending everything to the heir |
+| The heir, before that | No |
+
+Trade-offs, stated plainly: the period is the only thing between a silent
+owner (in hospital, travelling without the phone, lost the phone and cards)
+and the heir receiving everything, so it should be long: the app offers 30
+days to 1 year (1 hour only on testnet, for trying it). Freeze doesn't stop a
+release: an owner who freezes has just been active. The heir is an account
+id, not a person: if the heir loses that account, the funds go to whoever
+holds it. Removing or changing the heir is a settings change with the
+normal approvals and delay.
+
 ## 5. Payment flows
 
 **Create a wallet** (the card is read before anything is deployed)

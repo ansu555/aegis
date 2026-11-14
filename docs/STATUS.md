@@ -174,6 +174,42 @@ Wallets created before this build keep their code (invariant 4).
 | Live testnet (`PhoneOnlyE2ETest`, `TestnetE2ETest` ×3 with the new build) | **Pass** (14 Nov, faucet): `PhoneOnlyE2ETest` `tv-e2e-65a192a6a2.testnet` (code hash `DdhpDh3c…RcS7`, no access keys; the phone alone paid 0.5 NEAR; the card add was proposed with possession and refused before the 1 h delay; not executed, `TAPVAULT_WAIT_DELAYS` unset). `TestnetE2ETest` DDA `tv-e2e-020039fe7e`, VISA_FDDA `tv-e2e-c18b95e7aa`, MASTERCARD_CDA `tv-e2e-b6209b5022` |
 | On a phone | Not yet |
 
+### 14 Nov: inheritance (contract v0.4, new shipped build)
+
+- **Contract v0.4.0** (`CONTRACT.md`, "Contract v0.4"; `DESIGN.md`,
+  "Inheritance"): name an heir and an inactivity period; after the period
+  with no signature from any key, anyone may start a claim, and after the
+  `config` delay with still none, the funds go only to the heir. Every
+  signature (propose, approve, cancel, freeze, `check_in`) restarts the
+  period and voids an open claim.
+- **New shipped build** `93djY2LQU6NbNHJ93GmCDtKXecdrZhQPVCZTUcWt1Kxy` (hex
+  `778a310a…82c6`, 369,809 bytes), pinned in `build.gradle.kts`, `README.md`
+  and `contract/res/README.md`. Wallets created before it keep their code;
+  v0.3 wallets (`DdhpDh3c2gbVJK4iFQLU7C3c2W4Bgg6JYTBSBtBDRcS7`) show as a
+  known official build in the wallet check (`Integrity.V03_BUILD`), without
+  inheritance.
+- **Verified:** `cargo test` (core 22 + 7 EMV vectors, flows 37, vectors 1);
+  sandbox (`--ignored`) all three tests on the compiled wasm, including
+  `inheritance_releases_to_the_heir_after_inactivity` (heir received
+  96.27 NEAR of 100; release 2.5 Tgas); `./gradlew :core:test`
+  (`InheritanceTest` 4, `VectorsTest` 3 with the v0.4 ops and check-in
+  messages); `android/build-apk.sh` with the new hash.
+- **Live testnet on the v0.4 build:** `PhoneOnlyE2ETest` passed
+  ([`tv-e2e-1d32712260.testnet`](https://testnet.nearblocks.io/address/tv-e2e-1d32712260.testnet)),
+  `TestnetE2ETest` DDA passed
+  ([`tv-e2e-cfba09b901.testnet`](https://testnet.nearblocks.io/address/tv-e2e-cfba09b901.testnet)).
+  Visa fDDA and Mastercard CDA **not run**: the faucet answered HTTP 429
+  ("retry in 7 hours") and no sponsor was set. The card code didn't change
+  (`Emv.kt`, `emv.rs` untouched); `flows.rs` covers a Visa online fDDA card.
+  `InheritanceE2ETest` (heir with the 1 h period, check-in, claim refused
+  while active, claim, grace, release):
+  [`tv-e2e-5f6a04e5cb.testnet`](https://testnet.nearblocks.io/address/tv-e2e-5f6a04e5cb.testnet),
+  running at the time of writing (about 3 h 10 min with the waits).
+- **App:** Security Center → Inheritance (name an heir, period, "I'm still
+  here"), Security Center → Claim an inheritance (look up, start claim,
+  release); watchtower alerts "Check in soon", "Your heir can claim this
+  wallet", "Inheritance claim open". Built, not yet walked on a phone.
+
 ## What is not verified
 
 | Item | Why it matters | How it gets verified |

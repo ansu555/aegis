@@ -55,6 +55,19 @@ transfers 1 h, settings changes 1 h, recovery 24 h.
 
 Shots 1–7 run about 2.5 minutes; drop shots 2 and 4 for a 2-minute cut.
 
+### Inheritance (contract v0.4), 30 s
+
+Record on a wallet created with the v0.4 build (older wallets don't show the
+row). The claim itself needs the period plus the settings delay to pass, so
+show it with a wallet set up hours earlier with the 1-hour testnet period, or
+show the live test's wallet on the explorer instead (`InheritanceE2ETest`
+prints its links).
+
+| # | Time | On screen | Say |
+|---|---|---|---|
+| 8 | 15 s | **Security** → **Inheritance** ("Off: name who receives this wallet if you're gone") → "Heir's NEAR account" `mum.testnet` → period **180 days** → **Name heir** → prompt `LEAVE EVERYTHING TO mum.testnet if no key of this wallet signs for 180 days (after 1 h)` → fingerprint (and a card tap on a two-key wallet) | "If I die, my family shouldn't need my seed phrase, because there isn't one. I name an heir. If none of my keys signs anything for 180 days, the contract lets the funds go to my heir, and only to my heir." |
+| 9 | 15 s | Back in **Inheritance**: "Last activity", "Claim possible in …" → **I'm still here (check in)** → fingerprint → "Checked in". On the heir's phone: **Security** → **Claim an inheritance** → the wallet's account → **Look up** → "Not yet" | "Every payment, approval or freeze proves I'm alive, and so does one tap here. A thief with my card can't trigger it, and my heir can't claim early: a claim needs months of silence, then a grace period I can cancel with one check-in." |
+
 ## What to show on the explorer
 
 All links come from the app's **View on explorer** (testnet.nearblocks.io).
@@ -125,6 +138,9 @@ All links come from the app's **View on explorer** (testnet.nearblocks.io).
   the chip (its counter goes up), though nothing reaches the bank.
 - iPhone support (iOS doesn't let apps talk to payment cards) or mainnet
   (testnet only).
+- "Inheritance replaces a will" or "legally binding": it's a contract rule
+  that sends funds to an account id, nothing more; the heir must keep that
+  account safe.
 
 ## If something goes wrong while recording
 
