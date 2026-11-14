@@ -204,6 +204,23 @@ prompt).
 | `Send` and the snowflake dimmed on Home | `Screens.kt` `Home` | Frozen, busy, or the wallet hasn't loaded since the app started (needs the network once) | Wait for the balance to show; unfreeze if frozen |
 | `Clean up` shows no result banner | `AppViewModel.closeStale` | Normal; the entry disappears on the next refresh | Nothing |
 
+## Tokens, swaps and bridges
+
+| You see | Why | What to do |
+|---|---|---|
+| "<account> can't receive <SYM> yet: it isn't registered with the token" | The token only credits registered accounts (NEP-145) | Ask the receiver to enable the token in their wallet |
+| "<SYM> has no instant limit · waits 1 h" in Send | Without a limit every transfer of a token waits the transfer delay | Token page → Instant limit → Make instant (runs after the settings delay) |
+| "The wallet already has 8 instant limits" | The contract holds at most 8 limits (NEAR + 7 tokens) | Remove one on its token page |
+| "Swaps have to go out at once, and this one would wait…" | Over the token's instant limit, no limit, or instant receivers are set | Set or raise the token's instant limit, or swap less |
+| "Nothing to swap from yet" | NEAR Intents takes wNEAR, not NEAR, and the wallet can't wrap | Swap from a token (USDC, wNEAR…) |
+| "NEAR Intents answered for a different swap (…), so nothing was sent" | The wet quote didn't echo what the phone asked (`Swap.check`) | Try again; if it repeats, don't swap and keep the technical log |
+| "This quote expires too soon. Try again." | Fewer than 15 min left on the quote | Try again |
+| "NEAR Intents: That amount is too small to swap." | Below 1Click's minimum for that route | A bigger amount |
+| "Can't reach NEAR Intents right now (…)" | No connection to 1click.chaindefuser.com | Check the connection |
+| Trade says "Mainnet only" | Swaps, bridges, buy and sell are mainnet only; this build may have mainnet off | Settings → Network → Mainnet (when the build has it) |
+| A swap in Trade → Recent says "Refunded" | The price moved past the slippage (1 %) or the deposit arrived late | The deposit comes back to the wallet, less 1Click's refund fee |
+| "Deposit too small: will be refunded" | Less than the quoted amount reached the deposit address | Wait for the refund |
+
 ## Backup cards, lost cards, recovery and Security Center
 
 | Message or state | From | Meaning | What to do |

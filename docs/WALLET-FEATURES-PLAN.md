@@ -1,15 +1,9 @@
 # Wallet features plan: tokens, swap, bridge, buy, sell (mainnet)
 
-Status: **plan, 14 Nov 2026. Step 0 (the network switch) is built, with
-mainnet off in every build. Step 1 (tokens) is built without prices; steps
-2–5 are not.** Step 1 as built: `Tokens.kt` (core: built-in list per network,
-`TokenPrefs` added/hidden per wallet, `ft_metadata`, `ft_balance_of`,
-`storage_balance_of`, `storage_deposit` paid by the fee account, FastNEAR
-discovery; `TokensTest`), `TokensUi.kt` (Home Tokens section, Manage tokens
-sheet, token sheet with Enable). Tokens the index finds but Tapvault doesn't
-list never show on Home until added (spam). No icons (contract-supplied
-images) and no USD prices yet (1Click, mainnet only). See "Step 0: what was
-built" at the end of section 0. Scope chosen on 14 Nov: the features below, **all on NEAR
+Status: **14 Nov 2026: steps 0–5 are built, with mainnet off in every
+build**, so steps 3–5 have only run against recorded and live *dry*
+1Click answers, never with real funds. See "What was built" at the end of
+this file. Step 0 details are at the end of section 0. Scope chosen on 14 Nov: the features below, **all on NEAR
 mainnet**. They work with the contract every wallet already runs (v0.3), so
 no contract change, no new wasm and no new signed bytes. They do need
 mainnet in the app first: a Mainnet / Testnet switch in Settings, as in
@@ -392,3 +386,36 @@ both networks where the feature exists. When step 0 lands, update
 invariant 7 in [../AGENTS.md](../AGENTS.md) to "every wallet has one
 network, stored with it; sponsor and faucet are testnet only; mainnet stays
 off (`MAINNET_ENABLED`) until real-card testing and a contract review".
+
+---
+
+## What was built (14 Nov 2026)
+
+`./gradlew :core:test` passes (88 tests; `TokensTest`, `SwapTest`), the APK
+builds and starts; the Trade tab shows "Mainnet only" in this build.
+
+| Step | Built | Not verified yet |
+|---|---|---|
+| 1 Tokens | `Tokens.kt`, `TokensUi.kt`; USD prices on Home, token rows and the token sheet from 1Click `/v0/tokens` (mainnet, built-in tokens only, so a look-alike never borrows a real token's price) | Icons (none on purpose) |
+| 2 Send a token, limits | Send has an asset picker (NEAR or a token on Home); amounts use the token's decimals; refuses a receiver the token won't credit (`storage_balance_of`); seed wallets send with `ft_transfer`; token page → Instant limit proposes `SetLimit` / `RemoveLimit` (cap `MAX_LIMITS` = 8); prompts and Activity show "1.5 USDC" (`TokenAmount.describe`) | A token send on testnet from a card wallet (`TestnetE2ETest` has no FT case yet) |
+| 3 Swap | `Intents.kt` (`OneClick`), `Swap.check`: the wet quote's echoed request must match what the phone asked (assets, amount, recipient, refund address, `EXACT_INPUT`, `ORIGIN_CHAIN`), the deposit address must be a NEAR account without a memo, the deadline ≥ 15 min away; then the fee account registers the deposit address and (if needed) the wallet on the output token, and the wallet pays the deposit address like any payment; `/v0/deposit/submit`, then `/v0/status` every 10 s while Trade is open | Any real swap |
+| 4 Buy, sell | Ramp Network hosted page in the browser (`Ramp`), account filled in; Sell = Ramp's off-ramp, then "Pay the sale" opens Send labelled "Sale via Ramp Network" | Ramp's asset codes (`NEAR_NEAR`, `NEAR_USDC`) and the off-ramp flow; a host key (`tapvault.ramp.key`) |
+| 5 Bridge | Out: Trade → Bridge → Send out (chain, address checked per chain by `ChainAddress`, quote with that recipient); in: Receive in (chain, token, amount, a refund address on that chain) → 1Click deposit address + QR, nothing signed | Any real bridge |
+
+Found while building (1Click, checked live 14 Nov):
+
+- Quotes work without a JWT; 1Click then adds its own 0.2 % app fee.
+  `tapvault.oneclick.jwt` sets one.
+- Native NEAR isn't an origin asset; only wNEAR (`nep141:wrap.near`). The
+  contract can't wrap, so swaps start from a token (wNEAR, USDC…); Trade
+  says so. Swapping *to* wNEAR works.
+- A wet quote's deposit address is a 64-hex implicit account; its deadline
+  came back 3 days after the request, not the 30 min asked.
+- Swaps and bridge-outs run only when the transfer is instant (rule in
+  section 1): the token needs an instant limit first, which itself waits
+  the settings delay.
+- Send recognises other-chain addresses and points to Trade → Bridge; a
+  `0x…` address is still a NEAR (Ethereum-style implicit) account there.
+
+Before mainnet, in addition to the gates in 0.4: one small real swap,
+bridge out and bridge in each, and a Ramp purchase, by hand.
