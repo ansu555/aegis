@@ -108,7 +108,7 @@ h4 { font-size: 18px; letter-spacing: -0.01em; }
   border-radius: inherit; overflow: hidden;
   background: radial-gradient(120% 90% at 50% 0%, #1b1b20 0%, #0d0d10 60%, #08080a 100%);
 }
-.asset > img, .asset > video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.asset > img, .asset > video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: var(--pos, 50% 50%); }
 .asset.is-empty {
   display: flex; align-items: center; justify-content: center; text-align: center;
   border: 1px dashed var(--line-2);
@@ -146,7 +146,7 @@ h4 { font-size: 18px; letter-spacing: -0.01em; }
   transition: transform .5s var(--ease), border-color .3s;
 }
 .feature:hover { border-color: var(--line-2); }
-.feature .asset { border-radius: 0; flex: 1 1 auto; aspect-ratio: auto; min-height: 280px; }
+.feature .asset { border-radius: 0; flex: 1 1 auto; aspect-ratio: auto; min-height: clamp(300px, 30vw, 400px); }
 .feature.f-wide { grid-column: span 2; }
 .feature-copy { padding: 26px 28px 30px; }
 .feature-copy p { color: var(--text-2); margin-top: 10px; font-size: 16px; }
@@ -252,7 +252,7 @@ h4 { font-size: 18px; letter-spacing: -0.01em; }
   display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px;
 }
 .screen { margin: 0; }
-.screen img, .screen .asset { width: 100%; aspect-ratio: 540/1050; object-fit: cover; border-radius: 26px; border: 1px solid var(--line); }
+.screen img, .screen .asset { display: block; width: 100%; height: auto; aspect-ratio: 540/1050; object-fit: cover; border-radius: 26px; border: 1px solid var(--line); }
 .screen figcaption { margin-top: 14px; font-size: 14px; color: var(--text-2); }
 .screen figcaption b { display: block; color: var(--text); font-size: 16px; font-weight: 600; }
 .chips { list-style: none; padding: 0; margin: 40px 0 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
@@ -355,7 +355,8 @@ h4 { font-size: 18px; letter-spacing: -0.01em; }
   .strip { font-size: 12px; }
   .grid-features, .points { grid-template-columns: 1fr; }
   .feature.f-wide { grid-column: auto; }
-  .feature .asset { min-height: 240px; }
+  .feature .asset { min-height: 0; aspect-ratio: 4 / 3; }
+  .hero-media .asset { aspect-ratio: 1 / 1; --pos: 60% 58%; }
   .screens { grid-template-columns: repeat(4, 74%); }
   .demo { height: 480px; }
   .demo-phone { width: 210px; height: 430px; }

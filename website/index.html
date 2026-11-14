@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Aegis: your bank card is your crypto key</title>
   <meta name="description" content="Aegis is a self-custodial NEAR wallet co-signed by the contactless bank card you already carry and your phone's fingerprint. No seed phrase, no device to buy.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Aegis: your bank card is your crypto key">
+  <meta property="og:description" content="A self-custodial NEAR wallet co-signed by the contactless bank card you already carry and your phone's fingerprint.">
+  <meta name="twitter:card" content="summary">
   <meta name="theme-color" content="#050506">
   <link rel="icon" href="assets/aegis-mark.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -15,7 +19,7 @@
 </head>
 <body>
 
-  <!-- Status strip (Tangem uses this slot for its sale banner) -->
+  <!-- Status strip -->
   <div class="strip">
     <span class="dot"></span>
     Testnet preview · built for the NEAR hackathon · mainnet opens after real-card testing and a contract review
@@ -50,38 +54,38 @@
           <a class="btn btn-ghost" href="#how">See how it works</a>
         </div>
       </div>
-      <!-- ASSET 09: videoframe (phone + main/backup card). Optional hero.mp4 plays over it when present. -->
+      <!-- Hero image; an optional assets/img/hero.mp4 plays over it when present. -->
       <div class="hero-media reveal">
-        <div class="asset" data-src="assets/img/09-hero.webp" data-video="assets/img/hero.mp4" data-label="09 · Hero: phone with Aegis app + main and backup card" style="--ratio: 5/3"></div>
+        <div class="asset" data-src="assets/img/09-hero.webp" data-video="assets/img/hero.mp4" data-label="09 · Hero: phone with Aegis app + main and backup card" style="--ratio: 3/2"></div>
       </div>
     </section>
 
-    <!-- ============ SIX FEATURES (Tangem: True ownership … More than storage) ============ -->
+    <!-- ============ SIX FEATURES ============ -->
     <section class="section" id="features">
       <div class="grid-features">
         <article class="feature f-wide reveal">
-          <div class="asset" data-src="assets/img/01-card-hand.webp" data-label="01 · Hand holding a plain contactless card" style="--ratio: 1416/1057"></div>
+          <div class="asset" data-src="assets/img/01-card-hand.webp" data-label="01 · Hand holding a plain contactless card" style="--ratio: 3/2; --pos: 50% 70%"></div>
           <div class="feature-copy">
             <h3>Yours alone</h3>
             <p>Your wallet is a smart contract on its own NEAR account. At the end of setup the account's key is deleted, so only your card and your phone, together, can move the funds. No company, Aegis included, can.</p>
           </div>
         </article>
         <article class="feature reveal">
-          <div class="asset" data-src="assets/img/02-card-phone.webp" data-label="02 · Card behind phone, dark 3D" style="--ratio: 1714/1752"></div>
+          <div class="asset" data-src="assets/img/02-card-phone.webp" data-label="02 · Card behind phone, dark 3D" style="--ratio: 1116/1409; --pos: 50% 25%"></div>
           <div class="feature-copy">
             <h3>Tap, then touch</h3>
             <p>Hold your card to the back of the phone, then confirm with your fingerprint. The prompt shows exactly what you're approving.</p>
           </div>
         </article>
         <article class="feature reveal">
-          <div class="asset" data-src="assets/img/04-pocket.webp" data-label="04 · Card going into a jeans pocket" style="--ratio: 1050/1160"></div>
+          <div class="asset" data-src="assets/img/04-pocket.webp" data-label="04 · Card going into a jeans pocket" style="--ratio: 1/1"></div>
           <div class="feature-copy">
             <h3>Already in your pocket</h3>
             <p>No hardware wallet to buy, charge or lose. The chip on your bank card already holds a key that can't be copied out.</p>
           </div>
         </article>
         <article class="feature f-wide reveal">
-          <div class="asset" data-src="assets/img/03-two-cards.webp" data-label="03 · Person holding main + backup card" style="--ratio: 2000/1493"></div>
+          <div class="asset" data-src="assets/img/03-two-cards.webp" data-label="03 · Person holding main + backup card" style="--ratio: 3/2; --pos: 50% 15%"></div>
           <div class="feature-copy">
             <h3>No seed phrase</h3>
             <p>Nothing to write down and nothing to steal. Add a backup card you keep at home, or a guardian phone you trust, and recover on a new phone.</p>
@@ -95,7 +99,7 @@
           </div>
         </article>
         <article class="feature f-wide reveal">
-          <div class="asset" data-src="assets/img/06-phone-top.webp" data-label="06 · Top of phone with Aegis home screen" style="--ratio: 1782/1160"></div>
+          <div class="asset" data-src="assets/img/06-phone-top.webp" data-label="06 · Top of phone with Aegis home screen" style="--ratio: 3/2"></div>
           <div class="feature-copy">
             <h3>More than a wallet</h3>
             <p>Spending limits, delays you can cancel, one-tap freeze, watchtower alerts and inheritance, all enforced by the contract rather than the app.</p>
@@ -104,7 +108,7 @@
       </div>
     </section>
 
-    <!-- ============ HOW IT WORKS (Tangem: "Three cards. One wallet." activation demo) ============ -->
+    <!-- ============ HOW IT WORKS ============ -->
     <section class="section how" id="how">
       <div class="section-head reveal">
         <p class="eyebrow">Technology</p>
@@ -167,7 +171,7 @@
       </div>
     </section>
 
-    <!-- ============ SECURITY (Tangem: "Crypto security at its peak") ============ -->
+    <!-- ============ SECURITY ============ -->
     <section class="section security" id="security">
       <div class="section-head center reveal">
         <p class="eyebrow eyebrow-mint">Security &amp; reliability</p>
@@ -175,7 +179,7 @@
         <p class="sub">The wallet contract checks your bank card's RSA signature and your phone's P-256 signature on-chain, every time.</p>
       </div>
       <div class="security-art reveal">
-        <div class="asset" data-src="assets/img/07-two-keys.webp" data-label="07 · Chrome art: card chip + phone chip → glowing lock" style="--ratio: 2880/1100"></div>
+        <div class="asset" data-src="assets/img/07-two-keys.webp" data-label="07 · Chrome art: card chip + phone chip → glowing lock" style="--ratio: 1536/587"></div>
       </div>
       <div class="points">
         <div class="point reveal"><h4>Two keys, both required</h4><p>Every transfer needs your card and a fingerprint-unlocked phone key. Neither one can pay alone.</p></div>
@@ -185,11 +189,11 @@
       </div>
     </section>
 
-    <!-- ============ PLAN FOR EVERYTHING (Tangem: 25-year warranty block) ============ -->
+    <!-- ============ PLAN FOR EVERYTHING ============ -->
     <section class="section plan">
       <div class="plan-grid">
         <div class="plan-media reveal">
-          <div class="asset" data-src="assets/img/10-portrait.webp" data-label="10 · Profile portrait, card + phone with fingerprint glow" style="--ratio: 1438/2166"></div>
+          <div class="asset" data-src="assets/img/10-portrait.webp" data-label="10 · Profile portrait, card + phone with fingerprint glow" style="--ratio: 2/3"></div>
         </div>
         <div class="plan-copy">
           <h2 class="reveal">Ready for the day something goes wrong.</h2>
@@ -204,7 +208,7 @@
       </div>
     </section>
 
-    <!-- ============ APP / ECOSYSTEM (Tangem: "More than just a cold wallet") ============ -->
+    <!-- ============ APP ============ -->
     <section class="section app" id="app">
       <div class="section-head center reveal">
         <p class="eyebrow">The app</p>
@@ -212,11 +216,11 @@
         <p class="sub">Markets, swaps, tokens and your security settings, built for one-handed use.</p>
       </div>
       <div class="app-hero reveal">
-        <div class="asset" data-src="assets/img/08-hand-phone.webp" data-label="08 · Hand holding phone, card tapped behind it" style="--ratio: 2880/1558"></div>
+        <div class="asset" data-src="assets/img/08-hand-phone.webp" data-label="08 · Hand holding phone, card tapped behind it" style="--ratio: 3/2"></div>
       </div>
       <div class="screens" tabindex="0" aria-label="App screens">
         <figure class="screen reveal">
-          <div class="asset" data-src="assets/app/home.png" data-label="Home screenshot (yours)" style="--ratio: 540/1050"></div>
+          <img src="assets/app/home.png" alt="Aegis Home screen" loading="lazy" width="540" height="1050">
           <figcaption><b>Home</b>Balance, card and limits</figcaption>
         </figure>
         <figure class="screen reveal">
@@ -238,7 +242,7 @@
       </ul>
     </section>
 
-    <!-- ============ OPEN SOURCE + STATUS (Tangem: "Everything you need" + reviews) ============ -->
+    <!-- ============ OPEN SOURCE + STATUS ============ -->
     <section class="section open">
       <div class="open-grid">
         <div class="open-card reveal">
