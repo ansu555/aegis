@@ -210,6 +210,35 @@ Wallets created before this build keep their code (invariant 4).
   release); watchtower alerts "Check in soon", "Your heir can claim this
   wallet", "Inheritance claim open". Built, not yet walked on a phone.
 
+### 14 Nov: Trade on testnet as a mainnet preview (app only, same contract)
+
+- **Trade = Markets + Swap.** Buy and Sell tabs removed; Bridge folded into
+  Swap (pick a token on another chain on either side: sending one in asks
+  for a refund address, receiving one asks for the receiver's address).
+- **Markets:** coin cards (NEAR first), lists Top / On NEAR / Memes /
+  Trending / Gainers / Losers with 7-day lines, a coin page with a chart you
+  can scrub (1H to 1Y) and its numbers. Data from CoinGecko and
+  GeckoTerminal, public, no keys (`core/Markets.kt`); requests carry only
+  coin ids, contracts and pool addresses.
+- **Logos:** CoinGecko images only (`Markets.isIconUrl`: https, CoinGecko's
+  image hosts), matched by coin id or exact contract, never by a token's
+  name; cached on disk (`CoinIcon.kt`). Unknown tokens keep the letter.
+- **Preview mode** (`AppViewModel.tradePreview`: a testnet wallet, or a
+  build with mainnet off): live 1Click **dry** quotes to an all-zero
+  implicit account (`Markets.PREVIEW_ACCOUNT`), never the wallet's account;
+  the confirm sheet shows the three steps and a disabled "Available on
+  mainnet". No wet quote, deposit address or payment; `swap`, `bridgeIn`
+  and `refreshSwaps` still refuse without `tradeAvailable`. Testnet
+  balances are never shown in dollars.
+- **Verified:** `./gradlew :core:test` (101, `MarketsTest` 8 on recorded
+  answers); `android/build-apk.sh`; on the emulator with a view-only testnet
+  wallet: Markets cards and lists with logos, a coin chart, a live
+  10 wNEAR → 33.27 USDC preview quote with its details. Installed on the
+  test phone, not walked there. Coins on chains Tapvault has no address
+  rules for (DOGE, XRP) show as not tradable.
+- `FLAG_SECURE` is back on (it had been committed commented out in
+  `b94c8ce`).
+
 ## What is not verified
 
 | Item | Why it matters | How it gets verified |

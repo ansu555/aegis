@@ -534,7 +534,7 @@ creation, both on top of it.
 | `approve_card` + `execute` in one transaction | 100 + 150 Tgas | Fee account |
 
 Measured use is far lower (most expensive receipt 56.4 Tgas; see
-[README.md](../README.md#measured-gas)). Unused gas is refunded.
+[CONTRACT.md](CONTRACT.md), the gas column). Unused gas is refunded.
 
 ### Timeouts
 

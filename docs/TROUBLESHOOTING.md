@@ -217,7 +217,13 @@ prompt).
 | "This quote expires too soon. Try again." | Fewer than 15 min left on the quote | Try again |
 | "NEAR Intents: That amount is too small to swap." | Below 1Click's minimum for that route | A bigger amount |
 | "Can't reach NEAR Intents right now (…)" | No connection to 1click.chaindefuser.com | Check the connection |
-| Trade says "Mainnet only" | Swaps, bridges, buy and sell are mainnet only; this build may have mainnet off | Settings → Network → Mainnet (when the build has it) |
+| Trade says "Mainnet preview" | A testnet wallet, or a build with mainnet off: Trade shows live mainnet markets and dry quotes, and nothing pays | Normal. Settings → Network → Mainnet (when the build has it) for real swaps |
+| "Available on mainnet" (disabled) when confirming a swap | The build has `tapvault.mainnet` off (every build until real-card testing and a contract review) | Nothing; the steps above it show what mainnet would do |
+| "Over your instant limit" on the Swap button | Swaps must go out at once; this amount is over the token's instant limit | Set a limit on the token's page, or swap less |
+| A token shows a letter instead of a logo | CoinGecko doesn't list it (logos come only from CoinGecko), or it hasn't downloaded yet | Normal |
+| "Markets aren't loading" / "Market data is busy. Try again in a minute." | No connection to CoinGecko or GeckoTerminal, or their free rate limit (about 30 requests a minute) | Try again in a minute |
+| A coin's page says "Not tradable" | NEAR Intents doesn't trade it, or it lives on a chain Tapvault has no address rules for (DOGE, XRP…) | Nothing; it's shown for its price only |
+| A testnet balance shows no dollar value | Mainnet prices never value testnet tokens | Normal |
 | A swap in Trade → Recent says "Refunded" | The price moved past the slippage (1 %) or the deposit arrived late | The deposit comes back to the wallet, less 1Click's refund fee |
 | "Deposit too small: will be refunded" | Less than the quoted amount reached the deposit address | Wait for the refund |
 

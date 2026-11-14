@@ -18,7 +18,7 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
-        // Optional testnet sponsor (see README), read from the untracked local.properties.
+        // Optional testnet sponsor (see AGENTS.md, Environment), read from the untracked local.properties.
         val local = Properties().apply {
             rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
         }
