@@ -553,7 +553,7 @@ class EmvSession(private val card: CardTransceiver, private val capks: CapkStore
     fun succeeded(r: CardRecipe, detail: String = "") {
         tried(r, "signature OK$detail")
         signsWith = r.method.label
-        notes += "signs with ${r.method.label}: this card can be a Tapvault signer"
+        notes += "signs with ${r.method.label}: this card can be a Aegis signer"
     }
 
     fun report(key: Pair<ByteArray, Int>?, verdict: String? = null): CardReport {
@@ -573,7 +573,7 @@ class EmvSession(private val card: CardTransceiver, private val capks: CapkStore
             iccExponent = key?.second,
             ddol = find(0x9F49)?.value?.hex()?.uppercase() ?: "default 9F3704",
             panLast4 = pan?.takeLast(4),
-            notes = notes.toList() + listOfNotNull(verdict?.let { "can't be a Tapvault signer: $it" }),
+            notes = notes.toList() + listOfNotNull(verdict?.let { "can't be a Aegis signer: $it" }),
             signsWith = signsWith,
             attempts = attempts.toList(),
             trace = trace.toList(),

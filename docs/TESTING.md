@@ -405,7 +405,7 @@ Please read the safety notes first:
 | A way to send text and screenshots | Messaging app or email |
 | Optional | A computer with `adb`, `curl` and `jq` |
 
-If an older Tapvault build is installed, uninstall it first. Wallets created
+If an older Aegis build is installed, uninstall it first. Wallets created
 before 12 Nov run the previous contract build (it rejects Visa online
 signatures) and can't be upgraded.
 
@@ -451,7 +451,7 @@ log. Only a crash is recorded by Android itself (**C**).
    USB" in Developer options).
 2. If Play Protect, MIUI or ColorOS warns or offers to scan, let it scan and
    install anyway.
-3. Open **Tapvault**.
+3. Open **Aegis**.
 
 Expect the Welcome screen: a four-segment progress bar, four swipeable
 slides, each a colour panel (the first, mint, is "Your card is your key"), two glass buttons **Create wallet** (mint) and **I have a wallet**,
@@ -479,7 +479,7 @@ For each card:
 Expect a box "`<network>` •••• `<last 4 digits>`" with a badge **Can sign** or
 **Can't sign**, rows "Offline auth", "CA key index", "Issuer key", "Card key",
 "Signs with", "Challenge format", and notes below. A card that can sign has the
-note "signs with …: this card can be a Tapvault signer". Expected by network
+note "signs with …: this card can be a Aegis signer". Expected by network
 (none of this is verified yet):
 
 | Network | Expected "Signs with" |
@@ -518,8 +518,8 @@ Use a card that showed **Can sign**. Note which one.
    (the faucet).
 4. The sheet "Hold your bank card to the back of the phone to add it" appears:
    hold the chosen card until the sheet closes.
-5. The fingerprint prompt (title "Tapvault", text "Your phone key signs only
-   what you approve here.") says **Create your Tapvault wallet**: approve with
+5. The fingerprint prompt (title "Aegis", text "Your phone key signs only
+   what you approve here.") says **Create your Aegis wallet**: approve with
    your fingerprint (or PIN/pattern).
 6. Prompt `Add Visa card ****1234 as a signer` (your network and last four
    digits; a Mastercard shows `Add Mastercard ****1234 as a signer`, a RuPay
@@ -564,7 +564,7 @@ report on the Setup screen and send the text. For **W**, note the "Wallet
 account: …" line on the Setup screen. **L** can only be collected once setup
 has finished: during setup neither Settings nor the Log can be opened. Then:
 
-- "This card can't sign for Tapvault: … Tap Continue setup to try another
+- "This card can't sign for Aegis: … Tap Continue setup to try another
   contactless card, or Start over." → tap **Continue setup** and hold another
   card that showed **Can sign**.
 - Network or faucet errors → **Continue setup**. Each step checks the chain

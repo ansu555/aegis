@@ -17,7 +17,7 @@ import java.net.HttpURLConnection
 import java.net.URI
 import java.security.SecureRandom
 
-/** An ed25519 NEAR access key. Pays gas; it never authorises Tapvault actions. */
+/** An ed25519 NEAR access key. Pays gas; it never authorises Aegis actions. */
 class NearKey(private val seed: ByteArray) {
     private val priv = Ed25519PrivateKeyParameters(seed, 0)
     val publicKey: ByteArray = priv.generatePublicKey().encoded

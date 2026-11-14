@@ -91,13 +91,13 @@ only spends testnet NEAR), but leave it out of any public release.
 
 Known gap with one app for both networks: signed messages name the wallet's
 account (`domain.rs`, `intent_hash`, `freeze_message`) but not the network.
-If the same implicit account were a Tapvault wallet on both networks with
+If the same implicit account were a Aegis wallet on both networks with
 the same card, a card signature from one could be shown to the other
 (card-propose and card-freeze challenges have no on-chain seed). It can't
 move funds (invariant 11) but could open or freeze. Until a contract adds
 the network to the domain separators (new signed bytes, new wallets only),
 the app refuses "Protect with bank card" when the same account already
-runs a Tapvault contract on the other network.
+runs a Aegis contract on the other network.
 
 ### 0.3 Creating a wallet on mainnet
 

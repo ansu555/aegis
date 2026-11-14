@@ -1,6 +1,6 @@
 # Architecture
 
-How Tapvault is put together: the components and their boundaries, the
+How Aegis is put together: the components and their boundaries, the
 accounts and keys, what happens in every flow, where each piece of state
 lives, how the app talks to NEAR, and how errors are handled. The code is the
 source of truth; symbols are named so you can search for them.
@@ -172,7 +172,7 @@ to be read (no `PendingCard` saved and step < 3).
   |<- "Your wallet is ready"                             |                  |
 ```
 
-Prompts, in order: "Create your Tapvault wallet", "Add Visa card ****1234 as
+Prompts, in order: "Create your Aegis wallet", "Add Visa card ****1234 as
 a signer" (network and last four digits; "Mastercard" isn't followed by
 "card"), "Lock the wallet: up to 1 NEAR at once, 2 NEAR a day". The tap sheet
 says "Hold your bank card to the back of the phone to add it".
@@ -593,10 +593,10 @@ delay, the approvals or a freeze; see Instant payment).
   phone, near the camera, for 3 seconds."
 - `KeystoreSigner.sign` waits until the app is on screen before prompting
   (a prompt shown in the background never appears) and turns failures into
-  messages: "Approval cancelled: …", "Approval timed out", "Open Tapvault to
+  messages: "Approval cancelled: …", "Approval timed out", "Open Aegis to
   approve with your fingerprint or screen lock.", and for an invalidated key
-  "This phone's Tapvault key no longer works (the screen lock was removed).
-  …". A missing key gives "This phone's Tapvault key is missing. On testnet,
+  "This phone's Aegis key no longer works (the screen lock was removed).
+  …". A missing key gives "This phone's Aegis key is missing. On testnet,
   forget the wallet in Settings and create a new one." (also when reading
   `KeystoreSigner.publicKey`), and, outside Send, a phone key that isn't one
   of the wallet's signers "This phone's key isn't a signer of this wallet.

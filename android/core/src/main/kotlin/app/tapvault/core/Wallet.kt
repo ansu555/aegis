@@ -183,7 +183,7 @@ class TapvaultException(message: String) : Exception(message)
 const val MAX_LIMITS = 8
 
 /**
- * Client for one Tapvault wallet. Gas is paid by [gasAccount]; all authority
+ * Client for one Aegis wallet. Gas is paid by [gasAccount]; all authority
  * comes from the phone's P-256 key and the card.
  */
 class TapvaultWallet(
@@ -535,7 +535,7 @@ class Onboarding(private val near: NearClient) {
     private fun createAccounts(prefix: String, sponsor: Sponsor?, plan: Plan, onFallback: (String) -> Unit, walletToo: Boolean): Accounts {
         val net = near.network
         if (!net.hasFaucet) throw TapvaultException(
-            "${net.displayName} has no faucet, so Tapvault can't create accounts for you there. " +
+            "${net.displayName} has no faucet, so Aegis can't create accounts for you there. " +
                 "Create a seed phrase wallet, add NEAR to it, then protect it with your bank card.",
         )
         if (sponsor != null && !net.allowsSponsor) throw TapvaultException("A sponsor account is for testnet only.")

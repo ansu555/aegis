@@ -103,7 +103,7 @@ creating anything new.
 | # | Do | Expect | Result |
 |---|---|---|---|
 | F1 | Take a screenshot in the app | Black image (or "can't take screenshot") | |
-| F2 | Recent apps screen | Tapvault's preview is blank | |
+| F2 | Recent apps screen | Aegis's preview is blank | |
 | F3 | Create a **new** wallet (Settings → My wallets → Add a wallet) | Setup works as before; its card shows by name in Security Center right away (no migration line) | |
 | F4 | Home pill red "Unknown request · review" | Only shows if a card started a request; hard to trigger with the app alone — SKIP unless you test with a second phone | |
 | F5 | No crashes during all of the above | | |
@@ -130,7 +130,7 @@ creating anything new.
 
 | # | Do | Expect | Result |
 |---|---|---|---|
-| G1 | Start the app fresh (swipe it away first) | "Tapvault is locked" + fingerprint prompt; balance not visible behind it | |
+| G1 | Start the app fresh (swipe it away first) | "Aegis is locked" + fingerprint prompt; balance not visible behind it | |
 | G2 | Unlock | Home as usual | |
 | G3 | Home button, come back within 30 s | No lock | |
 | G4 | Leave the app 2 min, come back | Locked again | |

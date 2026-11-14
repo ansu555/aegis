@@ -1,7 +1,7 @@
 package app.tapvault.core
 
 /**
- * Every message a Tapvault signer signs. Mirrors crates/tapvault-core/src/domain.rs;
+ * Every message a Aegis signer signs. Mirrors crates/tapvault-core/src/domain.rs;
  * pinned by vectors.json.
  */
 object Domain {

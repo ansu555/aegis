@@ -32,13 +32,13 @@ import java.util.concurrent.TimeUnit
  */
 class KeystoreSigner(private val alias: () -> String, private val activity: () -> FragmentActivity?) : P256Signer {
     /** What the prompt says the user is approving. Set it before each operation. */
-    @Volatile var reason: String = "Approve with Tapvault"
+    @Volatile var reason: String = "Approve with Aegis"
 
     private val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
 
     override val publicKey: ByteArray
         get() = ks.getCertificate(alias())?.let { P256.compress(it.publicKey as ECPublicKey) }
-            ?: throw IllegalStateException("This phone's Tapvault key is missing. On testnet, forget the wallet in Settings and create a new one.")
+            ?: throw IllegalStateException("This phone's Aegis key is missing. On testnet, forget the wallet in Settings and create a new one.")
 
     val hardwareLabel: String
         get() = runCatching {
@@ -70,12 +70,12 @@ class KeystoreSigner(private val alias: () -> String, private val activity: () -
         val sig = try {
             Signature.getInstance("SHA256withECDSA").apply { initSign(ks.getKey(alias(), null) as PrivateKey) }
         } catch (e: android.security.keystore.KeyPermanentlyInvalidatedException) {
-            throw IllegalStateException("This phone's Tapvault key no longer works (the screen lock was removed). The wallet needs its recovery path; on testnet, forget it in Settings and create a new one.")
+            throw IllegalStateException("This phone's Aegis key no longer works (the screen lock was removed). The wallet needs its recovery path; on testnet, forget it in Settings and create a new one.")
         } catch (e: NullPointerException) {
-            throw IllegalStateException("This phone's Tapvault key is missing. On testnet, forget the wallet in Settings and create a new one.")
+            throw IllegalStateException("This phone's Aegis key is missing. On testnet, forget the wallet in Settings and create a new one.")
         }
         // A prompt shown while the app is in the background never appears, so wait until it's on screen.
-        val act = awaitForeground() ?: throw IllegalStateException("Open Tapvault to approve with your fingerprint or screen lock.")
+        val act = awaitForeground() ?: throw IllegalStateException("Open Aegis to approve with your fingerprint or screen lock.")
         val result = CompletableFuture<Signature>()
         act.runOnUiThread {
             try {
@@ -90,7 +90,7 @@ class KeystoreSigner(private val alias: () -> String, private val activity: () -
                     }
                 })
                 val info = BiometricPrompt.PromptInfo.Builder()
-                    .setTitle("Tapvault")
+                    .setTitle("Aegis")
                     .setSubtitle(reason)
                     .setDescription("Your phone key signs only what you approve here.")
                     .apply {
@@ -153,7 +153,7 @@ class KeystoreSigner(private val alias: () -> String, private val activity: () -
             if ((strict || Build.VERSION.SDK_INT < 30) && bm.canAuthenticate(BIOMETRIC_STRONG) != androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS) {
                 throw IllegalStateException(
                     if (strict) "Fingerprint only needs a fingerprint enrolled on this phone. Add one in Settings → Security, or turn Fingerprint only off."
-                    else "On this Android version Tapvault needs a fingerprint. Add one in Settings → Security, then try again.",
+                    else "On this Android version Aegis needs a fingerprint. Add one in Settings → Security, then try again.",
                 )
             }
             val spec = KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN)

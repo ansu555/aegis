@@ -119,13 +119,13 @@ SHA-1 input = recovered[1 .. n-21) || terminal dynamic data
 format: 05 (DDA, CDA, offline fDDA) or 95 (Visa fDDA on an online transaction)
 ```
 
-Tapvault puts the first bytes of its 32-byte challenge into the UN. A valid
+Aegis puts the first bytes of its 32-byte challenge into the UN. A valid
 SDAD over terminal data holding that UN proves the card signed this challenge.
 
 **Cryptograms.** GPO (Visa) and GENERATE AC return an application cryptogram
 (`9F26`) whose type is in the Cryptogram Information Data (`9F27`, top two
 bits): `00` AAC (declined), `40` TC (approved offline), `80` ARQC (go online).
-Tapvault never sends a cryptogram to anyone; it only needs the signature that
+Aegis never sends a cryptogram to anyone; it only needs the signature that
 comes with it.
 
 **TTQ (`9F66`) and `9F69` (Visa).** Visa cards ask for the Terminal
@@ -302,7 +302,7 @@ Step by step:
    64 bytes, and an SDAD that verifies with the certified key
    (`Rsa.verifySdad`). The attempt line records "signature OK (format XX, N
    bytes of terminal data)" and the session notes "signs with <label>: this
-   card can be a Tapvault signer".
+   card can be a Aegis signer".
 10. **Result.** `Enrolment(key, proof, report, recipe)`: the
     `SignerKey.EmvCard` with its layout, the `CardSig` (SDAD + terminal data)
     over the challenge, the `CardReport`, and the `CardRecipe` that worked.
@@ -779,8 +779,8 @@ Notes you may see: "no PPSE (...); trying known applications" or
 "<AID>: unreadable answer (...)" for an application whose SELECT, GPO or
 READ RECORD failed, or, when another application was tried after it, whose
 certificate chain, key check or signing failed, "issuer certificate expired
-MM/YY", "signs with <label>: this card can be a Tapvault signer", and finally
-"can't be a Tapvault signer: <reason>" when it can't.
+MM/YY", "signs with <label>: this card can be a Aegis signer", and finally
+"can't be a Aegis signer: <reason>" when it can't.
 
 Attempt lines use the `SignMethod` name (`DDA`, `FDDA`, `CDA`). " amount 100"
 appears for amount 1.00, " TC" for the CDA TC variant, " offline-ok" for the
@@ -805,7 +805,7 @@ CA index: 09  issuer key: 1408 bit
 card key: 1024 bit, e=3  DDOL: default 9F3704
 card: ****1234
 signs with: signature in GET PROCESSING OPTIONS (fDDA)
-- signs with signature in GET PROCESSING OPTIONS (fDDA): this card can be a Tapvault signer
+- signs with signature in GET PROCESSING OPTIONS (fDDA): this card can be a Aegis signer
 attempts:
   FDDA A0000000031010: signature OK (format 95, 19 bytes of terminal data)
 trace (card number, name, track data and certificates left out):
@@ -835,7 +835,7 @@ CA index: 05  issuer key: 1152 bit
 card key: 1024 bit, e=3  DDOL: default 9F3704
 card: ****4417
 signs with: signature in GENERATE AC (CDA)
-- signs with signature in GENERATE AC (CDA): this card can be a Tapvault signer
+- signs with signature in GENERATE AC (CDA): this card can be a Aegis signer
 attempts:
   CDA A0000000041010: GENERATE AC answered without a signature (declined: AAC)
   CDA A0000000041010 amount 100: signature OK (format 05, 4 bytes of terminal data)
@@ -869,7 +869,7 @@ CA index: 6E  issuer key: - bit
 card key: - bit, e=-  DDOL: default 9F3704
 card: ****0007
 signs with: nothing that worked
-- can't be a Tapvault signer: no CA key for A000000524 index 6E: this app doesn't know that network key yet; share the card report so it can be added
+- can't be a Aegis signer: no CA key for A000000524 index 6E: this app doesn't know that network key yet; share the card report so it can be added
 trace (card number, name, track data and certificates left out):
   ...
   READ RECORD 2.2 -> 9000 70[8F=6E 90(248) 9F32=03]
@@ -880,7 +880,7 @@ No `attempts:` section: the certificate chain failed before any signing plan
 ran. The key needed is RuPay index 6E, 1984 bits (`90(248)`). Add it as in
 [Adding a CA key](#adding-a-ca-key) and check again. (Index 6E is an invented
 example.) During setup the same failure reads "This card can't sign for
-Tapvault: no CA key for A000000524 index 6E: ... Tap Continue setup to try
+Aegis: no CA key for A000000524 index 6E: ... Tap Continue setup to try
 another contactless card, or Start over."
 
 **A card that answers but won't sign.**
@@ -892,7 +892,7 @@ CA index: 09  issuer key: 1408 bit
 card key: 1024 bit, e=3  DDOL: default 9F3704
 card: ****5521
 signs with: nothing that worked
-- can't be a Tapvault signer: it wouldn't sign a challenge with any method
+- can't be a Aegis signer: it wouldn't sign a challenge with any method
 attempts:
   FDDA A0000000031010 offline-ok: no signature in the GPO answer (online: ARQC)
   DDA A0000000031010: card answered INTERNAL AUTHENTICATE with 6D00 (command not supported)
@@ -922,7 +922,7 @@ signs with: nothing that worked
 - A0000005241010: card answered SELECT A0000005241010 with 6A82 (not found)
 - A0000000043060: card answered SELECT A0000000043060 with 6A82 (not found)
 - A0000000032010: card answered SELECT A0000000032010 with 6A82 (not found)
-- can't be a Tapvault signer: card answered SELECT A0000000032010 with 6A82 (not found)
+- can't be a Aegis signer: card answered SELECT A0000000032010 with 6A82 (not found)
 trace (card number, name, track data and certificates left out):
   SELECT PPSE -> 6A82
   SELECT A0000000031010 -> 6A82
@@ -942,7 +942,7 @@ card picture then shows "TAPVAULT" instead of the last four digits.)
 
 ### What each failure means
 
-The last note ("can't be a Tapvault signer: ...") or the setup error gives the
+The last note ("can't be a Aegis signer: ...") or the setup error gives the
 reason. Errors before any card answer (not ISO-DEP, NFC off, no tap) produce
 no report; see [ANDROID.md](ANDROID.md#nfc-and-card-taps).
 
@@ -963,7 +963,7 @@ no report; see [ANDROID.md](ANDROID.md#nfc-and-card-taps).
 | "card certificate format", "card key length mismatch", "card certificate is for a different card number", "signature length N != modulus M", "signature not reduced", "certificate check failed" | The ICC certificate didn't decode as expected | Share the report |
 | "card certificate hash mismatch (static data)" | The static data the app hashed differs from what the issuer signed: an SDA tag list other than `82` (only `82` is handled), a record in SFI 1 to 10 that isn't a `70` template (hashed whole), or a bad read | Check again; if it repeats, share the report (likely a code fix in `readRecords`) |
 | "card key exponent too large" | ICC exponent over 31 bits; not seen in EMV | Share the report |
-| "this card can't be a signer: its key is N bits; the wallet accepts 512 to 1984", "... its key isn't a valid RSA modulus", "... its key exponent is N; the wallet accepts 3 or 65537" (note "can't be a Tapvault signer: its key ...") | The card key breaks the contract's rules for a signer key (512 to 1984 bits, no leading zero byte, odd, exponent 3 or 65537); found before any signing attempt with that application | Can't be a signer |
+| "this card can't be a signer: its key is N bits; the wallet accepts 512 to 1984", "... its key isn't a valid RSA modulus", "... its key exponent is N; the wallet accepts 3 or 65537" (note "can't be a Aegis signer: its key ...") | The card key breaks the contract's rules for a signer key (512 to 1984 bits, no leading zero byte, odd, exponent 3 or 65537); found before any signing attempt with that application | Can't be a signer |
 | "it wouldn't sign a challenge with any method" | Every plan failed; read the attempts | Table below |
 
 | Attempt result | Meaning |
@@ -1031,7 +1031,7 @@ Cards (RuPay) are RuPay cards for this purpose: unknown.
 PPSE priority order, up to five applications; the first that signs is used.
 
 **Phones and watches acting as cards** (tokenised wallets) are untested; they
-often have no offline data authentication, which Tapvault needs.
+often have no offline data authentication, which Aegis needs.
 
 ## When a card fails: what to collect
 
@@ -1068,7 +1068,7 @@ CVV. None of them is needed.
 
 ## Related docs
 
-- [OVERVIEW.md](OVERVIEW.md): what Tapvault is, glossary of EMV and NEAR terms.
+- [OVERVIEW.md](OVERVIEW.md): what Aegis is, glossary of EMV and NEAR terms.
 - [ARCHITECTURE.md](ARCHITECTURE.md): components and flows end to end.
 - [ANDROID.md](ANDROID.md): NFC reader mode, taps and retries, the app's storage.
 - [CONTRACT.md](CONTRACT.md): `setup_add_signer`, `approve_card`, `freeze` and the rest.

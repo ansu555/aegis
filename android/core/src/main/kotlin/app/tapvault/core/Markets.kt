@@ -105,7 +105,7 @@ class Markets(
         }
         if (code == 429) throw TapvaultException("Market data is busy. Try again in a minute.")
         if (code !in 200..299) throw TapvaultException("Market data: HTTP $code")
-        return runCatching { json.parseToJsonElement(text) }.getOrNull() ?: throw TapvaultException("Market data came back in a form Tapvault can't read.")
+        return runCatching { json.parseToJsonElement(text) }.getOrNull() ?: throw TapvaultException("Market data came back in a form Aegis can't read.")
     }
 
     /** Market data for CoinGecko [ids] (at most 250), largest market cap first. */
@@ -222,7 +222,7 @@ class Markets(
             u.scheme == "https" && u.host in ICON_HOSTS && u.userInfo == null && (u.port == -1 || u.port == 443)
         }.getOrDefault(false)
 
-        /** CoinGecko ids of Tapvault's built-in tokens (both networks), for their logos. */
+        /** CoinGecko ids of Aegis's built-in tokens (both networks), for their logos. */
         val ICON_IDS = mapOf(
             "wrap.near" to "wrapped-near",
             "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1" to "usd-coin",

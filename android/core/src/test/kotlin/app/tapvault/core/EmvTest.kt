@@ -73,7 +73,7 @@ class EmvTest {
     fun inspectReportsDdaCapability() {
         val r = CardService(capks).inspect(SimCard())
         assertTrue(r.ddaSupported)
-        assertTrue(r.notes.any { it.contains("can be a Tapvault signer") }, r.text())
+        assertTrue(r.notes.any { it.contains("can be a Aegis signer") }, r.text())
     }
 
     @Test
@@ -178,7 +178,7 @@ class EmvTest {
         // A card without the CA key still gets a useful report.
         val r = CardService(CapkStore.load()).inspect(SimCard())
         assertTrue(!r.canSign)
-        assertTrue(r.notes.any { it.startsWith("can't be a Tapvault signer") }, r.text())
+        assertTrue(r.notes.any { it.startsWith("can't be a Aegis signer") }, r.text())
     }
 
     @Test

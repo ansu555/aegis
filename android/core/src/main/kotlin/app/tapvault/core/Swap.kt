@@ -45,7 +45,7 @@ object Swap {
         if (q.amountIn != ask.amount) throw TapvaultException("NEAR Intents asked for a different amount than you entered, so nothing was sent.")
         val to = q.depositAddress ?: throw TapvaultException("NEAR Intents sent no deposit address.")
         if (!Tokens.isAccount(to)) throw TapvaultException("NEAR Intents' deposit address isn't a NEAR account, so nothing was sent.")
-        if (!q.depositMemo.isNullOrEmpty()) throw TapvaultException("This swap needs a memo, which a Tapvault transfer can't carry.")
+        if (!q.depositMemo.isNullOrEmpty()) throw TapvaultException("This swap needs a memo, which a Aegis transfer can't carry.")
         val deadline = q.deadline ?: throw TapvaultException("NEAR Intents sent no deadline for this quote.")
         if (deadline.isBefore(now.plusSeconds(MIN_DEADLINE_SECS))) throw TapvaultException("This quote expires too soon. Try again.")
         if (q.minAmountOut.signum() <= 0 || q.minAmountOut > q.amountOut) throw TapvaultException("NEAR Intents' quote doesn't add up, so nothing was sent.")
@@ -89,7 +89,7 @@ object ChainAddress {
 
     /** Null if [address] fits [chainId]'s format, else what's wrong. */
     fun problem(chainId: String, address: String): String? {
-        val c = chain(chainId) ?: return "Tapvault doesn't bridge to that chain."
+        val c = chain(chainId) ?: return "Aegis doesn't bridge to that chain."
         return if (c.pattern.matches(address.trim())) null else "That isn't a ${c.name} address (${c.example})."
     }
 
@@ -145,7 +145,7 @@ data class SwapRecord(
 
 /**
  * Buy and sell for cash through Ramp Network's hosted page, opened in the
- * browser with the wallet's account. Ramp does KYC and payments; Tapvault
+ * browser with the wallet's account. Ramp does KYC and payments; Aegis
  * never sees card or bank details. [hostKey] (from `tapvault.ramp.key`) is
  * Ramp's public partner key; without one the page still opens, unattributed.
  * Asset codes follow Ramp's CHAIN_SYMBOL form; check them against Ramp's
@@ -167,7 +167,7 @@ object Ramp {
         fun e(s: String) = java.net.URLEncoder.encode(s, "UTF-8")
         val params = buildList {
             hostKey?.takeIf { it.isNotBlank() }?.let { add("hostApiKey=" + e(it)) }
-            add("hostAppName=Tapvault")
+            add("hostAppName=Aegis")
             add("defaultFlow=$flow")
             add("enabledCryptoAssets=" + e(code))
             add((if (flow == "ONRAMP") "swapAsset=" else "offrampAsset=") + e(code))

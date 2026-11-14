@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aegis: your bank card is your crypto key</title>
+  <meta name="description" content="Aegis is a self-custodial NEAR wallet co-signed by the contactless bank card you already carry and your phone's fingerprint. No seed phrase, no device to buy.">
+  <meta name="theme-color" content="#050506">
+  <link rel="icon" href="assets/aegis-mark.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script>document.documentElement.classList.add('js')</script>
+</head>
+<body>
+
+  <!-- Status strip (Tangem uses this slot for its sale banner) -->
+  <div class="strip">
+    <span class="dot"></span>
+    Testnet preview · built for the NEAR hackathon · mainnet opens after real-card testing and a contract review
+  </div>
+
+  <header class="nav" id="top">
+    <a class="brand" href="#top" aria-label="Aegis home">
+      <img src="assets/aegis-mark.svg" alt="" width="46" height="15">
+      <span>aegis</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="#features">Why Aegis</a>
+      <a href="#how">How it works</a>
+      <a href="#security">Security</a>
+      <a href="#app">App</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <a class="btn btn-light btn-sm" href="#download">Get the app</a>
+    <button class="menu" aria-label="Menu" aria-expanded="false"><span></span><span></span></button>
+  </header>
+
+  <main>
+
+    <!-- ============ HERO ============ -->
+    <section class="hero">
+      <div class="hero-copy reveal">
+        <p class="eyebrow">Self-custodial NEAR wallet</p>
+        <h1>Your bank card is<br>your crypto key.</h1>
+        <p class="lede">Aegis turns the contactless card already in your wallet and your phone's fingerprint into two keys. Every payment needs both. No seed phrase, no device to buy.</p>
+        <div class="cta-row">
+          <a class="btn btn-light" href="#download">Get the app</a>
+          <a class="btn btn-ghost" href="#how">See how it works</a>
+        </div>
+      </div>
+      <!-- ASSET 09: videoframe (phone + main/backup card). Optional hero.mp4 plays over it when present. -->
+      <div class="hero-media reveal">
+        <div class="asset" data-src="assets/img/09-hero.webp" data-video="assets/img/hero.mp4" data-label="09 · Hero: phone with Aegis app + main and backup card" style="--ratio: 5/3"></div>
+      </div>
+    </section>
+
+    <!-- ============ SIX FEATURES (Tangem: True ownership … More than storage) ============ -->
+    <section class="section" id="features">
+      <div class="grid-features">
+        <article class="feature f-wide reveal">
+          <div class="asset" data-src="assets/img/01-card-hand.webp" data-label="01 · Hand holding a plain contactless card" style="--ratio: 1416/1057"></div>
+          <div class="feature-copy">
+            <h3>Yours alone</h3>
+            <p>Your wallet is a smart contract on its own NEAR account. At the end of setup the account's key is deleted, so only your card and your phone, together, can move the funds. No company, Aegis included, can.</p>
+          </div>
+        </article>
+        <article class="feature reveal">
+          <div class="asset" data-src="assets/img/02-card-phone.webp" data-label="02 · Card behind phone, dark 3D" style="--ratio: 1714/1752"></div>
+          <div class="feature-copy">
+            <h3>Tap, then touch</h3>
+            <p>Hold your card to the back of the phone, then confirm with your fingerprint. The prompt shows exactly what you're approving.</p>
+          </div>
+        </article>
+        <article class="feature reveal">
+          <div class="asset" data-src="assets/img/04-pocket.webp" data-label="04 · Card going into a jeans pocket" style="--ratio: 1050/1160"></div>
+          <div class="feature-copy">
+            <h3>Already in your pocket</h3>
+            <p>No hardware wallet to buy, charge or lose. The chip on your bank card already holds a key that can't be copied out.</p>
+          </div>
+        </article>
+        <article class="feature f-wide reveal">
+          <div class="asset" data-src="assets/img/03-two-cards.webp" data-label="03 · Person holding main + backup card" style="--ratio: 2000/1493"></div>
+          <div class="feature-copy">
+            <h3>No seed phrase</h3>
+            <p>Nothing to write down and nothing to steal. Add a backup card you keep at home, or a guardian phone you trust, and recover on a new phone.</p>
+          </div>
+        </article>
+        <article class="feature reveal">
+          <div class="asset" data-src="assets/img/05-coins.webp" data-label="05 · Ring of tokens, NEAR in front" style="--ratio: 1/1"></div>
+          <div class="feature-copy">
+            <h3>Every token, any chain</h3>
+            <p>Hold NEAR and NEP-141 tokens. Swap and bridge in from other chains through NEAR Intents, inside the app. <span class="tag">Swap on mainnet</span></p>
+          </div>
+        </article>
+        <article class="feature f-wide reveal">
+          <div class="asset" data-src="assets/img/06-phone-top.webp" data-label="06 · Top of phone with Aegis home screen" style="--ratio: 1782/1160"></div>
+          <div class="feature-copy">
+            <h3>More than a wallet</h3>
+            <p>Spending limits, delays you can cancel, one-tap freeze, watchtower alerts and inheritance, all enforced by the contract rather than the app.</p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- ============ HOW IT WORKS (Tangem: "Three cards. One wallet." activation demo) ============ -->
+    <section class="section how" id="how">
+      <div class="section-head reveal">
+        <p class="eyebrow">Technology</p>
+        <h2>Two keys. One wallet.</h2>
+        <p class="sub">A payment is simple enough to show right here.</p>
+      </div>
+      <div class="how-grid">
+        <ol class="steps" role="tablist" aria-label="Payment steps">
+          <li class="step is-active" role="tab" tabindex="0" aria-selected="true" data-step="0">
+            <span class="step-n">1</span>
+            <div><h4>Build the payment</h4><p>You pick who and how much. Your phone builds the payment and the contract records it.</p></div>
+          </li>
+          <li class="step" role="tab" tabindex="-1" aria-selected="false" data-step="1">
+            <span class="step-n">2</span>
+            <div><h4>Tap your card</h4><p>The card's EMV chip signs a challenge from a later block, so a signature skimmed earlier can't match. Nothing is charged and nothing reaches your bank.</p></div>
+          </li>
+          <li class="step" role="tab" tabindex="-1" aria-selected="false" data-step="2">
+            <span class="step-n">3</span>
+            <div><h4>Touch to approve</h4><p>A key in your phone's secure hardware signs only after a fresh fingerprint check, under a prompt that names the receiver and amount.</p></div>
+          </li>
+          <li class="step" role="tab" tabindex="-1" aria-selected="false" data-step="3">
+            <span class="step-n">4</span>
+            <div><h4>Checked on-chain</h4><p>The contract verifies both signatures and your limits. Small payments go out instantly. Bigger ones wait a delay you can cancel.</p></div>
+          </li>
+        </ol>
+
+        <!-- Drawn in CSS: no asset needed -->
+        <div class="demo" data-stage="0" aria-hidden="true">
+          <div class="demo-card">
+            <div class="dc-top"><img src="assets/aegis-mark.svg" alt=""><span class="nfc">)))</span></div>
+            <div class="dc-chip"></div>
+            <div class="dc-num">•••• 4821</div>
+          </div>
+          <div class="demo-phone">
+            <div class="dp-notch"></div>
+            <div class="dp-screen">
+              <div class="dp-s dp-s0">
+                <p class="dp-label">Send</p>
+                <p class="dp-amount">5 <small>NEAR</small></p>
+                <p class="dp-to">to alice.near</p>
+                <div class="dp-btn">Continue</div>
+              </div>
+              <div class="dp-s dp-s1">
+                <div class="ripple"><i></i><i></i><i></i></div>
+                <p class="dp-label">Hold your card to the phone</p>
+              </div>
+              <div class="dp-s dp-s2">
+                <svg class="fp" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 20a10 10 0 0 1 20 0v4"/><path d="M19 22a5 5 0 0 1 10 0v6c0 4-1 7-3 10"/><path d="M24 22v8c0 3-1 6-3 9"/><path d="M10 28c0-2 0-6 1-8"/><path d="M37 26c0 5-1 9-3 13"/><path d="M15 33c-1 2-2 4-3 5"/></svg>
+                <p class="dp-label">Send 5 NEAR to alice.near?</p>
+                <p class="dp-hint">Touch the fingerprint sensor</p>
+              </div>
+              <div class="dp-s dp-s3">
+                <div class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+                <p class="dp-label">Sent</p>
+                <p class="dp-hint">Both signatures verified on NEAR</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ SECURITY (Tangem: "Crypto security at its peak") ============ -->
+    <section class="section security" id="security">
+      <div class="section-head center reveal">
+        <p class="eyebrow eyebrow-mint">Security &amp; reliability</p>
+        <h2>A card alone never moves funds.</h2>
+        <p class="sub">The wallet contract checks your bank card's RSA signature and your phone's P-256 signature on-chain, every time.</p>
+      </div>
+      <div class="security-art reveal">
+        <div class="asset" data-src="assets/img/07-two-keys.webp" data-label="07 · Chrome art: card chip + phone chip → glowing lock" style="--ratio: 2880/1100"></div>
+      </div>
+      <div class="points">
+        <div class="point reveal"><h4>Two keys, both required</h4><p>Every transfer needs your card and a fingerprint-unlocked phone key. Neither one can pay alone.</p></div>
+        <div class="point reveal"><h4>Keys that can't be copied</h4><p>The card's key is made by your bank inside its EMV chip. The phone's key lives in the Android Keystore's secure hardware and can't be exported.</p></div>
+        <div class="point reveal"><h4>Limits and delays on-chain</h4><p>Payments above your instant limit wait a delay you can cancel from either key. The rules live in the contract, not in the app.</p></div>
+        <div class="point reveal"><h4>Freeze in one tap</h4><p>Lost your card or phone? Either key on its own can freeze the wallet. Unfreezing needs both.</p></div>
+      </div>
+    </section>
+
+    <!-- ============ PLAN FOR EVERYTHING (Tangem: 25-year warranty block) ============ -->
+    <section class="section plan">
+      <div class="plan-grid">
+        <div class="plan-media reveal">
+          <div class="asset" data-src="assets/img/10-portrait.webp" data-label="10 · Profile portrait, card + phone with fingerprint glow" style="--ratio: 1438/2166"></div>
+        </div>
+        <div class="plan-copy">
+          <h2 class="reveal">Ready for the day something goes wrong.</h2>
+          <p class="sub reveal">Losing a card or a phone shouldn't mean losing your money.</p>
+          <ul class="spec">
+            <li class="reveal"><b>Lost card.</b> Freeze, then remove it with your backup card and your phone. A new card takes its place.</li>
+            <li class="reveal"><b>Lost phone.</b> Recover on a new phone with your cards. Your old phone can cancel the recovery during its 24-hour wait if it wasn't you.</li>
+            <li class="reveal"><b>Guardian phone.</b> Someone you trust can cancel and freeze, and co-sign together with a card.</li>
+            <li class="reveal"><b>Inheritance.</b> Name an heir. If you're inactive for the period you choose, they can claim. Every check-in or payment resets the clock.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ APP / ECOSYSTEM (Tangem: "More than just a cold wallet") ============ -->
+    <section class="section app" id="app">
+      <div class="section-head center reveal">
+        <p class="eyebrow">The app</p>
+        <h2>Everything you need, in one app.</h2>
+        <p class="sub">Markets, swaps, tokens and your security settings, built for one-handed use.</p>
+      </div>
+      <div class="app-hero reveal">
+        <div class="asset" data-src="assets/img/08-hand-phone.webp" data-label="08 · Hand holding phone, card tapped behind it" style="--ratio: 2880/1558"></div>
+      </div>
+      <div class="screens" tabindex="0" aria-label="App screens">
+        <figure class="screen reveal">
+          <div class="asset" data-src="assets/app/home.png" data-label="Home screenshot (yours)" style="--ratio: 540/1050"></div>
+          <figcaption><b>Home</b>Balance, card and limits</figcaption>
+        </figure>
+        <figure class="screen reveal">
+          <img src="assets/app/markets.png" alt="Aegis Markets screen" loading="lazy" width="540" height="1050">
+          <figcaption><b>Markets</b>Live prices and charts</figcaption>
+        </figure>
+        <figure class="screen reveal">
+          <img src="assets/app/swap.png" alt="Aegis Swap screen" loading="lazy" width="540" height="1050">
+          <figcaption><b>Swap</b>Any token, any chain</figcaption>
+        </figure>
+        <figure class="screen reveal">
+          <img src="assets/app/coin.png" alt="Aegis coin page" loading="lazy" width="540" height="1050">
+          <figcaption><b>Coin page</b>Scrub the chart</figcaption>
+        </figure>
+      </div>
+      <ul class="chips reveal">
+        <li>Send &amp; receive</li><li>Tokens</li><li>Swap &amp; bridge</li><li>Markets</li><li>Activity</li>
+        <li>Security Center</li><li>Watchtower alerts</li><li>Address book</li><li>Inheritance</li>
+      </ul>
+    </section>
+
+    <!-- ============ OPEN SOURCE + STATUS (Tangem: "Everything you need" + reviews) ============ -->
+    <section class="section open">
+      <div class="open-grid">
+        <div class="open-card reveal">
+          <p class="eyebrow">Open source</p>
+          <h3>Read every line.</h3>
+          <p>The wallet contract, the card code and the app are on GitHub. Aegis runs no server between you and NEAR: your phone talks to the chain directly.</p>
+          <a class="link" href="https://github.com/ansu555/tapvault" target="_blank" rel="noopener">View on GitHub →</a>
+        </div>
+        <div class="open-card reveal">
+          <p class="eyebrow">Where we are</p>
+          <h3>Honest status.</h3>
+          <ul class="status">
+            <li class="ok">Contract and core logic covered by automated tests</li>
+            <li class="ok">Live testnet runs with simulated Visa, Mastercard and classic DDA cards</li>
+            <li class="ok">Recovery, phone-only wallets and inheritance tested live on testnet</li>
+            <li class="todo">First tests with real bank cards over a phone's NFC</li>
+            <li class="todo">Contract review, then mainnet</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ FAQ ============ -->
+    <section class="section faq" id="faq">
+      <div class="section-head reveal">
+        <h2>Questions</h2>
+      </div>
+      <div class="faq-list">
+        <details class="reveal">
+          <summary>Does tapping my card charge it or tell my bank?</summary>
+          <p>No. Aegis asks the chip for the same kind of signature a payment terminal uses to check that a card is genuine. No PIN is entered, no payment is made, and nothing is sent to your bank or the card network. The chip's own transaction counter does go up by one, as with any contactless tap.</p>
+        </details>
+        <details class="reveal">
+          <summary>Can someone with a reader in a crowd use my card?</summary>
+          <p>Not on its own. A card signature never moves funds without your phone's fingerprint approval. And the card signs a challenge taken from a block after the payment was recorded, so a signature skimmed earlier is useless.</p>
+        </details>
+        <details class="reveal">
+          <summary>What if I lose my card?</summary>
+          <p>Freeze the wallet from your phone, then remove the lost card using your backup card. If you have no backup card yet, add one: one is enough, and it should stay at home.</p>
+        </details>
+        <details class="reveal">
+          <summary>What if I lose my phone?</summary>
+          <p>Install Aegis on a new phone and start a recovery with your cards. Recovery waits 24 hours, so your old phone or a guardian can cancel it if it wasn't you.</p>
+        </details>
+        <details class="reveal">
+          <summary>Is my card number stored or sent anywhere?</summary>
+          <p>No. The card number, track data and cardholder name stay inside the tap session in the phone's memory and are never logged, stored or sent. The app keeps only the last four digits to show you which card is which.</p>
+        </details>
+        <details class="reveal">
+          <summary>Which cards work?</summary>
+          <p>Contactless EMV bank cards. Aegis supports the three ways cards prove they're genuine: Visa fDDA, Mastercard CDA and classic DDA. Settings → Check a card tells you whether yours can sign before you set anything up.</p>
+        </details>
+        <details class="reveal">
+          <summary>Will Aegis keep working if the team disappears?</summary>
+          <p>Yes. Your wallet is a contract on your own NEAR account, and the app talks to public NEAR RPCs. There is no Aegis server in the path, and the code is open source.</p>
+        </details>
+        <details class="reveal">
+          <summary>Can I use it with real money today?</summary>
+          <p>Not yet. Aegis is on NEAR testnet. Mainnet opens after testing with real bank cards and an independent contract review.</p>
+        </details>
+      </div>
+    </section>
+
+    <!-- ============ DOWNLOAD CTA ============ -->
+    <section class="section download" id="download">
+      <div class="download-card reveal">
+        <img src="assets/aegis-mark.svg" alt="" class="download-mark">
+        <h2>Your card. Your phone. Your money.</h2>
+        <p class="sub">Aegis for Android, on NEAR testnet. Needs a phone with NFC and a screen lock.</p>
+        <div class="cta-row center">
+          <!-- TODO: point at the release APK -->
+          <a class="btn btn-light" href="https://github.com/ansu555/tapvault" target="_blank" rel="noopener">Download for Android</a>
+          <a class="btn btn-ghost" href="https://github.com/ansu555/tapvault" target="_blank" rel="noopener">Source code</a>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <div class="foot-grid">
+      <div>
+        <a class="brand" href="#top"><img src="assets/aegis-mark.svg" alt="" width="46" height="15"><span>aegis</span></a>
+        <p class="muted">A NEAR wallet co-signed by your card and your phone.</p>
+      </div>
+      <div><h5>Product</h5><a href="#features">Why Aegis</a><a href="#how">How it works</a><a href="#security">Security</a><a href="#app">App</a></div>
+      <div><h5>Developers</h5><a href="https://github.com/ansu555/tapvault" target="_blank" rel="noopener">GitHub</a><a href="https://github.com/ansu555/tapvault/blob/main/docs/DESIGN.md" target="_blank" rel="noopener">Design</a><a href="https://github.com/ansu555/tapvault/blob/main/docs/STATUS.md" target="_blank" rel="noopener">Status</a></div>
+      <div><h5>Help</h5><a href="#faq">FAQ</a><a href="https://github.com/ansu555/tapvault/blob/main/docs/TROUBLESHOOTING.md" target="_blank" rel="noopener">Troubleshooting</a></div>
+    </div>
+    <p class="fine">Testnet software. Not yet reviewed for real funds. © 2026 Aegis.</p>
+  </footer>
+
+  <script src="main.js" defer></script>
+</body>
+</html>

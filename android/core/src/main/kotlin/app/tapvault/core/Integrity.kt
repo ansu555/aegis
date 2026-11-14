@@ -54,7 +54,7 @@ object Integrity {
             V03_BUILD -> Check("Wallet code", Status.NOTE, "the 14 Nov build (v0.3): still yours and official; it has no inheritance (wallets made with this app version do)")
             V01_BUILD -> Check("Wallet code", Status.NOTE, "the 12 Nov build (v0.1): still yours and official; it doesn't check new keys on chain and can't be upgraded")
             PREVIOUS_BUILD -> Check("Wallet code", Status.NOTE, "the older build from before 12 Nov: still yours, but it refuses Visa online signatures and can't be upgraded")
-            else -> Check("Wallet code", Status.FAIL, "unknown code ($codeHash): this isn't a Tapvault build this app knows")
+            else -> Check("Wallet code", Status.FAIL, "unknown code ($codeHash): this isn't a Aegis build this app knows")
         }
         val keys = if (accessKeys.isEmpty()) Check("Account keys", Status.OK, "none: only the wallet code can move funds")
         else Check("Account keys", Status.FAIL, "${accessKeys.size} access key${if (accessKeys.size == 1) "" else "s"} on the wallet account: whoever holds ${if (accessKeys.size == 1) "it" else "them"} could replace the code")

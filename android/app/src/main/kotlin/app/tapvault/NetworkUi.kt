@@ -73,7 +73,7 @@ fun NetworkSheet(vm: AppViewModel, onDismiss: () -> Unit) {
             ) { vm.switchNetwork(Network.TESTNET); onDismiss() }
         }
         if (!vm.mainnetEnabled) Caption(
-            "Mainnet opens once Tapvault has been tested with real bank cards and its contract has been reviewed.",
+            "Mainnet opens once Aegis has been tested with real bank cards and its contract has been reviewed.",
             Modifier.padding(top = 14.dp),
         )
         Spacer(Modifier.size(8.dp))

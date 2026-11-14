@@ -204,7 +204,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** The active wallet is a seed-phrase wallet (a plain NEAR account, not protected by a card yet). */
     var seedWallet by mutableStateOf(store.seedWallet)
 
-    /** The active wallet can be used: a finished Tapvault wallet, or a seed-phrase wallet. */
+    /** The active wallet can be used: a finished Aegis wallet, or a seed-phrase wallet. */
     val ready get() = setupStep >= 4 || (seedWallet && setupStep == 1)
     val log = mutableStateListOf<String>()
 
@@ -445,7 +445,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             throw IllegalStateException("The card's signature didn't check out, so the security key wasn't reset. Tap it again.")
         }
         note("${t.name} verified for the security key reset")
-        phone.reason = "Reset your Tapvault security key"
+        phone.reason = "Reset your Aegis security key"
         phone.sign(sha256(challenge))
         store.keyFailures = 0
         createSecurityKey("Choose a new security key", "${t.name} and your fingerprint checked out. Pick a new key of at least ${SecurityKey.MIN_LENGTH} characters.")
@@ -937,7 +937,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
             } catch (e: CardCheckFailed) {
                 cardReport = e.report
-                throw IllegalStateException("This card can't sign for Tapvault: ${e.message}. Tap Continue setup to try another contactless card, or Start over.")
+                throw IllegalStateException("This card can't sign for Aegis: ${e.message}. Tap Continue setup to try another contactless card, or Start over.")
             }
             cardReport = enrol.report
             val known = KnownCard(enrol.key.keyHash().hex(), enrol.recipe, enrol.report.network, enrol.report.panLast4)
@@ -955,7 +955,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val others = near.accessKeys(accounts.wallet).filter { it != accounts.walletKey.publicKeyString }
                 if (others.isNotEmpty()) note("removing ${others.size} other key(s) from the account")
                 progress(if (seed) "Approve with your fingerprint to protect the wallet" else "Approve with your fingerprint to create the wallet")
-                phone.reason = if (seed) "Protect ${accounts.wallet}: from now on your recovery phrase can't move funds" else "Create your Tapvault wallet"
+                phone.reason = if (seed) "Protect ${accounts.wallet}: from now on your recovery phrase can't move funds" else "Create your Aegis wallet"
                 val r = ob.deployAndInit(accounts, wasm, phone, others)
                 note("wallet contract deployed: ${near.explorerTx(r.hash)}")
             }
@@ -999,7 +999,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         throw IllegalStateException("That's the card you already added. Tap Continue setup and hold a different card, or skip the backup card.")
                     } catch (e: CardCheckFailed) {
                         cardReport = e.report
-                        throw IllegalStateException("This card can't sign for Tapvault: ${e.message}. Tap Continue setup to try another card, or skip the backup card.")
+                        throw IllegalStateException("This card can't sign for Aegis: ${e.message}. Tap Continue setup to try another card, or skip the backup card.")
                     }
                     val known = KnownCard(enrol.key.keyHash().hex(), enrol.recipe, enrol.report.network, enrol.report.panLast4)
                     withContext(Dispatchers.Main) { saveCards(store.cards.put(known)) }
@@ -1438,7 +1438,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return shownTokens.fold(nearValue) { acc, tb -> acc + (p.value(tb.token.contract, tb.raw, tb.token.decimals) ?: java.math.BigDecimal.ZERO) }
         }
 
-    /** A token on NEAR as Tapvault shows it (built-in metadata when it has it). */
+    /** A token on NEAR as Aegis shows it (built-in metadata when it has it). */
     fun tokenInfoOf(t: IntentToken): TokenInfo? = t.nearContract?.let { c -> KnownTokens.find(Network.MAINNET, c) ?: TokenInfo(c, t.symbol, t.symbol, t.decimals, verified = false) }
 
     /** A preview quote (no deposit address, nothing reserved): what [amount] of [from] gets of [to]. */
@@ -1548,7 +1548,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val q = oneClick.quote(ask)
         val e = q.echoed
         if (e.str("recipient") != acct || e.str("destinationAsset") != to.assetId || e.str("refundTo") != refundTo.trim()) throw TapvaultException("NEAR Intents answered for a different transfer, so no address is shown.")
-        if (!q.depositMemo.isNullOrEmpty()) throw TapvaultException("This chain needs a memo with the deposit, which Tapvault doesn't support yet.")
+        if (!q.depositMemo.isNullOrEmpty()) throw TapvaultException("This chain needs a memo with the deposit, which Aegis doesn't support yet.")
         val addr = q.depositAddress ?: throw TapvaultException("NEAR Intents sent no deposit address.")
         val chain = ChainAddress.chain(from.blockchain)?.name ?: from.blockchain
         val rec = SwapRecord(
@@ -1762,7 +1762,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             throw IllegalStateException("That card is already one of this wallet's cards. Hold a different card to add it as a backup.")
         } catch (e: CardCheckFailed) {
             cardReport = e.report
-            throw IllegalStateException("This card can't sign for Tapvault: ${e.message}. Try another contactless card.")
+            throw IllegalStateException("This card can't sign for Aegis: ${e.message}. Try another contactless card.")
         }
         if (!provesPossession(e.key, e.proof, challenge(e.key))) {
             throw IllegalStateException("The card's test signature didn't check out, so it won't be added. Tap it again, or use another card.")
@@ -2077,7 +2077,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!Regex("^[a-z0-9._-]{2,64}$").matches(a)) throw IllegalArgumentException("Enter the wallet's account, like ${network.example("tv-1a2b3c4d5e")}")
         network.accountProblem(a)?.let { throw IllegalArgumentException(it) }
         val st = try { viewOnly(a).state() } catch (e: Exception) {
-            throw IllegalStateException("No Tapvault wallet found at $a. Check the account name (it's on your old phone's Receive screen).")
+            throw IllegalStateException("No Aegis wallet found at $a. Check the account name (it's on your old phone's Receive screen).")
         }
         // A throwaway key just to check the plan; the real one is made when recovery starts.
         val problem = runCatching { Recovery.plan(st, SoftP256Probe.key) }.exceptionOrNull()?.message
@@ -2223,7 +2223,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun becomeGuardian(account: String) = run("Preparing guardian code") {
         val a = account.trim().lowercase()
         val st = try { viewOnly(a).state() } catch (e: Exception) {
-            throw IllegalStateException("No Tapvault wallet found at $a. Ask the owner for the account on their Receive screen.")
+            throw IllegalStateException("No Aegis wallet found at $a. Ask the owner for the account on their Receive screen.")
         }
         if (st.setupMode) throw IllegalStateException("That wallet hasn't finished setup yet.")
         if (store.gasAccount == null) requireFaucetForJoin()
@@ -2386,14 +2386,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun otherWallet(account: String): TapvaultWallet {
         val a = account.trim().lowercase()
         network.accountProblem(a)?.let { throw IllegalArgumentException(it) }
-        val gas = store.gasAccount ?: throw IllegalStateException("Open a Tapvault wallet on this phone first: its fee account pays the network fee.")
+        val gas = store.gasAccount ?: throw IllegalStateException("Open a Aegis wallet on this phone first: its fee account pays the network fee.")
         return TapvaultWallet(near, a, gas, NearKey.fromSecret(store.gasKey!!))
     }
 
     fun lookupInheritance(account: String) = run("Looking up the wallet") {
         claimLookup = null
         val w = otherWallet(account)
-        if (!w.isV04()) throw IllegalStateException("${w.account} isn't a Tapvault wallet with inheritance (contract v0.4).")
+        if (!w.isV04()) throw IllegalStateException("${w.account} isn't a Aegis wallet with inheritance (contract v0.4).")
         val info = w.inheritance()
         if (!info.hasHeir) throw IllegalStateException("${w.account} has no heir.")
         claimLookup = w.account to info
@@ -2580,7 +2580,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         else -> Screen.Welcome
     }
 
-    /** A wallet that can be used: a finished Tapvault wallet, or a seed-phrase wallet (account made, not being protected). */
+    /** A wallet that can be used: a finished Aegis wallet, or a seed-phrase wallet (account made, not being protected). */
     private fun Store.usable() = setupStep >= 4 || (seedWallet && setupStep == 1)
 
     /** Nothing created yet for [id]: no account, no saved plan, no card read, not joining a wallet. */

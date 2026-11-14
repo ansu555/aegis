@@ -11,7 +11,7 @@ import kotlin.test.fail
  * A seed-phrase wallet against the live NEAR testnet, then "Protect with
  * bank card": the phrase's account pays on its own, gets a second key (as if
  * the phrase had been imported into another wallet), and is turned into a
- * Tapvault wallet. Afterwards no key is left, so the phrase can't move funds.
+ * Aegis wallet. Afterwards no key is left, so the phrase can't move funds.
  *
  *   TAPVAULT_TESTNET=1 ./gradlew :core:test --tests '*SeedWalletE2E*' --rerun
  */

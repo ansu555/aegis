@@ -190,7 +190,7 @@ fun ManageTokensSheet(vm: AppViewModel, onDismiss: () -> Unit, onOpen: (TokenBal
 
             if (vm.foundTokens.isNotEmpty()) {
                 Text("Found in this wallet", style = Type.Title, modifier = Modifier.padding(top = 22.dp, start = 4.dp))
-                Caption("Sent to this wallet, not on Tapvault's list. Tokens can be sent to anyone unasked; their names can lie.", Modifier.padding(top = 2.dp, bottom = 10.dp, start = 4.dp))
+                Caption("Sent to this wallet, not on Aegis's list. Tokens can be sent to anyone unasked; their names can lie.", Modifier.padding(top = 2.dp, bottom = 10.dp, start = 4.dp))
                 Group {
                     vm.foundTokens.forEachIndexed { i, tb ->
                         if (i > 0) GroupDivider()

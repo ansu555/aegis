@@ -1,6 +1,6 @@
-# Tapvault overview
+# Aegis overview
 
-What Tapvault is, who does what, how someone uses it from install to payment,
+What Aegis is, who does what, how someone uses it from install to payment,
 what the wallet's rules are, the words used across these docs, and the
 hackathon it was built for.
 
@@ -9,15 +9,15 @@ hackathon it was built for.
 > fDDA, Mastercard CDA, classic DDA). Nothing has been run against a real bank
 > card or a real phone's NFC yet. Details: [STATUS.md](STATUS.md).
 
-## What Tapvault is
+## What Aegis is
 
-Tapvault is a self-custodial NEAR wallet whose funds move only when two
+Aegis is a self-custodial NEAR wallet whose funds move only when two
 things you already own agree:
 
 - **Your contactless bank card.** Its EMV chip holds an RSA key that the bank
   put there and that can't be copied out. Payment terminals ask the chip to
   sign a random number to prove the card is genuine (offline data
-  authentication). Tapvault asks for the same kind of signature, over a
+  authentication). Aegis asks for the same kind of signature, over a
   challenge the wallet contract picked. No PIN is entered and no payment is
   made: nothing is sent to the bank.
 - **Your phone.** The app creates a P-256 key inside the Android Keystore's
@@ -44,14 +44,14 @@ What a tap does to the card: each signing attempt is a normal contactless
 transaction for the chip. Its transaction counter (ATC) goes up, and with
 Visa online fDDA and with CDA (what Visa and Mastercard contactless cards are
 expected to need) the card also produces a cryptogram, usually an
-online-authorisation request (ARQC). Tapvault never sends anything to the
+online-authorisation request (ARQC). Aegis never sends anything to the
 bank or the card network.
 
 ## Who does what
 
 | Part | What it is | What it does | What it can't do |
 |---|---|---|---|
-| Phone | The Tapvault Android app and its P-256 phone key | Builds every action, shows it in the fingerprint prompt, signs it, reads the card over NFC, sends the transactions | Move funds without the card |
+| Phone | The Aegis Android app and its P-256 phone key | Builds every action, shows it in the fingerprint prompt, signs it, reads the card over NFC, sends the transactions | Move funds without the card |
 | Bank card | The EMV chip's own RSA key (the "ICC key") | Signs the contract's challenge when tapped | Approve a transfer on its own: cards sign on contact, without a screen, so every transfer also needs a phone approval |
 | Wallet contract | `contract/`, deployed on the wallet account | Verifies the P-256 and RSA signatures, applies the policy, holds the NEAR | Be upgraded: each wallet keeps the code it was created with |
 | Fee account | A second NEAR account whose key the app stores | Pays the gas for every call after setup | Authorise anything |
@@ -141,7 +141,7 @@ ticked when done; once the accounts exist it also shows the wallet account
    (no prompt). Without a screen lock: "Set up a screen lock (PIN, pattern or
    password) on this phone first, then continue. (…)", with the system's
    error in the brackets. On Android 9 or 10 without
-   a fingerprint: "On this Android version Tapvault needs a fingerprint. Add
+   a fingerprint: "On this Android version Aegis needs a fingerprint. Add
    one in Settings → Security, then try again."
 2. **Wallet account on NEAR:** the wallet and fee accounts are created, from
    the faucet or, if it refuses and a sponsor is built in, from the sponsor.
@@ -150,10 +150,10 @@ ticked when done; once the accounts exist it also shows the wallet account
    chain and the card signs its enrolment challenge. A card that can't sign,
    or whose key the contract wouldn't accept (checked before the card is
    asked to sign), stops setup here, before anything is deployed: "This card
-   can't sign for Tapvault: … Tap Continue setup to try another contactless
+   can't sign for Aegis: … Tap Continue setup to try another contactless
    card, or Start over." The card's report (as in Card check) then shows on
    the Setup screen, with a **Share card report** button.
-4. **Wallet contract deployed:** fingerprint prompt "Create your Tapvault
+4. **Wallet contract deployed:** fingerprint prompt "Create your Aegis
    wallet". One transaction deploys the contract and initialises it with the
    phone key.
 5. **Card added as a signer:** fingerprint prompt "Add Visa card ****1234 as
@@ -339,7 +339,7 @@ The contract supports more than the app uses:
 | GPO | GET PROCESSING OPTIONS (`80 A8`): starts a transaction; returns the AIP and AFL (and, on Visa fDDA cards, the signature) |
 | AIP | Application Interchange Profile: flags saying whether the card supports SDA, DDA and CDA |
 | AFL | Application File Locator: which records to read with READ RECORD |
-| UN (`9F37`) | Unpredictable Number: the terminal's random number. Tapvault puts the first bytes of its 32-byte challenge here (4 on almost every card; the contract accepts 4 to 8) |
+| UN (`9F37`) | Unpredictable Number: the terminal's random number. Aegis puts the first bytes of its 32-byte challenge here (4 on almost every card; the contract accepts 4 to 8) |
 | ODA | Offline data authentication: how a terminal checks the card is genuine without going online (SDA, DDA, fDDA, CDA) |
 | SDA | Static data authentication: no per-transaction signature, so useless as a signer |
 | DDA | Dynamic data authentication: the card RSA-signs data that includes the UN, in answer to INTERNAL AUTHENTICATE |
@@ -347,9 +347,9 @@ The contract supports more than the app uses:
 | CDA | Combined DDA / application cryptogram: the card signs along with its GENERATE AC answer (typical of Mastercard contactless) |
 | INTERNAL AUTHENTICATE | The DDA command (`00 88`). Many contactless cards don't answer it |
 | GENERATE AC | Asks the card for an application cryptogram (`80 AE`). P1 `0x80` asks for an ARQC, `0x40` for a TC; `+0x10` requests a CDA signature |
-| ARQC, TC, AAC | Cryptogram types: online authorisation request, approved offline, declined. Tapvault never sends any of them to a bank |
+| ARQC, TC, AAC | Cryptogram types: online authorisation request, approved offline, declined. Aegis never sends any of them to a bank |
 | TTQ (`9F66`) | Terminal Transaction Qualifiers. The app first asks for an online cryptogram (`37804000`, so no offline counters are used) and falls back to allowing offline (`37004000`) |
-| ATC (`9F36`) | Application Transaction Counter: goes up on every card transaction, including every Tapvault signing attempt |
+| ATC (`9F36`) | Application Transaction Counter: goes up on every card transaction, including every Aegis signing attempt |
 | SDAD (`9F4B`) | Signed Dynamic Application Data: the card's RSA signature. Recovered with the card's public key it reads `6A \| format \| 01 \| Ldd \| ICC dynamic data \| BB… \| SHA-1 \| BC` |
 | Signed Data Format | The second byte of a recovered SDAD: `05` (DDA, CDA, offline fDDA) or `95` (Visa fDDA on an online transaction). Contract builds before 12 Nov accepted only `05` |
 | Terminal dynamic data | The bytes from the reader that the SDAD's SHA-1 covers: the DDOL values (DDA), UN + amount + currency + `9F69` (fDDA, or a shorter form), or the UN (CDA). Its layout per card (`un_offset`, `un_len`, `terminal_data_len`) is stored on-chain |
@@ -359,7 +359,7 @@ The contract supports more than the app uses:
 | ICC public key | The card's own RSA public key (modulus 512 to 1984 bits, exponent 3 or 65537). This is what goes on-chain as the card signer |
 | PAN | The card number (tag `5A`; also inside track data and the certificates). It never leaves the phone; screens and reports show only the last four digits |
 | Track 2 equivalent (`57`) | Magstripe-style data including the PAN and expiry. Never logged or shared |
-| Card recipe | Tapvault's note of how this card signed at enrolment (application, method, amount, variant, TTQ), kept on the phone so later taps sign the same way (`CardRecipe`) |
+| Card recipe | Aegis's note of how this card signed at enrolment (application, method, amount, variant, TTQ), kept on the phone so later taps sign the same way (`CardRecipe`) |
 | Card check, card report | The read-only probe on the Card check screen and the text it can share (`CardService.inspect`, `CardReport`) |
 
 ### Android terms
@@ -367,10 +367,10 @@ The contract supports more than the app uses:
 | Term | Meaning |
 |---|---|
 | Android Keystore | The system service that creates and uses keys without letting the app read them |
-| TEE, StrongBox | Where Keystore keys live: the Trusted Execution Environment (an isolated part of the main processor) or a separate secure chip. Tapvault uses the TEE; StrongBox keys failed at signing time on some phones |
-| BiometricPrompt | The system fingerprint / face / screen-lock dialog. Tapvault's shows the title "Tapvault", what you are approving, and "Your phone key signs only what you approve here." |
+| TEE, StrongBox | Where Keystore keys live: the Trusted Execution Environment (an isolated part of the main processor) or a separate secure chip. Aegis uses the TEE; StrongBox keys failed at signing time on some phones |
+| BiometricPrompt | The system fingerprint / face / screen-lock dialog. Aegis's shows the title "Aegis", what you are approving, and "Your phone key signs only what you approve here." |
 | Reader mode | An NFC mode in which the foreground app gets every tag directly, so Android doesn't show "No supported app for this NFC tag" |
-| Sideloading, debug-signed APK | Installing an APK outside the Play Store. Tapvault's APK is signed with the build machine's debug key |
+| Sideloading, debug-signed APK | Installing an APK outside the Play Store. Aegis's APK is signed with the build machine's debug key |
 | adb | Android Debug Bridge, the command-line tool used to install the APK and read system logs |
 
 ### NEAR terms
@@ -378,7 +378,7 @@ The contract supports more than the app uses:
 | Term | Meaning |
 |---|---|
 | Account | Named (`alice.testnet`), sub-account (`tv-….tapvault-skyyy.testnet`, created by its parent), or implicit (a 64-hex id that exists once it receives NEAR) |
-| Access key | An ed25519 key that signs transactions for an account (full-access or function-call). A Tapvault wallet has none after setup |
+| Access key | An ed25519 key that signs transactions for an account (full-access or function-call). A Aegis wallet has none after setup |
 | Nonce | A per-access-key counter; every transaction must use a higher one |
 | Transaction, action | A signed list of actions for one receiver. The app uses CreateAccount, Transfer, AddKey (full access), DeployContract, FunctionCall and DeleteAccount |
 | Receipt | The unit of execution. All actions of one transaction run in one receipt and fail together; a failed receipt undoes its own state changes. Transfers and cross-contract calls are new receipts in later blocks |
@@ -386,19 +386,19 @@ The contract supports more than the app uses:
 | Gas, Tgas | Execution cost; 1 Tgas = 10^12 gas; at most 300 Tgas per transaction. Paid in NEAR by the transaction's signer (the fee account, after setup) |
 | yoctoNEAR | 10^-24 NEAR. Amounts are integers in yoctoNEAR (`U128` in the contract, `BigInteger` in Kotlin) |
 | Storage staking | An account must keep 10^19 yoctoNEAR (0.00001 NEAR) per byte it stores: about 3.34 NEAR for the 334,258-byte contract |
-| `random_seed` | Per-block randomness from the block producer's VRF. Tapvault's card challenge is derived from it |
+| `random_seed` | Per-block randomness from the block producer's VRF. Aegis's card challenge is derived from it |
 | Finality | `optimistic` (latest) or `final`. The app reads views optimistically, builds transactions on a final block hash, and waits until `EXECUTED_OPTIMISTIC` |
 | RPC | The JSON-RPC endpoints the app talks to (methods `query`, `block`, `send_tx`, `tx`) |
 | Faucet | `helper.nearprotocol.com/account`: creates a `.testnet` account with 10 NEAR; rate-limited per IP (about 10 accounts per 12 h, then HTTP 429) |
 | `code_hash` | Base58 SHA-256 of an account's contract code, shown by `view_account` |
-| Borsh | The binary encoding NEAR uses for transactions and state. Tapvault also uses it for the bytes signers sign |
+| Borsh | The binary encoding NEAR uses for transactions and state. Aegis also uses it for the bytes signers sign |
 | NEP-141 | The fungible-token standard (`ft_transfer` with a 1 yoctoNEAR deposit) |
-| NEP-297 | The event-log format: Tapvault logs `EVENT_JSON:{"standard":"tapvault","version":"1.0.0",…}` |
+| NEP-297 | The event-log format: Aegis logs `EVENT_JSON:{"standard":"tapvault","version":"1.0.0",…}` |
 | near-sdk, cargo-near, near-workspaces, sandbox | The Rust contract SDK (~5.14), its build tool (0.17.0), the test harness (0.20) and the local node it runs (nearcore 2.6.5) |
-| Testnet, mainnet | NEAR's test and production networks. Tapvault is testnet only |
+| Testnet, mainnet | NEAR's test and production networks. Aegis is testnet only |
 | Explorer | testnet.nearblocks.io; the app links every transaction there |
 
-### Tapvault terms
+### Aegis terms
 
 | Term | Meaning |
 |---|---|

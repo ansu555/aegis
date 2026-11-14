@@ -45,7 +45,7 @@ object Guardian {
     /** Parses and checks an offer; throws [TapvaultException] with a readable reason. */
     fun decode(text: String): Offer {
         val s = text.trim()
-        if (!s.startsWith(PREFIX)) throw TapvaultException("That isn't a Tapvault guardian code.")
+        if (!s.startsWith(PREFIX)) throw TapvaultException("That isn't a Aegis guardian code.")
         val parts = s.removePrefix(PREFIX).split(":")
         if (parts.size != 4) throw TapvaultException("That guardian code is incomplete. Copy or scan it again.")
         val (wallet, keyHex, sigHex, sum) = parts

@@ -17,7 +17,7 @@ a receiver allowlist and a delayed `UpgradeCode`; the app uses each only on
 v0.2 wallets (Security Center → Instant receivers for the allowlist; adding
 and removing a receiver both wait the settings delay, unlike the "instant to
 remove" in section 6). What is tested and what is still for a phone:
-[MANUAL-TESTS.md](MANUAL-TESTS.md). It describes how Tapvault gets the features and guarantees
+[MANUAL-TESTS.md](MANUAL-TESTS.md). It describes how Aegis gets the features and guarantees
 of a hardware wallet (Ledger, Trezor, Tangem), what each screen and flow looks
 like, and in what order to build it.
 
@@ -28,9 +28,9 @@ Read [DESIGN.md](DESIGN.md) first for the security model this builds on.
 ## 1. The idea in one paragraph
 
 A hardware wallet keeps its key in a secure chip and makes you confirm every
-signature on the device. Tapvault has **two** secure chips, the bank card's
+signature on the device. Aegis has **two** secure chips, the bank card's
 EMV chip and the phone's Keystore (TEE). Neither can be programmed by us, so
-every rule a hardware wallet runs in its firmware, Tapvault runs either **in
+every rule a hardware wallet runs in its firmware, Aegis runs either **in
 the contract** (enforced by the chain, which no thief can skip) or **in the
 app** (convenience and consent, which an attacker with their own software can
 skip). This plan labels every feature with where it is enforced so we never
@@ -41,13 +41,13 @@ oversell an app-side check as a hardware guarantee.
 | **CHAIN** | Enforced by the wallet contract. Holds even if the phone is hacked or someone uses their own client. |
 | **TEE** | Enforced by the phone's secure hardware (Android Keystore): key can't be exported, wrong attempts are throttled by hardware. |
 | **CARD** | Enforced by the bank card's chip: the key can't be exported or copied. |
-| **APP** | Enforced by the Tapvault app only. Real protection against mistakes and casual misuse; not against an attacker running their own software. |
+| **APP** | Enforced by the Aegis app only. Real protection against mistakes and casual misuse; not against an attacker running their own software. |
 
 ---
 
-## 2. Hardware wallet features and what Tapvault does for each
+## 2. Hardware wallet features and what Aegis does for each
 
-| # | Hardware wallet feature | Ledger / Trezor / Tangem | Tapvault today | Tapvault plan | Where |
+| # | Hardware wallet feature | Ledger / Trezor / Tangem | Aegis today | Aegis plan | Where |
 |---|---|---|---|---|---|
 | 1 | Key in a secure chip, never exported | Secure element | Card key (CARD) + phone key (TEE), two chips | Same. Show which chip holds each key in Security Center | CARD + TEE |
 | 2 | PIN / access code with attempt limit | Device PIN, wipe or delay after wrong tries | Fingerprint or screen lock on every phone signature, hardware-throttled | Add **Strict mode**: fingerprint only, no PIN fallback (stops a thief who watched you type your phone PIN) | TEE |
@@ -67,7 +67,7 @@ oversell an app-side check as a hardware guarantee.
 | 16 | Hidden / decoy wallet (passphrase) | Trezor passphrase, Ledger PIN-2 | Several wallets per phone (wallet picker) | Later: optional "hide this wallet from the picker" | APP |
 | 17 | Allowlist of receivers | Ledger Enterprise | None | Contract v0.2: allowlisted receivers skip the delay, new ones wait | CHAIN (new wallets only) |
 
-What Tapvault already does better than a single hardware wallet: a stolen
+What Aegis already does better than a single hardware wallet: a stolen
 card alone can't move funds (CHAIN, `NeedsUserVerifiedApproval`), big
 transfers wait and can be cancelled, and the wallet can be frozen. A
 Tangem card + its access code empties the wallet at once.
@@ -82,7 +82,7 @@ Tangem card + its access code empties the wallet at once.
 | **Card skimmed in a crowd** (reader held near your pocket) | Same as stolen: signatures alone can't move funds | Same + alert |
 | **Phone stolen, locked** | Thief can't sign (fingerprint / screen lock, hardware-throttled) | Same. With backup cards you recover on a new phone |
 | **Phone stolen after thief watched you type the phone PIN** | Thief can sign with the PIN. Still needs the card | Strict mode: PIN no longer signs; fingerprint only |
-| **Phone + card stolen together (bag), PIN known** | **Thief can pay up to the instant limit at once**, more after the 1 h delay unless you cancel or freeze | Strict mode stops it (fingerprint needed). Without strict mode: low instant limit + freeze from another device (guardian phone or a backup card on any Tapvault phone) |
+| **Phone + card stolen together (bag), PIN known** | **Thief can pay up to the instant limit at once**, more after the 1 h delay unless you cancel or freeze | Strict mode stops it (fingerprint needed). Without strict mode: low instant limit + freeze from another device (guardian phone or a backup card on any Aegis phone) |
 | **Malware on the phone shows a fake amount** | Phone signs the hash it computed; prompt names amount and receiver | Same + gap 6 fixed + over-limit delay as backstop |
 | **Dishonest RPC node** | Gap 6: can steer a card tap to sign another challenge | Fix `approvePhone` to recompute the intent (app). Seed in view (contract v0.2) |
 | **App uninstalled / data cleared** | Wallet stranded | Recover with backup cards |
@@ -246,7 +246,7 @@ until we have tried real cards: a long hold makes NFC drops more likely.
 
 ```
 ┌──────────────────────────────────────────┐
-│ Tapvault · Wallet 3                       │
+│ Aegis · Wallet 3                       │
 │ A card started a request you didn't make │
 │ Send 5 NEAR to x7f.testnet · runs in 58m  │
 │ [ Cancel it ]   [ Freeze wallet ]         │
@@ -490,7 +490,7 @@ Phase 1 acceptance:
 ## 8. What we must not do
 
 - **No bank-card PIN as the access code.** Offline PIN `VERIFY` uses the
-  bank's PIN counter (a few wrong tries in Tapvault could block the real bank
+  bank's PIN counter (a few wrong tries in Aegis could block the real bank
   card), returns an unsigned "OK" the contract can't verify, and many
   contactless cards don't support it. The phone's fingerprint is the access
   code.
@@ -513,4 +513,4 @@ Phase 1 acceptance:
 - Ledger Donjon, Tangem brute force: https://www.ledger.com/blog-brute-force-attack-tangem
 - Tangem's response: https://tangem.com/en/blog/post/donjon-report
 - Tangem SDK (`Card.kt` `securityDelay`, `Command.kt` `NeedPause`): https://github.com/tangem/tangem-sdk-android
-- Tapvault security model: [DESIGN.md](DESIGN.md); contract API: [CONTRACT.md](CONTRACT.md)
+- Aegis security model: [DESIGN.md](DESIGN.md); contract API: [CONTRACT.md](CONTRACT.md)

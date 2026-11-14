@@ -1,6 +1,6 @@
-# Tapvault design (NEAR, v0.1)
+# Aegis design (NEAR, v0.1)
 
-Tapvault is a self-custodial NEAR wallet whose funds can only move with two
+Aegis is a self-custodial NEAR wallet whose funds can only move with two
 independent factors:
 
 1. **Something you have that can't be copied:** the secure chip in an EMV
@@ -112,7 +112,7 @@ Accepting `95` is safe:
   (issuer and card certificates, signed static data) are made with the CA's
   or the issuer's key, never with the card's own key.
 - **The only extra meaning of `95`** is that the card also produced an
-  online cryptogram in that transaction. Tapvault never sends cryptograms
+  online cryptogram in that transaction. Aegis never sends cryptograms
   anywhere; the compliance side of that is gap 3 in section 7.
 
 The contract re-check after this change found no issue (section 9).
@@ -390,7 +390,7 @@ an ordinary delayed settings change). The rule:
    tokens go **only to the heir** the owner named.
 
 Why it's permissionless: the heir may have no NEAR account keys of their own
-(another Tapvault wallet has none), so any account (their app's fee account)
+(another Aegis wallet has none), so any account (their app's fee account)
 can press the button; the destination is fixed on chain.
 
 | Who | Can they take funds? |
@@ -513,7 +513,7 @@ terminal does). It must not store or transmit it.
    vectors generated independently in Python, and simulated cards that answer
    real APDUs like a DDA card, a Visa-style fDDA card and a Mastercard-style
    CDA card, in unit tests and on live testnet. No real card has signed for
-   Tapvault yet, and no real phone's NFC, Keystore or fingerprint prompt has
+   Aegis yet, and no real phone's NFC, Keystore or fingerprint prompt has
    run this build. The plan is in [TESTING.md](TESTING.md).
 2. **RuPay is unknown.** NPCI's contactless specs aren't public, so how
    RuPay cards sign is unknown. `capk.txt` has RuPay CA indices 04, 05, 06
@@ -523,7 +523,7 @@ terminal does). It must not store or transmit it.
    the card report so it can be added".
 3. **Every tap is a real card transaction.** Online fDDA and CDA make the
    card produce a real online-authorisation cryptogram (ARQC) on every
-   Tapvault tap; on Visa cards the cryptogram comes with the GPO answer, so
+   Aegis tap; on Visa cards the cryptogram comes with the GPO answer, so
    it is produced whichever method then signs. It is never sent to the bank.
    Each tap also advances the card's transaction counter (ATC), which the
    issuer sees on the card's next real payment. This isn't a contract issue,
@@ -627,7 +627,7 @@ terminal does). It must not store or transmit it.
 16. **EMV's signature scheme hasn't been assessed for this use.** EMV signs
     with ISO/IEC 9796-2 and SHA-1. Published forgery research on that scheme
     (Coron, Naccache, Tibouchi and Weinmann, CRYPTO 2009) was judged not to
-    threaten payment cards for operational reasons. Tapvault uses the card
+    threaten payment cards for operational reasons. Aegis uses the card
     as a general signer and accepts any ICC dynamic data, so a cryptographer
     should re-check those reasons before real funds.
 17. **Other keys on the phone and in the APK.** The fee-account key and,

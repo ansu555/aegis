@@ -1,6 +1,6 @@
 # Contract reference
 
-The Tapvault wallet contract, method by method: who may call each method,
+The Aegis wallet contract, method by method: who may call each method,
 the exact JSON it takes, what it checks, what it changes, the events it
 emits, the errors it raises and the gas it burns. Then the constants and
 rules, every signed message, the card and P-256 signature checks, storage,

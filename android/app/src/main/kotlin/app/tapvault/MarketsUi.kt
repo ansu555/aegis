@@ -84,11 +84,11 @@ class MarketItem(
 ) {
     val verified get() = nearContract != null && KnownTokens.find(Network.MAINNET, nearContract) != null
     val meme get() = coinId in Markets.MEME_IDS || Markets.isMemeContract(nearContract)
-    /** Something Tapvault can swap to (on NEAR) or bridge to (a chain it knows addresses for). */
+    /** Something Aegis can swap to (on NEAR) or bridge to (a chain it knows addresses for). */
     val tradeTarget: IntentToken? get() = assets.firstOrNull { it.onNear && it.nearContract != null }
         ?: assets.firstOrNull { !it.onNear && app.tapvault.core.ChainAddress.chain(it.blockchain) != null }
     val tradable get() = tradeTarget != null
-    /** Only on NEAR, and not on Tapvault's list: its name is whatever its creator chose. */
+    /** Only on NEAR, and not on Aegis's list: its name is whatever its creator chose. */
     val unverifiedOnNear get() = nearContract != null && !verified && assets.none { !it.onNear }
 
     companion object {
@@ -257,7 +257,7 @@ private fun ShimmerRow() {
 
 /**
  * A coin's page: price, a chart you can scrub, its numbers, and what
- * Tapvault can do with it (swap or bridge through NEAR Intents, buy).
+ * Aegis can do with it (swap or bridge through NEAR Intents, buy).
  */
 @Composable
 private fun MarketSheet(vm: AppViewModel, item: MarketItem, onDismiss: () -> Unit, onTrade: (IntentToken) -> Unit) {

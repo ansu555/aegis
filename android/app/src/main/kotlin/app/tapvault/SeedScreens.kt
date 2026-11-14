@@ -75,7 +75,7 @@ fun ColumnScope.SeedCreateScreen(vm: AppViewModel) {
                 Group {
                     Row_(Ic.Key, "The words are the wallet", "Anyone who has them can take your NEAR, from any NEAR wallet app")
                     GroupDivider()
-                    Row_(Ic.XCircle, "Nobody can restore them", "Lose the words and this phone, and the wallet is gone. Tapvault can't help")
+                    Row_(Ic.XCircle, "Nobody can restore them", "Lose the words and this phone, and the wallet is gone. Aegis can't help")
                     GroupDivider()
                     Row_(Ic.Card, "Your card can replace them", "Later, protect the wallet with your bank card: then the words stop working")
                 }
@@ -196,7 +196,7 @@ fun ColumnScope.SeedImportScreen(vm: AppViewModel) {
             )
             Spacer(Modifier.height(16.dp))
             TvField("Account name (optional)", account, { account = it.trim().lowercase().take(64) }, placeholder = vm.network.example("name"))
-            Caption("Leave it empty and Tapvault looks the account up.", Modifier.padding(top = 6.dp, start = 4.dp), color = Tv.Text3)
+            Caption("Leave it empty and Aegis looks the account up.", Modifier.padding(top = 6.dp, start = 4.dp), color = Tv.Text3)
             if (vm.network.isTestnet) Notice(
                 Ic.Warning, "Testnet only",
                 "Don't import a phrase or key that holds real NEAR: the same words control the mainnet account too, and this app keeps them on the phone.",

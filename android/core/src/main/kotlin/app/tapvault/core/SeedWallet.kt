@@ -7,7 +7,7 @@ import java.math.BigInteger
  * (from a recovery phrase, or a private key the user imported). No contract,
  * no card: whoever has the phrase owns the funds.
  *
- * "Protect with bank card" turns it into a Tapvault wallet with the normal
+ * "Protect with bank card" turns it into a Aegis wallet with the normal
  * setup steps (deploy + `new`, add the card, finalize), signed by this key;
  * finalize deletes it, so the phrase stops working on chain. [preflight]
  * checks that this is safe before anything is sent.
@@ -39,7 +39,7 @@ class SeedWallet(private val near: NearClient, val account: String, val key: Nea
     fun preflight(wasmSize: Int, needsFeeAccount: Boolean): Preflight {
         val code = near.codeHash(account)
         if (code != NearClient.NO_CODE) throw TapvaultException(
-            "$account already runs a smart contract. Protecting it would replace that contract, so Tapvault won't do it. Move the funds to a new seed phrase wallet first.",
+            "$account already runs a smart contract. Protecting it would replace that contract, so Aegis won't do it. Move the funds to a new seed phrase wallet first.",
         )
         if (key.publicKeyString !in near.fullAccessKeys(account)) throw TapvaultException(
             "This phone's key is no longer a full-access key of $account, so it can't protect it.",
@@ -73,7 +73,7 @@ class SeedWallet(private val near: NearClient, val account: String, val key: Nea
             throw TapvaultException("Can't check $account on ${other.network.displayName} right now (${e.message?.take(80)}). Try again in a minute.")
         }
         if (code != NearClient.NO_CODE) throw TapvaultException(
-            "$account also runs a smart contract on ${other.network.displayName}. Tapvault won't protect the same account on both networks " +
+            "$account also runs a smart contract on ${other.network.displayName}. Aegis won't protect the same account on both networks " +
                 "(a card signature for one could be replayed on the other). Move the funds to a new seed phrase wallet and protect that one.",
         )
     }

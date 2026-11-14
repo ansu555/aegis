@@ -14,7 +14,7 @@
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
-        android:label="Tapvault"
+        android:label="Aegis"
         android:supportsRtl="true"
         android:theme="@style/Theme.Tapvault">
         <activity

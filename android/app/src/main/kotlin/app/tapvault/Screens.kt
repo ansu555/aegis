@@ -907,13 +907,13 @@ private fun CardCheck(vm: AppViewModel) {
             Row_(Ic.ShieldCheck, "Co-signs every payment", "Any one of these cards together with this phone's key; no card alone moves funds", tint = Tv.Positive, iconBg = Tv.PositiveSoft)
         }
         SectionHeader("Check a card")
-        Caption("See whether this or any other card can sign for Tapvault. Nothing is signed or stored.", Modifier.padding(start = 4.dp, bottom = 14.dp))
+        Caption("See whether this or any other card can sign for Aegis. Nothing is signed or stored.", Modifier.padding(start = 4.dp, bottom = 14.dp))
     } else if (r == null) {
-        Text("See whether a card can sign for Tapvault", style = Type.Body, color = Tv.Text2, modifier = Modifier.padding(bottom = 14.dp))
+        Text("See whether a card can sign for Aegis", style = Type.Body, color = Tv.Text2, modifier = Modifier.padding(bottom = 14.dp))
         Group(Modifier.enter(1)) {
             Row_(Ic.Scan, "Reads the payment chip", "The same contactless link a card terminal uses")
             GroupDivider()
-            Row_(Ic.Key, "Checks it can sign", "Looks for an RSA key Tapvault can verify on-chain")
+            Row_(Ic.Key, "Checks it can sign", "Looks for an RSA key Aegis can verify on-chain")
             GroupDivider()
             Row_(Ic.Lock, "Your card number stays here", "Only the last four digits are ever shown")
         }
@@ -1021,7 +1021,7 @@ private fun SettingsScreen(vm: AppViewModel) {
                 chevron = true, onClick = { vm.go(Screen.CardCheck) },
             )
             GroupDivider()
-            Row_(Ic.Scan, "Check a card", "See whether a card can sign for Tapvault", chevron = true, onClick = { vm.go(Screen.CardCheck) })
+            Row_(Ic.Scan, "Check a card", "See whether a card can sign for Aegis", chevron = true, onClick = { vm.go(Screen.CardCheck) })
         }
     }
 
@@ -1173,7 +1173,7 @@ private fun LockOverlay(vm: AppViewModel) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
             TvIcon(Ic.Lock, 40.dp, Tv.Text)
             Spacer(Modifier.height(16.dp))
-            Text("Tapvault is locked", style = Type.H2)
+            Text("Aegis is locked", style = Type.H2)
             Text(
                 "Unlock with your fingerprint or screen lock to see balances and activity.",
                 style = Type.Body, color = Tv.Text2, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp, bottom = 22.dp),

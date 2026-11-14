@@ -1,6 +1,6 @@
-# Tapvault documentation
+# Aegis documentation
 
-Tapvault makes a contactless bank card and a phone key the two co-signers of a
+Aegis makes a contactless bank card and a phone key the two co-signers of a
 NEAR smart-contract wallet, on NEAR testnet. Status on 12 Nov 2026: everything
 passes with simulated cards; nothing has run against a real bank card or a
 real phone's NFC yet ([STATUS.md](STATUS.md)).
@@ -11,10 +11,10 @@ real phone's NFC yet ([STATUS.md](STATUS.md)).
 |---|---|
 | [../README.md](../README.md) | Product summary, how to build and test, status at a glance, measured gas |
 | [../AGENTS.md](../AGENTS.md) | For coding agents and new contributors: layout, exact commands, environment, invariants, how to change things safely, where each feature lives |
-| [OVERVIEW.md](OVERVIEW.md) | What Tapvault is, who does what, the user journey from install to payment, the policy, the glossary (EMV, Android, NEAR, Tapvault terms), hackathon context |
+| [OVERVIEW.md](OVERVIEW.md) | What Aegis is, who does what, the user journey from install to payment, the policy, the glossary (EMV, Android, NEAR, Aegis terms), hackathon context |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Components and boundaries, accounts and keys, sequence diagrams for every flow, where state lives, the NEAR client, error handling |
 | [CONTRACT.md](CONTRACT.md) | Contract API reference: argument types, every method and its checks, views, events, errors, constants, signed messages, the shipped build, changing the contract safely |
-| [HARDWARE-WALLET-PLAN.md](HARDWARE-WALLET-PLAN.md) | Plan, phase 1 built (13 Nov): hardware-wallet features for Tapvault, Security Center and screens, user flows (backup card, lost card, recover on a new phone, hold-to-sign), build order |
+| [HARDWARE-WALLET-PLAN.md](HARDWARE-WALLET-PLAN.md) | Plan, phase 1 built (13 Nov): hardware-wallet features for Aegis, Security Center and screens, user flows (backup card, lost card, recover on a new phone, hold-to-sign), build order |
 | [WALLET-FEATURES-PLAN.md](WALLET-FEATURES-PLAN.md) | Plan, step 0 built (14 Nov, mainnet still off): a Mainnet/Testnet switch in Settings, then tokens, send/receive tokens, swap and bridge via NEAR Intents 1Click, buy and sell for cash; all on the current contract, screens, flows, build order |
 | [MANUAL-TESTS.md](MANUAL-TESTS.md) | What only a person with a phone and real cards can test, per plan phase, with what is already tested automatically |
 | [DESIGN.md](DESIGN.md) | Security model and threat analysis: why the card challenge is sealed in a later block, limits and delays, freeze and cancel rules, known gaps |

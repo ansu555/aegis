@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/banner.svg" alt="Tapvault: your bank card is your crypto key" width="100%">
+  <img src="docs/assets/banner.svg" alt="Aegis: your bank card is your crypto key" width="100%">
 </p>
 
 <p align="center">

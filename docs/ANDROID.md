@@ -1,6 +1,6 @@
 # Android app
 
-The Tapvault Android app: how it is put together, every screen, what each
+The Aegis Android app: how it is put together, every screen, what each
 view-model flow does step by step, threads, NFC, the phone key, local storage,
 build configuration, building, installing, logs and limitations.
 
@@ -80,7 +80,7 @@ Dependencies: `org.bouncycastle:bcprov-jdk18on:1.79` (ed25519),
 | `PendingCard.kt` | A card read during setup, kept until it is added on-chain |
 | `Onboarding.kt` | Welcome (four-slide intro with image panels, `GlassButton`, the "I have a wallet" sheet, `NfcChip`), `LimitsScreen` (spending limits, the step before setup), `SetupProgress`, `NfcNotice` |
 | `Screens.kt` | `TapvaultApp` (shell, transitions, tab bar, overlays), `Home`, `ReceiveSheet`, `Send` (keypad and review sheet), `ActivityScreen` (`ProposalCard` with its approval tracker), `CardCheck` ("Your card" after setup), `CardReportCard`, `SettingsScreen` (with the technical log sheet), `WalletPicker` |
-| `Components.kt` | UI parts: `TvButton`, `ActionButton`, `Group`/`Row_` lists, `Notice`, `StatusPill`, `TvField`, `AmountField`, `CountingAmount`, `OutcomeBanner`, `AnimatedCheck`, `BusyOverlay`, `GlassDialog`/`ConfirmDialog`, `GlassSheet`, `TapSheet`, `CardArt`, `SlideToConfirm`, `QrCode`, `LogoMark` |
+| `Components.kt` | UI parts: `TvButton`, `ActionButton`, `Group`/`Row_` lists, `Notice`, `StatusPill`, `TvField`, `AmountField`, `CountingAmount`, `OutcomeBanner`, `AnimatedCheck`, `BusyOverlay`, `GlassDialog`/`ConfirmDialog`, `GlassSheet`, `TapSheet`, `CardArt`, `SlideToConfirm`, `QrCode`, `AegisMark` (the logo, `res/drawable/aegis_mark.xml`), `LogoMark` |
 | `Glass.kt` | The glass look and motion: `glassRim`, `frosted` (backdrop blur through Haze, `LocalHaze`), `AppBackground` (ambient light and grain), `GlassTabBar` and its `LiquidLens` (AGSL, Android 13+), `enter` (staggered entrance), `sharedCard` (the card flying between Home and Your card), `rememberTilt` (rotation sensor), `rememberReduceMotion` |
 | `Theme.kt` | Colour tokens `Tv` (titanium monochrome, `Tv.titanium()` brush), type scale `Type` (Inter), `TapvaultTheme` (dark only), `Modifier.surface` (static glass), icons `Ic` / `TvIcon` |
 
@@ -329,7 +329,7 @@ The technical log is in Settings › Advanced.
 
 ### Card check (`CardCheck`)
 
-- Before setup: "Card check" / "See whether a card can sign for Tapvault",
+- Before setup: "Card check" / "See whether a card can sign for Aegis",
   with a back button to Welcome. After setup the same screen is "Your card",
   opened from Home (tap the card) or Settings, with a back button to where it
   was opened.
@@ -339,7 +339,7 @@ The technical log is in Settings › Advanced.
 - After setup, before any check: the enrolled card ("<network> •••• <last 4>",
   "Contactless · <method label>", "RSA") and "Co-signs every payment" /
   "Together with this phone's key; neither alone moves funds", then "Check a
-  card" / "See whether this or any other card can sign for Tapvault. Nothing is
+  card" / "See whether this or any other card can sign for Aegis. Nothing is
   signed or stored."
 - Before setup, before a check: what it does ("Reads the payment chip",
   "Checks it can sign", "Your card number stays here").
@@ -460,7 +460,7 @@ crash, a lost connection or a failed tap.
 | 2 | "Creating your wallet account on NEAR testnet" | `Onboarding.createAccounts(sponsor, plan)` | step ≥ 1 | nothing | `setup_plan` first; then `wallet`, `wallet_key`, `gas`, `gas_key`, step 1; `setup_plan` cleared |
 | | | `TapvaultWallet.state()` (the chain check) | | | |
 | 3 | "Tap your card" | `CardService.enrol` | a pending card is saved, step ≥ 3, or the chain already has a card | tap sheet "Hold your bank card to the back of the phone to add it" | `card_recipe`, `pending_card` |
-| 4 | "Approve with your fingerprint to create the wallet" | `Onboarding.deployAndInit` (deploy + `new` in one transaction) | step ≥ 2, or the contract is already deployed | prompt "Create your Tapvault wallet" | step 2 |
+| 4 | "Approve with your fingerprint to create the wallet" | `Onboarding.deployAndInit` (deploy + `new` in one transaction) | step ≥ 2, or the contract is already deployed | prompt "Create your Aegis wallet" | step 2 |
 | 5 | "Approve adding card ****<last4>" | `Onboarding.addCard` (`setup_add_signer`) | step ≥ 3, or the card is already on-chain | prompt "Add <Network> card ****<last4> as a signer" | step 3 |
 | 6 | "Approve your limits to lock the wallet" | `Onboarding.finalize` (`setup_finalize`: threshold 2, `Delays.SHORTEST`, the NEAR limit) | step ≥ 4, or the chain says setup is over | prompt "Lock the wallet: up to <instant> NEAR at once, <daily> NEAR a day" | access-key check; step 4; `wallet_key` and `pending_card` cleared |
 
@@ -490,7 +490,7 @@ Details:
   deployed. A card that can't sign, or whose key is outside the contract's
   rules (512 to 1984 bits, exponent 3 or 65537; checked before it is asked to
   sign), stops setup here: its report shows on the Setup screen and the error
-  reads "This card can't sign for Tapvault: <reason>. Tap Continue setup to
+  reads "This card can't sign for Aegis: <reason>. Tap Continue setup to
   try another contactless card, or Start over." The read card is saved as a
   `PendingCard` until it is on-chain.
 - **Who pays.** The deploy, add-card and finalize transactions are signed by
@@ -669,7 +669,7 @@ prompt's subtitle:
 
 | Operation | Prompt subtitle |
 |---|---|
-| Setup: deploy | "Create your Tapvault wallet" |
+| Setup: deploy | "Create your Aegis wallet" |
 | Setup: add card | "Add <Network> card ****<last4> as a signer" ("Mastercard ****<last4>", since that name already ends in "card") |
 | Setup: finalize | "Lock the wallet: up to <instant> NEAR at once, <daily> NEAR a day" |
 | Send | "Send <x> NEAR to <receiver>" |
@@ -730,7 +730,7 @@ nfc?.enableReaderMode(
 )
 ```
 
-While Tapvault is on screen every card goes to the app, so Android never pops
+While Aegis is on screen every card goes to the app, so Android never pops
 up "No supported app for this NFC tag" for a card placed early or left on the
 phone. Platform sounds are off; the app vibrates for 90 ms when a card has
 been read (`MainActivity.vibrate`), which some phones mute, so the tap sheet
@@ -823,10 +823,10 @@ takes longer than a payment tap.
 | Where | The TEE. StrongBox is not requested: on several phones a StrongBox key is created fine and then fails or stalls when it signs, which would strand the wallet |
 | Auth | Required for every single use. Android 11+ (API 30+): `setUserAuthenticationParameters(0, AUTH_BIOMETRIC_STRONG or AUTH_DEVICE_CREDENTIAL)`, so a strong biometric or the PIN / pattern / password. Android 9 and 10: `setUserAuthenticationValidityDurationSeconds(-1)`, strong biometric only |
 | Biometric changes | `setInvalidatedByBiometricEnrollment(false)`: adding a fingerprint doesn't destroy the key |
-| Public key | Read from the key's certificate, compressed to 33 bytes (`P256.compress`); it is on-chain as signer 0. With no key under the alias: "This phone's Tapvault key is missing. On testnet, forget the wallet in Settings and create a new one." |
+| Public key | Read from the key's certificate, compressed to 33 bytes (`P256.compress`); it is on-chain as signer 0. With no key under the alias: "This phone's Aegis key is missing. On testnet, forget the wallet in Settings and create a new one." |
 
 `KeystoreSigner.create` (the first setup step): on Android 9 and 10 it first requires
-an enrolled strong biometric ("On this Android version Tapvault needs a
+an enrolled strong biometric ("On this Android version Aegis needs a
 fingerprint. Add one in Settings → Security, then try again."). Any other
 exception except an `IllegalStateException` (shown as is), typically no screen
 lock, becomes "Set up a screen lock (PIN, pattern or password) on this phone
@@ -841,17 +841,17 @@ key isn't in secure hardware, "unknown" if it can't be read.
 ### Signing: `KeystoreSigner.sign(message)`
 
 1. `Signature.initSign` with the key. A key invalidated by removing the screen
-   lock gives "This phone's Tapvault key no longer works (the screen lock was
+   lock gives "This phone's Aegis key no longer works (the screen lock was
    removed). The wallet needs its recovery path; on testnet, forget it in
    Settings and create a new one."; a missing key gives "This phone's
-   Tapvault key is missing. On testnet, forget the wallet in Settings and
+   Aegis key is missing. On testnet, forget the wallet in Settings and
    create a new one."
 2. **Wait for the foreground** (`awaitForeground`): polls every 250 ms, up to
    3 minutes, until `MainActivity` is RESUMED, because a prompt requested
    while the app is in the background never appears. Then gives up with "Open
-   Tapvault to approve with your fingerprint or screen lock."
+   Aegis to approve with your fingerprint or screen lock."
 3. **Prompt** on the UI thread: `BiometricPrompt` with a `CryptoObject` for the
-   signature. Title "Tapvault", subtitle `reason`, description "Your phone key
+   signature. Title "Aegis", subtitle `reason`, description "Your phone key
    signs only what you approve here.", confirmation required (face unlock needs
    a tap on Confirm). Android 11+: strong biometric or device credential (the
    system offers the PIN). Android 9 and 10: strong biometric only, with a

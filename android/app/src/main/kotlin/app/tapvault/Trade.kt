@@ -453,7 +453,7 @@ private fun ConfirmSheet(
             }
         }
         if (t.onNear && t.nearContract !in KnownTokens.on(Network.MAINNET).map { it.contract }) {
-            Caption("${t.symbol} isn't on Tapvault's list: ${shortAccount(t.nearContract ?: "", 28)}", Modifier.fillMaxWidth().padding(top = 10.dp), align = TextAlign.Center, color = Tv.Warn)
+            Caption("${t.symbol} isn't on Aegis's list: ${shortAccount(t.nearContract ?: "", 28)}", Modifier.fillMaxWidth().padding(top = 10.dp), align = TextAlign.Center, color = Tv.Warn)
         }
         Spacer(Modifier.height(18.dp))
         if (preview) {

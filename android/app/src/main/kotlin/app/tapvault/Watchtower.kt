@@ -158,7 +158,7 @@ object AppLock {
         })
         p.authenticate(
             BiometricPrompt.PromptInfo.Builder()
-                .setTitle("Unlock Tapvault")
+                .setTitle("Unlock Aegis")
                 .setSubtitle("Show your balance and activity")
                 // WEAK + screen lock is allowed on every API level (STRONG + screen lock needs Android 11).
                 .setAllowedAuthenticators(BIOMETRIC_WEAK or DEVICE_CREDENTIAL)

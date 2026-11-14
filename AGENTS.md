@@ -4,7 +4,8 @@ The first file to read if you are a coding agent or a new contributor.
 
 ## What this is
 
-- Tapvault is a NEAR wallet where every payment needs two co-signers: an ordinary contactless bank card (its EMV chip's RSA key) and a P-256 key in the phone's Android Keystore, unlocked per use by fingerprint or screen lock.
+- The product is called **Aegis** (renamed from Tapvault on 14 Nov 2026). Only user-visible text says Aegis. Code and protocol names keep `tapvault` on purpose and must not be renamed (invariant 13).
+- Aegis is a NEAR wallet where every payment needs two co-signers: an ordinary contactless bank card (its EMV chip's RSA key) and a P-256 key in the phone's Android Keystore, unlocked per use by fingerprint or screen lock.
 - A Rust contract (`contract/`, security logic in `crates/tapvault-core/`) is deployed to each wallet's own account; it verifies both signatures on-chain and enforces limits, delays and freeze. The account's key is deleted at the end of setup.
 - The Android app (`android/app`) creates the wallet, reads the card over NFC and sends every transaction. Its client logic lives in `android/core`: plain Kotlin with no Android APIs, so the same code is tested on the JVM and against live testnet.
 - NEAR testnet; the app has a Mainnet/Testnet switch (Settings → Network) but mainnet is off in every build until real-card testing and a contract review (`tapvault.mainnet`, invariant 7). Hackathon project: NEAR HACKATHON, submission deadline 14 Nov 2026, 23:59 UTC.
@@ -173,6 +174,15 @@ Don't break these. Most have a test or a build check behind them.
 10. **The phone signs what it shows.** Build the action on the phone, compute the hash locally (`Domain.intentHash`) and set `KeystoreSigner.reason` from the same values; don't sign hashes taken from RPC views (`contract/src/views.rs`: clients compute what they sign). `TapvaultWallet.approvePhone` and `cancelByPhone` take a proposal from the RPC, so they parse its action (`ActionJson.parse`), recompute the intent hash and refuse a mismatch (`ProposalInfo.verifiedAction`), and set the prompt from the parsed action (`beforeSign`). Known exception on v0.1 wallets: the card's challenge comes from `get_proposal` (`card_challenge`; that view doesn't return the seed). v0.2 wallets return `card_seed`, and `TapvaultWallet.checkedChallenge` (called by `awaitCardChallenge`) recomputes the challenge from the parsed action and refuses a mismatch. See [docs/DESIGN.md](docs/DESIGN.md), known gaps.
 11. **A card alone never moves funds.** Every transfer needs a P-256 approval (`policy::check_execution`, `Refusal::NeedsUserVerifiedApproval`); card approvals only count against a challenge sealed after the proposal (`seal_challenge`). Read [docs/DESIGN.md](docs/DESIGN.md) before touching `proposals.rs`, `guard.rs` or `policy.rs`.
 12. **Threshold 1 only for a phone-only wallet.** Contract v0.3 allows threshold 1 only while the wallet's one signer is the phone (`policy::threshold_is_valid`, checked in `validate_config`). Adding any key to such a wallet must raise the threshold to 2 in the same change (`AddSigner` + `SetThreshold(2)`, `AppViewModel.addFirstCard`). The app treats a wallet as phone-only by `WalletState.phoneOnly` (threshold 1, no cards), never by a local flag.
+13. **The display name is Aegis; the internal name stays `tapvault`.** These must never be renamed:
+    - the signed domain tags (`tapvault/near/v1/…` in `domain.rs`/`Domain.kt`, and the app's `tapvault/app/v1/…`), which deployed wallets verify;
+    - the contract event `standard: "tapvault"` and the contract struct `Tapvault`;
+    - the guardian code prefix `tapvault:guardian:1:`;
+    - the SharedPreferences files and Keystore aliases in `Store.kt`/`Keystore.kt`: renaming them orphans every installed wallet and its phone key;
+    - `applicationId "app.tapvault"`, which a phone would treat as a different app;
+    - Kotlin packages, crate names, `tapvault_contract.wasm`, `Theme.Tapvault`, `TAPVAULT_*` variables and the `tv-e2e` prefix.
+
+    Rename only text a person reads.
 
 ## Making a change safely
 

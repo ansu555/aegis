@@ -197,7 +197,7 @@ fun AddGuardianSheet(vm: AppViewModel, onDismiss: () -> Unit) {
     GlassSheet(onDismiss) {
         Text("Add a guardian phone", style = Type.H2, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
         Text(
-            "On the guardian's phone: Tapvault → Be a guardian → your wallet account. Then paste the code it shows here.",
+            "On the guardian's phone: Aegis → Be a guardian → your wallet account. Then paste the code it shows here.",
             style = Type.Body, color = Tv.Text2, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 14.dp),
         )
         Notice(Ic.Warning, "A full co-signer", Guardian.WARNING, Tv.Warn)

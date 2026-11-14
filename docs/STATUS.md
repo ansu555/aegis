@@ -234,7 +234,7 @@ Wallets created before this build keep their code (invariant 4).
   answers); `android/build-apk.sh`; on the emulator with a view-only testnet
   wallet: Markets cards and lists with logos, a coin chart, a live
   10 wNEAR → 33.27 USDC preview quote with its details. Installed on the
-  test phone, not walked there. Coins on chains Tapvault has no address
+  test phone, not walked there. Coins on chains Aegis has no address
   rules for (DOGE, XRP) show as not tradable.
 - `FLAG_SECURE` is back on (it had been committed commented out in
   `b94c8ce`).
@@ -342,7 +342,7 @@ length-checked, and phone-only, card-only or network-only attackers can't
 move funds. Notes from that pass:
 
 - Online fDDA and CDA make the card produce a real online-authorisation
-  cryptogram (ARQC) on every Tapvault tap, which is never sent to the bank.
+  cryptogram (ARQC) on every Aegis tap, which is never sent to the bank.
   This isn't a contract issue, but it is a card-network/compliance question
   for a real product; offline signing (DDA, offline TC) avoids it where a
   card supports it.

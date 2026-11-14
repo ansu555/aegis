@@ -14,7 +14,7 @@ import java.net.HttpURLConnection
 import java.net.URI
 
 /**
- * A NEP-141 fungible token. [verified]: on Tapvault's built-in list for the
+ * A NEP-141 fungible token. [verified]: on Aegis's built-in list for the
  * network; anything else (added by contract, found in the wallet) is shown
  * as unverified, because a token's name and symbol are whatever its
  * creator typed.
@@ -56,7 +56,7 @@ object TokenAmount {
     }.getOrNull()
 }
 
-/** The tokens Tapvault knows per network (metadata checked on chain on 14 Nov 2026). */
+/** The tokens Aegis knows per network (metadata checked on chain on 14 Nov 2026). */
 object KnownTokens {
     private val testnet = listOf(
         TokenInfo("usdc.fakes.testnet", "USDC.e", "Bridged USDC (test)", 6, true),
@@ -155,7 +155,7 @@ class Tokens(private val near: NearClient) {
      */
     fun register(contract: String, account: String, payer: String, payerKey: NearKey): TxResult {
         val cost = registrationCost(contract)
-        require(cost.signum() >= 0 && cost <= MAX_REGISTRATION) { "this token asks ${Near.format(cost)} NEAR to register, more than Tapvault pays" }
+        require(cost.signum() >= 0 && cost <= MAX_REGISTRATION) { "this token asks ${Near.format(cost)} NEAR to register, more than Aegis pays" }
         val r = near.send(payer, payerKey, contract, listOf(
             NearAction.FunctionCall("storage_deposit", jsonArgs { put("account_id", account); put("registration_only", true) }, gasTgas = 30, deposit = cost),
         ))

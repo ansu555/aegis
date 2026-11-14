@@ -36,8 +36,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -718,7 +721,7 @@ fun CardArt(
             CardBalanceFace(last4, network, frozen, frost, balance)
             return@Box
         }
-        if (!compact) Text("tapvault", Modifier.align(Alignment.TopStart), style = Type.BodyStrong.copy(letterSpacing = 0.6.sp, brush = Tv.titanium()))
+        if (!compact) CardBrand(Modifier.align(Alignment.TopStart))
         TvIcon(Ic.Nfc, if (compact) 14.dp else 22.dp, Tv.Text.copy(alpha = 0.7f), Modifier.align(Alignment.TopEnd))
         // EMV chip
         Box(
@@ -740,6 +743,16 @@ fun CardArt(
     }
 }
 
+/** Top-left of the card art: the mark and the lowercase wordmark. */
+@Composable
+private fun CardBrand(modifier: Modifier) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        AegisMark(11.dp, Tv.Text.copy(alpha = 0.85f))
+        Spacer(Modifier.width(7.dp))
+        Text("aegis", style = Type.BodyStrong.copy(letterSpacing = 0.6.sp, brush = Tv.titanium()))
+    }
+}
+
 /** The EMV chip: gold contacts with their dividing lines. */
 @Composable
 private fun CardChip(modifier: Modifier, w: Dp, h: Dp, r: Dp) {
@@ -758,7 +771,7 @@ private fun CardChip(modifier: Modifier, w: Dp, h: Dp, r: Dp) {
 /** [CardArt]'s face on Home: wordmark and contactless mark on top, the balance mid-card with the chip to its right, number and network. */
 @Composable
 private fun BoxScope.CardBalanceFace(last4: String?, network: String?, frozen: Boolean, frost: Float, balance: BigInteger?) {
-    Text("tapvault", Modifier.align(Alignment.TopStart), style = Type.BodyStrong.copy(letterSpacing = 0.6.sp, brush = Tv.titanium()))
+    CardBrand(Modifier.align(Alignment.TopStart))
     TvIcon(Ic.Nfc, 22.dp, Tv.Text.copy(alpha = 0.7f), Modifier.align(Alignment.TopEnd))
     if (frozen) TvIcon(Ic.Freeze, 22.dp, Tv.Ice.copy(alpha = frost), Modifier.align(Alignment.TopEnd).offset(x = (-34).dp))
     CardChip(Modifier.align(Alignment.CenterEnd).offset(y = 6.dp), 44.dp, 33.dp, 8.dp)
@@ -988,23 +1001,24 @@ private fun qrModules(m: com.google.zxing.common.BitMatrix): List<QrModule> {
 
 // ---------------------------------------------------------------- brand
 
-/** The Tapvault mark: a card with contactless waves, in a rounded tile. Replaceable by a final logo. */
+/** The Aegis mark alone (two hands and a spark, `R.drawable.aegis_mark`), [height] tall and about 3× as wide. */
+@Composable
+fun AegisMark(height: Dp, color: Color = Color(0xFFEFE7DE), modifier: Modifier = Modifier) {
+    Image(
+        painterResource(R.drawable.aegis_mark), contentDescription = null,
+        modifier = modifier.height(height).width(height * (856f / 280f)),
+        colorFilter = ColorFilter.tint(color),
+    )
+}
+
+/** The Aegis mark in a rounded near-black tile, like the launcher icon. */
 @Composable
 fun LogoMark(size: Dp = 40.dp) {
     Box(
-        Modifier.size(size).background(Tv.titanium(), RoundedCornerShape(size * 0.3f)).border(1.dp, Brush.linearGradient(listOf(Color.White, Color.White.copy(alpha = 0.15f))), RoundedCornerShape(size * 0.3f)),
+        Modifier.size(size).background(Color(0xFF060608), RoundedCornerShape(size * 0.3f)).border(1.dp, Brush.linearGradient(listOf(Color.White.copy(alpha = 0.35f), Color.White.copy(alpha = 0.08f))), RoundedCornerShape(size * 0.3f)),
         contentAlignment = Alignment.Center,
     ) {
-        Canvas(Modifier.size(size * 0.62f)) {
-            val s = this.size.minDimension
-            val st = Stroke(s * 0.09f, cap = StrokeCap.Round)
-            drawRoundRect(Tv.OnAccent, Offset(s * 0.04f, s * 0.24f), Size(s * 0.6f, s * 0.52f), CornerRadius(s * 0.1f), style = st)
-            drawLine(Tv.OnAccent, Offset(s * 0.04f, s * 0.42f), Offset(s * 0.64f, s * 0.42f), s * 0.09f)
-            for (i in 1..2) {
-                val r = s * (0.12f + i * 0.11f)
-                drawArc(Tv.OnAccent, -55f, 110f, false, Offset(s * 0.62f - r, s * 0.5f - r), Size(r * 2, r * 2), style = st)
-            }
-        }
+        AegisMark(size * 0.26f)
     }
 }
 
@@ -1013,7 +1027,7 @@ fun Wordmark(size: Dp = 32.dp) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         LogoMark(size)
         Spacer(Modifier.width(10.dp))
-        Text("tapvault", style = Type.Title.copy(fontSize = (size.value * 0.6f).sp, letterSpacing = (-0.3).sp))
+        Text("aegis", style = Type.Title.copy(fontSize = (size.value * 0.6f).sp, letterSpacing = (-0.3).sp))
     }
 }
 

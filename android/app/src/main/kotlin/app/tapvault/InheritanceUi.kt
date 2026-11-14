@@ -95,7 +95,7 @@ fun HeirSheet(vm: AppViewModel, onDismiss: () -> Unit) {
                 onDismiss(); vm.removeHeir()
             }
         }
-        Caption("A change takes effect after $wait: Activity → Execute. Tell your heir the wallet's account (${w?.let { vm.store.walletAccount } ?: ""}): they claim it from their own Tapvault app.", Modifier.fillMaxWidth().padding(top = 8.dp), Tv.Text3, TextAlign.Center)
+        Caption("A change takes effect after $wait: Activity → Execute. Tell your heir the wallet's account (${w?.let { vm.store.walletAccount } ?: ""}): they claim it from their own Aegis app.", Modifier.fillMaxWidth().padding(top = 8.dp), Tv.Text3, TextAlign.Center)
         Spacer(Modifier.height(6.dp))
         TvButton("Close", Modifier.fillMaxWidth(), Btn.Ghost) { onDismiss() }
     }
@@ -109,7 +109,7 @@ fun ClaimSheet(vm: AppViewModel, onDismiss: () -> Unit) {
     GlassSheet(onDismiss) {
         Text("Claim an inheritance", style = Type.H2, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
         Text(
-            "If someone named you as the heir of their Tapvault wallet, enter that wallet's account. A claim can start only after their wallet has been silent for the whole period they chose, " +
+            "If someone named you as the heir of their Aegis wallet, enter that wallet's account. A claim can start only after their wallet has been silent for the whole period they chose, " +
                 "and the funds go only to the heir they named, whoever presses the button. This phone's fee account pays the network fees.",
             style = Type.Body, color = Tv.Text2, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 14.dp),
         )

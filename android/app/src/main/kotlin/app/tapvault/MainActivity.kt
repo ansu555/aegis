@@ -30,8 +30,9 @@ class MainActivity : FragmentActivity() {
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
         )
         super.onCreate(savedInstanceState)
-        // Wallet screens never appear in screenshots, screen recordings, casts or the recent-apps preview.
-        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+        // TEMPORARY (demo screenshots): FLAG_SECURE off for the whole app. Seed phrase and key
+        // screens still set it themselves (SeedScreens.SecureWindow). Turn back on before release:
+        // window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         nfc = NfcAdapter.getDefaultAdapter(this)
         vm.attach(this)
         setContent { NetworkFrame(vm) }
@@ -71,7 +72,7 @@ class MainActivity : FragmentActivity() {
     override fun onResume() {
         super.onResume()
         vm.attach(this)
-        // The reader stays on whenever Tapvault is on screen, so a card placed
+        // The reader stays on whenever Aegis is on screen, so a card placed
         // early or left on the phone never reaches Android's own tag handling
         // ("No supported app for this NFC tag"). Taps nobody is waiting for are ignored.
         runCatching {

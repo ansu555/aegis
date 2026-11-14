@@ -144,7 +144,7 @@ class OneClick(
             val msg = (parsed as? JsonObject)?.get("message")?.let { (it as? JsonPrimitive)?.content ?: it.toString() }
             throw TapvaultException("NEAR Intents: " + (msg?.let { readable(it) } ?: "HTTP $code"))
         }
-        return parsed ?: throw TapvaultException("NEAR Intents sent an answer Tapvault can't read.")
+        return parsed ?: throw TapvaultException("NEAR Intents sent an answer Aegis can't read.")
     }
 
     /** Every asset 1Click swaps, with USD prices. */
