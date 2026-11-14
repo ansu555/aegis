@@ -30,6 +30,8 @@ data class IntentToken(
     /** USD per whole token, as 1Click reports it; null if it doesn't. */
     val price: BigDecimal?,
     val contract: String?,
+    /** CoinGecko's id for it, for market data and charts; null when 1Click names none. */
+    val coingeckoId: String? = null,
 ) {
     val onNear get() = blockchain == "near"
 
@@ -157,6 +159,7 @@ class OneClick(
             decimals = decimals,
             price = o.str("price")?.toBigDecimalOrNull()?.takeIf { it.signum() > 0 },
             contract = o.str("contractAddress"),
+            coingeckoId = o.str("coingeckoId")?.takeIf { Regex("^[a-z0-9][a-z0-9-]{0,63}$").matches(it) },
         )
     }
 
