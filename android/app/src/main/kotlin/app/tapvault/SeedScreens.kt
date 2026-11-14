@@ -70,7 +70,7 @@ fun ColumnScope.SeedCreateScreen(vm: AppViewModel) {
         when (stage) {
             0 -> {
                 Text("Your recovery phrase", style = Type.H1, modifier = Modifier.padding(top = 8.dp))
-                Text("12 words that are this wallet. Write them on paper, in order, and keep them somewhere safe.", style = Type.Body, color = Tv.Text2, modifier = Modifier.padding(top = 8.dp))
+                Text("12 words that are this wallet. Write them on paper, in order, and keep them somewhere safe." + (if (vm.network.hasFaucet) "" else " Until your bank card is added, they are the only way to get your funds back."), style = Type.Body, color = Tv.Text2, modifier = Modifier.padding(top = 8.dp))
                 Spacer(Modifier.height(22.dp))
                 Group {
                     Row_(Ic.Key, "The words are the wallet", "Anyone who has them can take your NEAR, from any NEAR wallet app")
@@ -104,7 +104,7 @@ fun ColumnScope.SeedCreateScreen(vm: AppViewModel) {
                 }
                 Notice(
                     Ic.Card, "Protect it with your bank card?",
-                    "Then every payment needs your phone and a tap of your card, and these words stop working. Needs NFC and about 4.2 test NEAR, which the new wallet gets. You can also do it later from Home.",
+                    "Then every payment needs your phone and a tap of your card, and these words stop working. Needs NFC and about 4.2 " + (if (vm.network.hasFaucet) "test NEAR, which the new wallet gets." else "NEAR, which you add to the wallet first (Receive).") + " You can also do it later from Home.",
                     Tv.Accent, Modifier.padding(top = 4.dp),
                 )
             }
@@ -223,7 +223,7 @@ fun ColumnScope.SeedImportScreen(vm: AppViewModel) {
             }
             Notice(
                 Ic.Card, "Protect it with your bank card?",
-                "Every payment then needs your phone and a tap of your card. The phrase or key stops working, and any other app signed in to this account is signed out. Needs about 4.2 free test NEAR.",
+                "Every payment then needs your phone and a tap of your card. The phrase or key stops working, and any other app signed in to this account is signed out. Needs about 4.2 " + (if (vm.network.hasFaucet) "free test NEAR." else "NEAR in the wallet."),
                 Tv.Accent, Modifier.padding(top = 16.dp),
             )
         }
