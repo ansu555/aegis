@@ -53,6 +53,21 @@ sealed interface NearAction {
         override fun borsh(b: Borsh) { b.u8(1).bytes(code) }
     }
 
+    /**
+     * Delete one access key of the signer's account, given as NEAR writes it
+     * (`ed25519:<base58>` or `secp256k1:<base58>`).
+     */
+    class DeleteKey(val publicKey: String) : NearAction {
+        override fun borsh(b: Borsh) {
+            val (type, raw) = when {
+                publicKey.startsWith("ed25519:") -> 0 to Base58.decode(publicKey.removePrefix("ed25519:")).also { require(it.size == 32) { "bad ed25519 key" } }
+                publicKey.startsWith("secp256k1:") -> 1 to Base58.decode(publicKey.removePrefix("secp256k1:")).also { require(it.size == 64) { "bad secp256k1 key" } }
+                else -> throw IllegalArgumentException("unknown key type: ${publicKey.substringBefore(':')}")
+            }
+            b.u8(6).u8(type).fixed(raw)
+        }
+    }
+
     /** Delete the signer's account and send everything it holds to [beneficiary]. */
     class DeleteAccount(val beneficiary: String) : NearAction {
         override fun borsh(b: Borsh) { b.u8(7).string(beneficiary) }
@@ -94,6 +109,7 @@ class TxResult(val hash: String, val ok: Boolean, val error: String?, val return
 class NearClient(
     val rpcUrls: List<String> = TESTNET_RPCS,
     val faucetUrl: String = "https://helper.nearprotocol.com/account",
+    val indexUrl: String = "https://test.api.fastnear.com",
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -231,11 +247,40 @@ class NearClient(
     }
 
     /** The base58 SHA-256 of the account's contract code (`11111111111111111111111111111111` if none). */
+    /**
+     * Accounts that list [publicKey] as a full-access key, from FastNEAR's
+     * testnet index (no NEAR RPC answers this). The index can lag a little:
+     * callers check each answer on chain ([accessKeys]) before using it.
+     */
+    fun accountsForKey(publicKey: String): List<String> {
+        val c = URI("$indexUrl/v0/public_key/$publicKey").toURL().openConnection() as HttpURLConnection
+        try {
+            c.connectTimeout = 15_000; c.readTimeout = 20_000
+            if (c.responseCode !in 200..299) throw NearRpcException("account lookup: HTTP ${c.responseCode}")
+            val r = json.parseToJsonElement(c.inputStream.bufferedReader().readText()).jsonObject
+            return r["account_ids"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList()
+        } catch (e: java.io.IOException) {
+            throw NearRpcException("account lookup: ${e.message}")
+        } finally {
+            c.disconnect()
+        }
+    }
+
     fun codeHash(account: String): String {
         val r = rpc("query", buildJsonObject {
             put("request_type", "view_account"); put("finality", "final"); put("account_id", account)
         }).jsonObject
         return r["code_hash"]!!.jsonPrimitive.content
+    }
+
+    /** The account's full-access keys only (function-call keys left out). */
+    fun fullAccessKeys(account: String): List<String> {
+        val r = rpc("query", buildJsonObject {
+            put("request_type", "view_access_key_list"); put("finality", "optimistic"); put("account_id", account)
+        }).jsonObject
+        return r["keys"]!!.jsonArray.map { it.jsonObject }
+            .filter { it["access_key"]?.jsonObject?.get("permission")?.let { p -> p is kotlinx.serialization.json.JsonPrimitive && p.content == "FullAccess" } == true }
+            .map { it["public_key"]!!.jsonPrimitive.content }
     }
 
     fun accessKeys(account: String): List<String> {
@@ -408,6 +453,12 @@ class NearClient(
 
     companion object {
         /** Public testnet RPCs, tried in this order. */
+        /** The `code_hash` of an account with no contract. */
+        const val NO_CODE = "11111111111111111111111111111111"
+
+        /** An implicit account's name: the hex of its ed25519 public key. */
+        fun implicitAccount(publicKey: ByteArray): String = publicKey.hex()
+
         val TESTNET_RPCS = listOf(
             "https://rpc.testnet.fastnear.com",
             "https://test.rpc.fastnear.com",

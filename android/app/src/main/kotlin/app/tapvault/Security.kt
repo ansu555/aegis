@@ -43,6 +43,10 @@ fun SecurityScreen(vm: AppViewModel) {
     var allowOpen by remember { mutableStateOf(false) }
     var confirmFreeze by remember { mutableStateOf(false) }
 
+    if (vm.seedWallet) {
+        SeedSecurity(vm)
+        return
+    }
     if (w == null) {
         Spacer(Modifier.height(12.dp))
         Shimmer(Modifier.fillMaxWidth().height(180.dp))

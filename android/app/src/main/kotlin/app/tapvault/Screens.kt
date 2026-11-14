@@ -81,11 +81,11 @@ fun TapvaultApp(vm: AppViewModel) {
         val haze = remember { HazeState() }
         AppBackground(vm.screen, frozen && vm.screen == Screen.Home) {
             LaunchedEffect(Unit) { vm.refresh(); vm.startAutoRefresh() }
-            val ready = vm.store.setupStep >= 4
-            BackHandler(enabled = vm.screen !in setOf(Screen.Home, Screen.Welcome, Screen.Setup)) {
+            val ready = vm.ready
+            BackHandler(enabled = vm.screen !in setOf(Screen.Home, Screen.Welcome, Screen.Setup, Screen.SeedCreate, Screen.SeedImport)) {
                 vm.go(
                     when {
-                        vm.screen == Screen.Limits -> Screen.Welcome
+                        vm.screen == Screen.Limits -> if (vm.seedWallet) Screen.Home else Screen.Welcome
                         vm.screen == Screen.Recover || vm.screen == Screen.Guardian -> if (vm.store.joinMode != null) vm.screen else Screen.Welcome
                         (vm.screen == Screen.CardCheck || vm.screen == Screen.Security) && ready -> vm.cameFrom
                         ready -> Screen.Home
@@ -120,7 +120,7 @@ fun TapvaultApp(vm: AppViewModel) {
                                     Screen.CardCheck -> TopBar(if (ready) "Your card" else "Card check", onBack = { vm.go(if (ready) vm.cameFrom else Screen.Welcome) })
                                     Screen.Settings -> LargeTitle("Settings")
                                     Screen.Security -> TopBar("Security", onBack = { vm.go(vm.cameFrom) })
-                                    Screen.Setup -> TopBar("Creating ${vm.walletName}")
+                                    Screen.Setup -> TopBar(if (vm.seedWallet) "Protecting ${vm.walletName}" else "Creating ${vm.walletName}")
                                     else -> {}
                                 }
                             }
@@ -135,7 +135,7 @@ fun TapvaultApp(vm: AppViewModel) {
                                     Screen.CardCheck -> CardCheck(vm)
                                     Screen.Settings -> SettingsScreen(vm)
                                     Screen.Security -> SecurityScreen(vm)
-                                    Screen.Recover, Screen.Guardian -> {} // pinned-form layout below
+                                    Screen.Recover, Screen.Guardian, Screen.SeedCreate, Screen.SeedImport -> {} // pinned-form layout below
                                 }
                                 // room for the floating tab bar
                                 Spacer(Modifier.height(if (s in tabScreens && ready) 104.dp else 28.dp))
@@ -145,13 +145,15 @@ fun TapvaultApp(vm: AppViewModel) {
                         if (s == Screen.Welcome) {
                             // The welcome pager fills the screen instead of scrolling.
                             Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp)) { Welcome(vm) }
-                        } else if (s == Screen.Limits || s == Screen.Send || s == Screen.Recover || s == Screen.Guardian) {
+                        } else if (s == Screen.Limits || s == Screen.Send || s == Screen.Recover || s == Screen.Guardian || s == Screen.SeedCreate || s == Screen.SeedImport) {
                             // Form screens: content scrolls, the main button stays pinned above the keyboard.
                             Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
                                 when (s) {
                                     Screen.Limits -> LimitsScreen(vm)
                                     Screen.Recover -> RecoverScreen(vm)
                                     Screen.Guardian -> GuardianScreen(vm)
+                                    Screen.SeedCreate -> SeedCreateScreen(vm)
+                                    Screen.SeedImport -> SeedImportScreen(vm)
                                     else -> Send(vm)
                                 }
                             }
@@ -170,6 +172,7 @@ fun TapvaultApp(vm: AppViewModel) {
                     GlassTabBar(navItems, vm.screen, vm.proposals.size, { vm.go(it) })
                 }
                 OutcomeBanner(vm.outcome, { l -> uri.openUri(l) }, { vm.outcome = null }, Modifier.align(Alignment.TopCenter))
+                if (vm.screen == Screen.Welcome) vm.welcomeMenu?.let { WelcomeMenuSheet(vm, it) }
                 vm.tap?.let { TapSheet(it) { vm.cancelTap() } }
                 vm.keyPrompt?.let { SecurityKeySheet(vm, it) }
                 // Setup shows its progress in place; everything else gets the overlay.
@@ -270,6 +273,12 @@ private fun ProposalRow(vm: AppViewModel, p: ProposalInfo, onClick: () -> Unit) 
  */
 @Composable
 private fun Home(vm: AppViewModel, ui: HomeUi) {
+    if (vm.seedWallet) {
+        SeedHome(vm, ui)
+        if (ui.picker) WalletPicker(vm) { ui.picker = false }
+        if (ui.receive) ReceiveSheet(vm) { ui.receive = false }
+        return
+    }
     val w = vm.wallet
     var confirmFreeze by remember { mutableStateOf(false) }
     val frozen = w?.frozen == true
@@ -525,7 +534,7 @@ private fun ColumnScope.Send(vm: AppViewModel) {
             Spacer(Modifier.height(14.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Chip("Half") { spendable?.let { amount = Near.format(it.divide(BigInteger.valueOf(2)), 4) } }
-                Chip("Max instant") {
+                Chip(if (vm.seedWallet) "Max" else "Max instant") {
                     // keep a little behind so the wallet can always pay for its own storage
                     val buffer = Near.parse("0.01")
                     val most = listOfNotNull(limit?.availableNow(), spendable?.minus(buffer)).minOrNull()
@@ -534,6 +543,7 @@ private fun ColumnScope.Send(vm: AppViewModel) {
             }
             Spacer(Modifier.height(14.dp))
             when {
+                vm.seedWallet -> Caption(if (parsed == null) "You'll approve with your security key and your fingerprint" else "Goes out at once and can't be undone", color = Tv.Text3)
                 parsed == null -> Caption(if (w?.phoneOnly == true) "You'll approve with your security key and your fingerprint" else "You'll approve with your fingerprint, a card tap and your security key", color = Tv.Text3)
                 instant -> StatusPill("Goes out instantly", Tv.Positive, Ic.CheckCircle)
                 else -> StatusPill("Waits ${hoursLabel(w?.delays?.transfer ?: 3600)} · you can cancel it", Tv.Warn, Ic.Timer)
@@ -580,15 +590,16 @@ private fun ColumnScope.Send(vm: AppViewModel) {
             Spacer(Modifier.height(10.dp))
             Column(Modifier.fillMaxWidth().surface(20.dp).padding(horizontal = 16.dp, vertical = 8.dp)) {
                 InfoRow("From", vm.walletName)
-                InfoRow("Arrives", if (instant) "Now (within your limit)" else "In ${hoursLabel(w?.delays?.transfer ?: 3600)} · you can cancel", if (instant) Tv.Positive else Tv.Warn)
+                if (vm.seedWallet) InfoRow("Arrives", "Now · can't be undone", Tv.Warn)
+                else InfoRow("Arrives", if (instant) "Now (within your limit)" else "In ${hoursLabel(w?.delays?.transfer ?: 3600)} · you can cancel", if (instant) Tv.Positive else Tv.Warn)
                 limit?.let { InfoRow("Instant left today after", "${Near.format((if (instant) it.availableNow() - parsed else it.availableNow()).max(BigInteger.ZERO), 2)} NEAR") }
-                InfoRow("Network fee", "Paid by your fee account")
+                InfoRow("Network fee", if (vm.seedWallet) "About 0.0001 NEAR, from this wallet" else "Paid by your fee account")
                 InfoRow("Network", "NEAR testnet")
             }
             Spacer(Modifier.height(16.dp))
             Text("Next", style = Type.CaptionStrong, color = Tv.Text2, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp))
             // Phone-only wallet: security key first, then the fingerprint; no card tap.
-            val steps = if (w?.phoneOnly == true) listOf("Type your security key", "Confirm with your fingerprint")
+            val steps = if (w?.phoneOnly == true || vm.seedWallet) listOf("Type your security key", "Confirm with your fingerprint")
             else listOf("Confirm with your fingerprint", "Tap your bank card on the phone", "Type your security key")
             steps.forEachIndexed { i, step ->
                 if (i > 0) Spacer(Modifier.height(8.dp))
@@ -759,7 +770,7 @@ private fun TrackLine(done: Boolean, modifier: Modifier) {
 @Composable
 private fun CardCheck(vm: AppViewModel) {
     val ctx = LocalContext.current
-    val ready = vm.store.setupStep >= 4
+    val ready = vm.ready
     val tilt by rememberTilt()
     val r = vm.cardReport
     CardArt(
@@ -879,7 +890,7 @@ private fun SettingsScreen(vm: AppViewModel) {
         }
     }
 
-    Column(Modifier.enter(2)) {
+    if (vm.seedWallet) SeedSettingsSection(vm) else Column(Modifier.enter(2)) {
         SectionHeader(if ((w?.cards()?.size ?: 1) > 1) "Your cards" else "Your card")
         Group {
             val c = vm.mainCard
@@ -980,7 +991,8 @@ private fun SettingsScreen(vm: AppViewModel) {
     )
     if (confirmReset) ConfirmDialog(
         "Forget ${vm.walletName}?",
-        "This deletes this wallet's phone key. With a single card the wallet can't approve anything without it, so its NEAR stays locked in the wallet for good (on testnet that is only test NEAR). Your other wallets on this phone aren't affected.",
+        if (vm.seedWallet) "This deletes the wallet's key and recovery phrase from this phone. Only your written-down recovery phrase can bring it back; without it, its NEAR is lost. Your other wallets on this phone aren't affected."
+        else "This deletes this wallet's phone key. With a single card the wallet can't approve anything without it, so its NEAR stays locked in the wallet for good (on testnet that is only test NEAR). Your other wallets on this phone aren't affected.",
         "Forget", { confirmReset = false; vm.forgetWallet() }, { confirmReset = false }, dismiss = "Keep", danger = true, icon = Ic.Trash,
     )
     if (keyOpen) SecurityKeySettingsSheet(vm) { keyOpen = false }

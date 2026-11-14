@@ -489,10 +489,17 @@ class Onboarding(private val near: NearClient) {
         return Accounts(wallet, plan.walletKey, gas, plan.gasKey)
     }
 
-    fun deployAndInit(a: Accounts, wasm: ByteArray, phone: P256Signer): TxResult {
+    /**
+     * Deploy + `new` in one transaction. [removeKeys]: other access keys of the
+     * account, deleted in the same transaction (an account brought in with a
+     * recovery phrase may have keys from other wallets or apps; any key left
+     * behind could replace the contract later).
+     */
+    fun deployAndInit(a: Accounts, wasm: ByteArray, phone: P256Signer, removeKeys: List<String> = emptyList()): TxResult {
+        require(a.walletKey.publicKeyString !in removeKeys) { "won't delete the key signing the deploy" }
         val key = phone.signerKey()
         val sig = phone.sign(Domain.createMessage(a.wallet, key.keyHash()))
-        val r = near.send(a.wallet, a.walletKey, a.wallet, listOf(
+        val r = near.send(a.wallet, a.walletKey, a.wallet, removeKeys.map { NearAction.DeleteKey(it) } + listOf(
             NearAction.DeployContract(wasm),
             NearAction.FunctionCall("new", jsonArgs { put("first_signer", key.json()); put("sig", sig.json()) }, gasTgas = 100),
         ))
@@ -519,9 +526,11 @@ class Onboarding(private val near: NearClient) {
         return r
     }
 
-    fun finalize(a: Accounts, phone: P256Signer, args: FinalizeArgs): TxResult {
+    /** [removeKeys]: any other key still on the account, deleted in the same transaction. */
+    fun finalize(a: Accounts, phone: P256Signer, args: FinalizeArgs, removeKeys: List<String> = emptyList()): TxResult {
+        require(a.walletKey.publicKeyString !in removeKeys) { "setup_finalize deletes the signing key itself" }
         val sig = phone.sign(Domain.finalizeMessage(a.wallet, args.borshBytes()))
-        val r = near.send(a.wallet, a.walletKey, a.wallet, listOf(
+        val r = near.send(a.wallet, a.walletKey, a.wallet, removeKeys.map { NearAction.DeleteKey(it) } + listOf(
             NearAction.FunctionCall("setup_finalize", jsonArgs {
                 put("args", args.json()); put("authorizer_index", 0); put("sig", sig.json())
             }),

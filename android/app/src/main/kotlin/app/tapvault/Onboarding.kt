@@ -1,6 +1,12 @@
 package app.tapvault
 
 import android.content.Intent
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.unit.IntOffset
 import android.provider.Settings
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.core.Animatable
@@ -73,11 +79,8 @@ private val Mint = Color(0xFF7CF5C4)
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun Welcome(vm: AppViewModel) {
-    val others = vm.walletList.count { !it.active }
     val pager = rememberPagerState { slides.size }
     val scope = rememberCoroutineScope()
-    var more by remember { mutableStateOf(false) }
-    var create by remember { mutableStateOf(false) }
     // Story style: the current segment fills up, then the next slide comes in. A swipe restarts the timer.
     val fill = remember { Animatable(0f) }
     LaunchedEffect(pager.settledPage, pager.isScrollInProgress) {
@@ -124,9 +127,9 @@ fun Welcome(vm: AppViewModel) {
         Spacer(Modifier.height(14.dp))
         NfcChip(vm)
         // Full-width pills of the tab bar's liquid glass: milky white for the call to action, clear for the other.
-        LiquidGlassButton("Create wallet", Modifier.fillMaxWidth(), light = true) { create = true }
+        LiquidGlassButton("Create wallet", Modifier.fillMaxWidth(), light = true) { vm.welcomeMenu = WelcomeMenu.Create }
         Spacer(Modifier.height(12.dp))
-        LiquidGlassButton("I have a wallet", Modifier.fillMaxWidth()) { more = true }
+        LiquidGlassButton("I have a wallet", Modifier.fillMaxWidth()) { vm.welcomeMenu = WelcomeMenu.Existing }
         Row(
             Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 8.dp).clip(RoundedCornerShape(12.dp)).pressable { vm.go(Screen.CardCheck) }.padding(vertical = 4.dp),
             horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
@@ -135,54 +138,91 @@ fun Welcome(vm: AppViewModel) {
             Text("Check my card", style = Type.CaptionStrong, color = Mint, maxLines = 1)
         }
     }
-    if (create) CreateChoiceSheet(vm) { create = false }
-    if (more) GlassSheet({ more = false }) {
-        Text("I have a wallet", style = Type.H2, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
-        Spacer(Modifier.height(18.dp))
-        Group {
-            Row_(Ic.Refresh, "Recover a wallet", "Move it to this phone", chevron = true, onClick = { more = false; vm.go(Screen.Recover) })
-            GroupDivider()
-            Row_(Ic.ShieldCheck, "Be a guardian", "Help a friend recover", chevron = true, onClick = { more = false; vm.go(Screen.Guardian) })
-            if (others > 0) {
-                GroupDivider()
-                Row_(Ic.Wallet, "Back to my wallets", if (others == 1) "1 wallet on this phone" else "$others wallets on this phone", chevron = true, onClick = { more = false; vm.cancelNewWallet() })
+}
+
+/** The two menus under the welcome buttons. */
+enum class WelcomeMenu { Create, Existing }
+
+/**
+ * A welcome menu as a floating frosted-glass card: centred title, round close button, plain rows.
+ * Drawn by [TapvaultApp] above the blur source, so the glass frosts the welcome screen behind it.
+ * "Create wallet": with the card from the start, or a seed-phrase wallet that can be protected
+ * with the card later. "I have a wallet": import with a recovery phrase or key, recover, guardian, back.
+ */
+@Composable
+fun WelcomeMenuSheet(vm: AppViewModel, menu: WelcomeMenu) {
+    val appear = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(Unit) { appear.animateTo(1f, spring(dampingRatio = 0.86f, stiffness = 420f)) }
+    fun close(then: () -> Unit = {}) = scope.launch { appear.animateTo(0f, tween(160)); vm.welcomeMenu = null; then() }
+    BackHandler { close() }
+    val shape = RoundedCornerShape(36.dp)
+    Box(
+        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f * appear.value))
+            .clickable(remember { MutableInteractionSource() }, indication = null) { close() },
+        contentAlignment = Alignment.BottomCenter,
+    ) {
+        Column(
+            Modifier.navigationBarsPadding().padding(horizontal = 12.dp, vertical = 12.dp).fillMaxWidth()
+                .offset { IntOffset(0, ((1f - appear.value) * 600f).toInt()) }
+                .alpha(appear.value.coerceIn(0f, 1f))
+                .shadow(30.dp, shape)
+                .frosted(shape, tint = Color(0xFF0A0A0C), strength = 0.82f).glassRim(36.dp, shape = shape)
+                // swallow taps so they don't reach the scrim
+                .clickable(remember { MutableInteractionSource() }, indication = null) {}
+                .padding(start = 8.dp, end = 8.dp, top = 12.dp, bottom = 16.dp),
+        ) {
+            Box(Modifier.fillMaxWidth().height(52.dp), contentAlignment = Alignment.Center) {
+                Text(if (menu == WelcomeMenu.Create) "Create wallet" else "I have a wallet", style = Type.Title, color = Tv.Text)
+                Box(
+                    Modifier.align(Alignment.CenterEnd).padding(end = 4.dp).size(44.dp).clip(CircleShape)
+                        .background(Tv.GlassStrong).glassRim(22.dp, shape = CircleShape)
+                        .clickable(role = Role.Button, onClickLabel = "Close") { close() },
+                    contentAlignment = Alignment.Center,
+                ) { TvIcon(Ic.Close, 20.dp, Tv.Text) }
+            }
+            Spacer(Modifier.height(10.dp))
+            when (menu) {
+                WelcomeMenu.Create -> {
+                    ChoiceRow(Ic.Card, "With my bank card", if (vm.hasNfc) "Every payment needs your phone and a tap" else "Needs a phone with NFC") {
+                        close { vm.chooseSetup(withCard = true) }
+                    }
+                    ChoiceRow(Ic.Key, "Create seed phrase wallet", "Start without a bank card; protect it with one later") {
+                        close { vm.startSeedWallet() }
+                    }
+                }
+                WelcomeMenu.Existing -> {
+                    val others = vm.walletList.count { !it.active }
+                    ChoiceRow(Ic.Key, "Import with recovery phrase", "12 or 24 words, or a private key") { close { vm.importFound = null; vm.go(Screen.SeedImport) } }
+                    ChoiceRow(Ic.Refresh, "Recover a wallet", "Move it to this phone") { close { vm.go(Screen.Recover) } }
+                    ChoiceRow(Ic.ShieldCheck, "Be a guardian", "Help a friend recover") { close { vm.go(Screen.Guardian) } }
+                    if (others > 0) {
+                        ChoiceRow(Ic.Wallet, "Back to my wallets", if (others == 1) "1 wallet on this phone" else "$others wallets on this phone") {
+                            close { vm.cancelNewWallet() }
+                        }
+                    }
+                }
             }
         }
-        Spacer(Modifier.height(8.dp))
     }
 }
 
-/**
- * "Create wallet": with the card from the start, or without one for now
- * (a phone-only wallet, contract v0.3) whose card is added later from Security.
- */
 @Composable
-private fun CreateChoiceSheet(vm: AppViewModel, onDismiss: () -> Unit) {
-    GlassSheet(onDismiss) {
-        Text("Create a wallet", style = Type.H2, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
-        Text(
-            "Set it up with your bank card now, or start without one.",
-            style = Type.Body, color = Tv.Text2, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 18.dp),
-        )
-        Group {
-            Row_(
-                Ic.Card, "With my card", if (vm.hasNfc) "Every payment needs your phone and a card tap" else "Needs a phone with NFC",
-                chevron = true, tint = Tv.Positive, iconBg = Tv.PositiveSoft,
-                onClick = { onDismiss(); vm.chooseSetup(withCard = true) },
-            )
-            GroupDivider()
-            Row_(
-                Ic.Fingerprint, "Without a card for now", "Your phone and fingerprint approve payments",
-                chevron = true, onClick = { onDismiss(); vm.chooseSetup(withCard = false) },
-            )
+private fun ChoiceRow(icon: Ic, title: String, subtitle: String, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier.size(52.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.07f)).glassRim(26.dp, shape = CircleShape),
+            contentAlignment = Alignment.Center,
+        ) { TvIcon(icon, 22.dp, Tv.Text) }
+        Spacer(Modifier.width(16.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = Type.Title.copy(fontSize = 18.sp, lineHeight = 24.sp), color = Tv.Text, maxLines = 1)
+            Text(subtitle, style = Type.Caption.copy(fontSize = 14.sp, lineHeight = 19.sp), color = Tv.Text2, maxLines = 2, modifier = Modifier.padding(top = 2.dp))
         }
-        Spacer(Modifier.height(14.dp))
-        Notice(
-            Ic.Info, "You can add your card later",
-            "If you start without a card, set it up any time after the wallet is created: Security → Add your card. Until then your phone key alone approves payments, so a card makes the wallet safer.",
-            Tv.Text2,
-        )
-        Spacer(Modifier.height(8.dp))
     }
 }
 
@@ -252,7 +292,7 @@ fun ColumnScope.LimitsScreen(vm: AppViewModel) {
     }
     val limitsOk = !limitsOn || (err == null && i != null && d != null)
     var withCard by remember { mutableStateOf(vm.store.withCard) }
-    PinnedTopBar("New wallet", onBack = { vm.go(Screen.Welcome) })
+    PinnedTopBar(if (vm.seedWallet) "Protect with bank card" else "New wallet", onBack = { vm.go(if (vm.seedWallet) Screen.Home else Screen.Welcome) })
     Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
     Text("Spending limits", style = Type.H1, modifier = Modifier.padding(top = 8.dp))
     Text("Small payments go out instantly. Bigger ones wait 1 hour.", style = Type.Body, color = Tv.Text2, modifier = Modifier.padding(top = 8.dp))
@@ -403,7 +443,10 @@ fun SetupProgress(vm: AppViewModel) {
                 TvButton("Switch wallet (this setup stays saved)", Modifier.fillMaxWidth(), Btn.Secondary) { showPicker = true }
                 Spacer(Modifier.height(8.dp))
             }
-            TvButton("Start over", Modifier.fillMaxWidth(), Btn.Ghost) { confirmStartOver = true }
+            if (vm.seedWallet) {
+                // Protecting a seed-phrase wallet: before the contract is on the account, going back is safe.
+                if (vm.setupStep <= 1) TvButton("Not now, back to my wallet", Modifier.fillMaxWidth(), Btn.Ghost) { vm.startOver() }
+            } else TvButton("Start over", Modifier.fillMaxWidth(), Btn.Ghost) { confirmStartOver = true }
         }
     }
     if (showPicker) WalletPicker(vm) { showPicker = false }

@@ -57,6 +57,8 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ModalBottomSheetDefaults
+import androidx.compose.material3.ModalBottomSheetProperties
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.ImageShader
@@ -669,11 +671,13 @@ fun ConfirmDialog(
 /** A bottom sheet in dark glass (sheets are their own window, so they can't blur what's behind). */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun GlassSheet(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+fun GlassSheet(onDismiss: () -> Unit, secure: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
     val shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)
     ModalBottomSheet(
         onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = Tv.Sheet, shape = shape, scrimColor = Color.Black.copy(alpha = 0.6f),
+        // [secure]: kept out of screenshots, recordings and the recent-apps preview (the sheet is its own window).
+        properties = if (secure) ModalBottomSheetProperties(securePolicy = androidx.compose.ui.window.SecureFlagPolicy.SecureOn) else ModalBottomSheetDefaults.properties,
         dragHandle = { Box(Modifier.padding(top = 12.dp, bottom = 10.dp).size(40.dp, 4.dp).background(Tv.StrokeStrong, RoundedCornerShape(2.dp))) },
         modifier = Modifier.glassRim(32.dp, shape = shape),
     ) { SheetColumn(content) }

@@ -200,3 +200,49 @@ object SecurityPepper {
         return javax.crypto.Mac.getInstance("HmacSHA256").apply { init(ks.getKey(alias, null)) }
     }
 }
+
+/**
+ * Encryption at rest for secrets the app has to keep readable: the recovery
+ * phrase and the key of a seed-phrase wallet. AES-256-GCM with a key that
+ * never leaves the Android Keystore, so a copy of the app's files (a backup,
+ * a file manager on a rooted phone) doesn't reveal them. Not bound to the
+ * fingerprint: the app asks for the security key and fingerprint itself
+ * before showing the phrase or sending.
+ *
+ * Sealed values start with "sb1:"; anything else is read back unchanged (a
+ * value saved before this existed).
+ */
+object SecretBox {
+    private const val ANDROID_KEYSTORE = "AndroidKeyStore"
+    private const val ALIAS = "tapvault-secretbox"
+    private const val PREFIX = "sb1:"
+
+    fun seal(plain: String): String {
+        val c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding").apply { init(javax.crypto.Cipher.ENCRYPT_MODE, key()) }
+        val ct = c.doFinal(plain.toByteArray())
+        val b64 = android.util.Base64.NO_WRAP
+        return PREFIX + android.util.Base64.encodeToString(c.iv, b64) + ":" + android.util.Base64.encodeToString(ct, b64)
+    }
+
+    fun open(sealed: String): String {
+        if (!sealed.startsWith(PREFIX)) return sealed
+        val (iv, ct) = sealed.removePrefix(PREFIX).split(":").map { android.util.Base64.decode(it, android.util.Base64.NO_WRAP) }
+        val c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+        c.init(javax.crypto.Cipher.DECRYPT_MODE, key(), javax.crypto.spec.GCMParameterSpec(128, iv))
+        return String(c.doFinal(ct))
+    }
+
+    private fun key(): javax.crypto.SecretKey {
+        val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+        (ks.getKey(ALIAS, null) as? javax.crypto.SecretKey)?.let { return it }
+        return javax.crypto.KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE).apply {
+            init(
+                KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+                    .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                    .setKeySize(256)
+                    .build(),
+            )
+        }.generateKey()
+    }
+}

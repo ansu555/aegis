@@ -7,8 +7,10 @@ import app.tapvault.core.Receivers
 /**
  * App-private settings. Testnet only: the gas key just pays fees, and the
  * wallet's temporary key is deleted from the chain (and from here) when
- * setup finishes. Nothing here can move the wallet's funds. Writes are
- * synchronous so a crash right after a setup step can't lose what it created.
+ * setup finishes. The exception is a seed-phrase wallet: until it is
+ * protected with a card, its key and phrase (encrypted, [SecretBox]) do
+ * control its funds. Writes are synchronous so a crash right after a setup
+ * step can't lose what it created.
  */
 class Store(context: Context, file: String = WalletIndex.prefsFile(WalletIndex.FIRST)) {
     private val p = context.getSharedPreferences(file, Context.MODE_PRIVATE)
@@ -17,9 +19,24 @@ class Store(context: Context, file: String = WalletIndex.prefsFile(WalletIndex.F
         get() = p.getString("wallet", null)
         set(v) { p.edit().putString("wallet", v).commit() }
 
+    /** The wallet account's own key: during setup, and for as long as a seed-phrase wallet isn't protected. Encrypted ([SecretBox]). */
     var walletKey: String?
-        get() = p.getString("wallet_key", null)
-        set(v) { p.edit().putString("wallet_key", v).commit() }
+        get() = p.getString("wallet_key", null)?.let { SecretBox.open(it) }
+        set(v) { p.edit().putString("wallet_key", v?.let { SecretBox.seal(it) }).commit() }
+
+    /**
+     * A seed-phrase wallet: a plain NEAR account controlled by [walletKey]
+     * (setup step 1, no contract), until "Protect with bank card" finishes
+     * setup. Cleared when it does.
+     */
+    var seedWallet: Boolean
+        get() = p.getBoolean("seed_wallet", false)
+        set(v) { p.edit().putBoolean("seed_wallet", v).commit() }
+
+    /** The recovery phrase of a seed-phrase wallet (null for one imported from a private key). Encrypted ([SecretBox]). */
+    var seedPhrase: String?
+        get() = p.getString("seed_phrase", null)?.let { SecretBox.open(it) }
+        set(v) { p.edit().putString("seed_phrase", v?.let { SecretBox.seal(it) }).commit() }
 
     var gasAccount: String?
         get() = p.getString("gas", null)
@@ -40,8 +57,8 @@ class Store(context: Context, file: String = WalletIndex.prefsFile(WalletIndex.F
 
     /** Names and keys picked for the accounts of a setup in progress ([app.tapvault.core.Onboarding.Plan], encoded). */
     var setupPlan: String?
-        get() = p.getString("setup_plan", null)
-        set(v) { p.edit().putString("setup_plan", v).commit() }
+        get() = p.getString("setup_plan", null)?.let { SecretBox.open(it) }
+        set(v) { p.edit().putString("setup_plan", v?.let { SecretBox.seal(it) }).commit() }
 
     /** A card read and signed during setup but not yet added on-chain ([PendingCard], encoded). */
     var pendingCard: String?

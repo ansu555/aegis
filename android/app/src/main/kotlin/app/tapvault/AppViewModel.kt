@@ -50,6 +50,8 @@ import app.tapvault.core.ActionJson
 import app.tapvault.core.TapvaultException
 import app.tapvault.core.SecurityKey
 import app.tapvault.core.TapvaultWallet
+import app.tapvault.core.Mnemonic
+import app.tapvault.core.SeedWallet
 import app.tapvault.core.WalletState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -64,7 +66,7 @@ import java.util.Locale
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 
-enum class Screen { Welcome, Limits, Setup, Home, Send, Activity, CardCheck, Settings, Security, Recover, Guardian }
+enum class Screen { Welcome, Limits, Setup, Home, Send, Activity, CardCheck, Settings, Security, Recover, Guardian, SeedCreate, SeedImport }
 
 /**
  * A card tap the UI is waiting for; [reading] once a card is in the field,
@@ -136,6 +138,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var outcome by mutableStateOf<Outcome?>(null)
     var tap by mutableStateOf<TapRequest?>(null)
 
+    /** The open welcome menu, "Create wallet" or "I have a wallet" (drawn above the blur source so its glass frosts the screen). */
+    var welcomeMenu by mutableStateOf<WelcomeMenu?>(null)
+
     /** The security key sheet, while a flow waits for the key. */
     var keyPrompt by mutableStateOf<KeyPrompt?>(null)
         private set
@@ -156,6 +161,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Why the last refresh failed (e.g. no connection), or null when it worked. */
     var offline by mutableStateOf<String?>(null)
     var setupStep by mutableStateOf(store.setupStep)
+
+    /** The active wallet is a seed-phrase wallet (a plain NEAR account, not protected by a card yet). */
+    var seedWallet by mutableStateOf(store.seedWallet)
+
+    /** The active wallet can be used: a finished Tapvault wallet, or a seed-phrase wallet. */
+    val ready get() = setupStep >= 4 || (seedWallet && setupStep == 1)
     val log = mutableStateListOf<String>()
 
 
@@ -576,7 +587,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Pull-to-refresh: reload now and show the indicator until it's done. */
     fun pullRefresh() {
-        if (store.setupStep < 4 || pulling) return
+        if (!store.usable() || pulling) return
         pulling = true
         viewModelScope.launch {
             refresh()
@@ -591,11 +602,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun refresh() {
         val id = activeId
         val st = store
-        if (st.setupStep < 4) return
+        if (!st.usable()) return
         if (!refreshing.compareAndSet(false, true)) return
         viewModelScope.launch {
             try {
-                withContext(Dispatchers.IO) {
+                if (st.setupStep < 4) withContext(Dispatchers.IO) {
+                    // A seed-phrase wallet: a plain account, so just its balance.
+                    val (b, locked) = near.spendable(st.walletAccount!!)
+                    withContext(Dispatchers.Main) {
+                        if (activeId == id) { wallet = null; balance = b; storageLocked = locked; proposals = emptyList(); offline = null }
+                    }
+                } else withContext(Dispatchers.IO) {
                     val w = walletClient(st)
                     val s = w.state()
                     val (b, locked) = near.spendable(w.account)
@@ -691,11 +708,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         continueSetup()
     }
 
-    fun continueSetup() = run("Setting up") {
-        // Without a card (phone-only wallet), setup never reads one, so it needs no NFC.
-        val withCard = store.withCard
-        if (withCard && PendingCard.decode(store.pendingCard) == null && store.setupStep < 3) requireNfc()
-        val ob = Onboarding(near)
+    /** The security key and the phone key, made once per wallet before anything goes on chain. */
+    private fun ensureLocalKeys() {
         if (store.securityKey == null) {
             progress("Set your security key")
             createSecurityKey("Set your security key", "You'll type it for every payment and to change your card. At least ${SecurityKey.MIN_LENGTH} characters; it never leaves this phone.")
@@ -710,6 +724,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 throw IllegalStateException("Set up a screen lock (PIN, pattern or password) on this phone first, then continue. (${e.message})")
             }
             note("phone key stored in ${phone.hardwareLabel}")
+        }
+    }
+
+    private fun shippedWasm(): ByteArray = getApplication<Application>().assets.open("tapvault_contract.wasm").use { it.readBytes() }
+
+    fun continueSetup() = run("Setting up") {
+        // Without a card (phone-only wallet), setup never reads one, so it needs no NFC.
+        val withCard = store.withCard
+        if (withCard && PendingCard.decode(store.pendingCard) == null && store.setupStep < 3) requireNfc()
+        val ob = Onboarding(near)
+        ensureLocalKeys()
+        // Protecting a seed-phrase wallet: check it's safe before a card is read or anything is sent.
+        val seed = store.seedWallet
+        if (seed && store.setupStep < 2 && near.codeHash(store.walletAccount!!) == NearClient.NO_CODE) {
+            progress("Checking your wallet")
+            SeedWallet(near, store.walletAccount!!, NearKey.fromSecret(store.walletKey!!)).preflight(shippedWasm().size, needsFeeAccount = store.gasAccount == null)
+        }
+        // A wallet imported with its key has no fee account yet: fund one from the wallet itself.
+        if (seed && store.gasAccount == null) {
+            progress("Creating the fee account")
+            val gk = store.gasKey?.let { NearKey.fromSecret(it) } ?: NearKey.random().also { store.gasKey = it.secretString() }
+            store.gasAccount = SeedWallet(near, store.walletAccount!!, NearKey.fromSecret(store.walletKey!!)).fundFeeAccount(gk)
+            note("fee account ${store.gasAccount}")
         }
         if (store.setupStep < 1) {
             progress("Creating your wallet account on NEAR testnet")
@@ -762,10 +799,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (onChain != null) {
                 note("wallet contract already deployed")
             } else {
-                progress("Approve with your fingerprint to create the wallet")
-                phone.reason = "Create your Tapvault wallet"
-                val wasm = getApplication<Application>().assets.open("tapvault_contract.wasm").use { it.readBytes() }
-                val r = ob.deployAndInit(accounts, wasm, phone)
+                val wasm = shippedWasm()
+                // Any other key on the account (another wallet app the phrase was used in) goes with the deploy.
+                val others = near.accessKeys(accounts.wallet).filter { it != accounts.walletKey.publicKeyString }
+                if (others.isNotEmpty()) note("removing ${others.size} other key(s) from the account")
+                progress(if (seed) "Approve with your fingerprint to protect the wallet" else "Approve with your fingerprint to create the wallet")
+                phone.reason = if (seed) "Protect ${accounts.wallet}: from now on your recovery phrase can't move funds" else "Create your Tapvault wallet"
+                val r = ob.deployAndInit(accounts, wasm, phone, others)
                 note("wallet contract deployed: ${near.explorerTx(r.hash)}")
             }
             setStep(2)
@@ -839,7 +879,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 phone.reason = (if (store.limitsOn) "Lock the wallet: up to ${store.instantNear} NEAR at once, ${store.dailyNear} NEAR a day"
                 else "Lock the wallet: no instant payments, every payment waits ${Delays.SHORTEST.transfer / 3600} hour") +
                     (if (cardOnChain) "" else "; this phone alone approves until you add a card")
-                ob.finalize(accounts, phone, args)
+                ob.finalize(accounts, phone, args, near.accessKeys(accounts.wallet).filter { it != accounts.walletKey.publicKeyString })
             }
             val keys = near.accessKeys(accounts.wallet)
             note(if (keys.isEmpty()) "wallet account locked: no keys left" else "WARNING: wallet still has keys: $keys")
@@ -847,10 +887,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             store.walletKey = null
             store.pendingCard = null
             store.pendingCard2 = null
+            // A protected seed-phrase wallet: the key is gone from the chain, so the phrase is useless now.
+            store.seedPhrase = null
+            store.seedWallet = false
         }
-        withContext(Dispatchers.Main) { screen = Screen.Home; reloadWalletList() }
+        withContext(Dispatchers.Main) { seedWallet = false; screen = Screen.Home; reloadWalletList() }
         refresh()
-        outcome = if (withCard) Outcome(true, "Your wallet is ready", "Funds now move only with your phone and your card.", near.explorerAccount(accounts.wallet))
+        outcome = if (seed) Outcome(true, "Your wallet is protected", (if (withCard) "Funds now move only with your phone and your card." else "Funds now move only with your phone; add your card in Security.") + " Your recovery phrase no longer works.", near.explorerAccount(accounts.wallet))
+        else if (withCard) Outcome(true, "Your wallet is ready", "Funds now move only with your phone and your card.", near.explorerAccount(accounts.wallet))
         else Outcome(true, "Your wallet is ready", "For now your phone key alone approves payments. Add your card in Security so every payment needs both.", near.explorerAccount(accounts.wallet))
     }
 
@@ -859,6 +903,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * have nothing deployed yet are deleted and their NEAR goes back to it.
      */
     fun startOver() = run("Starting over") {
+        // A seed-phrase wallet being protected: never delete the user's account. Before the contract is
+        // deployed, stop and go back to the wallet; after it, only finishing is safe (the key is still there).
+        if (store.seedWallet) {
+            if (store.setupStep > 1) throw IllegalStateException("The wallet contract is already on your account, so protection has to be finished: tap Continue setup. Until then your recovery phrase still works.")
+            store.pendingCard = null; store.pendingCard2 = null; store.wantBackup = false
+            withContext(Dispatchers.Main) { cardReport = null; screen = Screen.Home }
+            refresh()
+            return@run
+        }
         val sp = sponsor()
         val done = mutableListOf<String>()
         if (sp != null) {
@@ -900,6 +953,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val to = receiver.trim().lowercase()
         require(to.matches(Regex("^(([a-z\\d]+[-_])*[a-z\\d]+\\.)*([a-z\\d]+[-_])*[a-z\\d]+$")) && to.length in 2..64) { "That isn't a NEAR account id" }
 
+        if (store.seedWallet && store.setupStep == 1) return@run sendFromSeed(to, amount)
         val w = walletClient()
         val st = w.state()
         if (st.frozen) throw IllegalStateException("The wallet is frozen. Request an unfreeze first.")
@@ -968,6 +1022,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 near.explorerTx(r.hash),
             )
         }
+        refresh()
+    }
+
+    /**
+     * A seed-phrase wallet: a plain NEAR transfer signed with the phrase's key,
+     * after the security key and the phone's fingerprint prompt (the app's own
+     * gate; the chain only sees the account's key).
+     */
+    private suspend fun sendFromSeed(to: String, amount: java.math.BigInteger) {
+        val acct = store.walletAccount!!
+        require(to != acct) { "That's this wallet's own account" }
+        val (available, _) = near.spendable(acct)
+        require(amount <= available) { "The wallet only has ${Near.format(available, 4)} NEAR available to send" }
+        require(to.matches(Regex("^[0-9a-f]{64}$")) || near.accountExists(to)) { "$to doesn't exist on NEAR testnet" }
+        requireSecurityKey("To send ${Near.format(amount)} NEAR to $to.")
+        progress("Approve on your phone")
+        phone.reason = "Send ${Near.format(amount)} NEAR to $to"
+        phone.sign(sha256("tapvault/app/v1/seed-send".toByteArray(), to.toByteArray(), amount.toByteArray()))
+        progress("Sending")
+        rememberReceiver(to)
+        val r = SeedWallet(near, acct, NearKey.fromSecret(store.walletKey!!)).send(to, amount)
+        note("sent: ${near.explorerTx(r.hash)}")
+        outcome = Outcome(true, "Sent ${Near.format(amount)} NEAR", "to $to", near.explorerTx(r.hash))
         refresh()
     }
 
@@ -1333,6 +1410,107 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         continueSetup()
     }
 
+    // ---- seed-phrase wallets ----
+
+    /** The phrase on the "Create seed phrase wallet" screens (also saved, encrypted, so a restart shows the same words). */
+    var seedDraft by mutableStateOf<String?>(null)
+
+    /** "Create wallet" → "Create seed phrase wallet": new words (or the ones already shown for this wallet). */
+    fun startSeedWallet() {
+        val phrase = store.seedPhrase?.takeIf { store.setupStep == 0 } ?: Mnemonic.generate().also { store.seedPhrase = it }
+        seedDraft = phrase
+        go(Screen.SeedCreate)
+    }
+
+    /**
+     * After the words were written down and checked: a testnet account whose
+     * only key comes from the phrase. [protectNow] goes on to "Protect with
+     * bank card" straight away.
+     */
+    fun createSeedWallet(protectNow: Boolean) = run("Creating your wallet") {
+        val phrase = store.seedPhrase ?: throw IllegalStateException("The recovery phrase is missing. Go back and start again.")
+        ensureLocalKeys()
+        if (store.setupStep < 1) {
+            progress("Creating your wallet account on NEAR testnet")
+            val key = Mnemonic.nearKey(phrase)
+            // Saved before any account exists, so a retry reuses what was already created.
+            val plan = Onboarding.Plan.decode(store.setupPlan)?.takeIf { it.walletKey.publicKeyString == key.publicKeyString }
+                ?: Onboarding.Plan(Onboarding.Plan.random().tag, key, NearKey.random()).also { store.setupPlan = it.encode() }
+            val a = Onboarding(near).createAccounts(sponsor = sponsor(), plan = plan) { note(it) }
+            store.walletAccount = a.wallet; store.walletKey = a.walletKey.secretString()
+            store.gasAccount = a.gas; store.gasKey = a.gasKey.secretString()
+            store.seedWallet = true
+            store.setupPlan = null
+            setStep(1)
+            note("seed phrase wallet ${a.wallet}")
+        }
+        withContext(Dispatchers.Main) { seedWallet = true; seedDraft = null; screen = Screen.Home; reloadWalletList() }
+        refresh()
+        if (protectNow) withContext(Dispatchers.Main) { protectWithCard() }
+        else outcome = Outcome(true, "Your wallet is ready", "Your recovery phrase controls it. Protect it with your bank card any time from Home.", near.explorerAccount(store.walletAccount!!))
+    }
+
+    /** What the import screen found for the phrase or key the user entered. */
+    class ImportFound(val accounts: List<String>, val key: NearKey, val phrase: String?)
+
+    var importFound by mutableStateOf<ImportFound?>(null)
+
+    /** "I have a wallet" → "Import with recovery phrase": find the accounts the phrase or key controls. */
+    fun findImport(input: String, account: String) = run("Looking for your wallet") {
+        val (key, phrase) = SeedWallet.parseImport(input)
+        val typed = account.trim().lowercase()
+        val accounts = if (typed.isNotEmpty()) {
+            if (!near.accountExists(typed)) throw IllegalStateException("$typed doesn't exist on NEAR testnet.")
+            if (key.publicKeyString !in near.fullAccessKeys(typed)) throw IllegalStateException("This phrase or key doesn't control $typed (it isn't one of its full-access keys).")
+            listOf(typed)
+        } else SeedWallet.findAccounts(near, key)
+        if (accounts.isEmpty()) throw IllegalStateException("No NEAR testnet account uses this phrase or key yet. If you know the account name, type it in the second box.")
+        val plain = accounts.filter { near.codeHash(it) == NearClient.NO_CODE }
+        if (plain.isEmpty()) throw IllegalStateException("${accounts.first()} runs a smart contract, so it can't be used as a seed phrase wallet here.")
+        val already = wallets.ids.mapNotNull { wallets.store(it).walletAccount }.toSet()
+        plain.firstOrNull { it in already }?.let { if (plain.size == 1) throw IllegalStateException("$it is already on this phone.") }
+        withContext(Dispatchers.Main) { importFound = ImportFound(plain.filter { it !in already }, key, phrase) }
+    }
+
+    /** Add the account found by [findImport] as a seed-phrase wallet; [protectNow] goes on to "Protect with bank card". */
+    fun importWallet(account: String, protectNow: Boolean) = run("Adding your wallet") {
+        val f = importFound ?: throw IllegalStateException("Look up the wallet first.")
+        require(account in f.accounts) { "Pick one of the accounts found." }
+        ensureLocalKeys()
+        store.walletAccount = account
+        store.walletKey = f.key.secretString()
+        store.seedPhrase = f.phrase
+        store.gasAccount = null; store.gasKey = null
+        store.seedWallet = true
+        setStep(1)
+        note("imported $account")
+        withContext(Dispatchers.Main) { seedWallet = true; importFound = null; screen = Screen.Home; reloadWalletList() }
+        refresh()
+        if (protectNow) withContext(Dispatchers.Main) { protectWithCard() }
+        else outcome = Outcome(true, "Wallet added", "$account is on this phone. Protect it with your bank card any time from Home.", near.explorerAccount(account))
+    }
+
+    /** "Protect with bank card": the rest of setup (limits, card, contract) on the seed-phrase wallet's account. */
+    fun protectWithCard() {
+        if (!seedWallet || setupStep != 1) return
+        store.withCard = true
+        store.wantBackup = false
+        store.pendingCard2 = null
+        go(Screen.Limits)
+    }
+
+    /** The recovery phrase (or imported private key) while it is on screen; null otherwise. */
+    var revealed by mutableStateOf<Pair<String, String>?>(null)
+
+    fun revealPhrase() = run("Recovery phrase") {
+        val phrase = store.seedPhrase
+        val secret = phrase ?: store.walletKey ?: throw IllegalStateException("This wallet has no recovery phrase on this phone.")
+        requireSecurityKey(if (phrase != null) "To see your recovery phrase." else "To see your private key.")
+        phone.reason = if (phrase != null) "Show your recovery phrase" else "Show your private key"
+        phone.sign(sha256("tapvault/app/v1/reveal-secret".toByteArray()))
+        withContext(Dispatchers.Main) { revealed = (if (phrase != null) "Recovery phrase" else "Private key") to secret }
+    }
+
     // ---- recover on a new phone (plan 5.5) ----
 
     /** What "Recover a wallet" found for the account the user typed. */
@@ -1676,7 +1854,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Called when the app comes to the foreground: lock if it was away more than 60 s (or just started) and a wallet exists. */
     fun lockIfAway() {
         val away = System.currentTimeMillis() - wallets.backgroundAt
-        val anyReady = wallets.ids.any { wallets.store(it).setupStep >= 4 }
+        val anyReady = wallets.ids.any { wallets.store(it).usable() }
         if (anyReady && busy == null && (wallets.backgroundAt == 0L || away > 60_000)) locked = true
     }
 
@@ -1729,12 +1907,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun startScreen(s: Store) = when {
-        s.setupStep >= 4 -> Screen.Home
+        s.usable() -> Screen.Home
         s.joinMode == "recover" -> Screen.Recover
         s.joinMode == "guardian" -> Screen.Guardian
         s.setupStep > 0 -> Screen.Setup
         else -> Screen.Welcome
     }
+
+    /** A wallet that can be used: a finished Tapvault wallet, or a seed-phrase wallet (account made, not being protected). */
+    private fun Store.usable() = setupStep >= 4 || (seedWallet && setupStep == 1)
 
     /** Nothing created yet for [id]: no account, no saved plan, no card read, not joining a wallet. */
     private fun isEmpty(id: String): Boolean = wallets.store(id).let {
@@ -1744,7 +1925,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun reloadWalletList() {
         walletList = wallets.ids.map { id ->
             val s = wallets.store(id)
-            WalletEntry(id, wallets.name(id), s.walletAccount, s.setupStep >= 4, id == activeId)
+            WalletEntry(id, wallets.name(id), s.walletAccount, s.usable(), id == activeId)
         }
     }
 
@@ -1782,7 +1963,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Leave a new wallet that was never started and go back to another one. */
     fun cancelNewWallet() {
-        val back = wallets.ids.firstOrNull { it != activeId && wallets.store(it).setupStep >= 4 }
+        val back = wallets.ids.firstOrNull { it != activeId && wallets.store(it).usable() }
             ?: wallets.ids.firstOrNull { it != activeId } ?: return
         switchWallet(back)
     }
@@ -1799,6 +1980,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         activeId = id
         store = wallets.store(id)
         setupStep = store.setupStep
+        seedWallet = store.seedWallet
+        seedDraft = null; importFound = null; revealed = null
         wallet = null; balance = null; storageLocked = null; proposals = emptyList(); cardReport = null; offline = null
         cardBook = store.cards; holdSeconds = store.holdSeconds; backup = null
         receivers = store.receivers; integrity = Integrity.Report.decode(store.integrity)
@@ -1830,6 +2013,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         SecurityPepper.delete(SecurityPepper.aliasFor(activeId))
         store.clear()
         hasSecurityKey = false
+        seedWallet = false
         setStep(0)
         wallet = null; balance = null; storageLocked = null; proposals = emptyList(); cardReport = null
         cardBook = store.cards; holdSeconds = store.holdSeconds; backup = null
@@ -1844,7 +2028,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val gone = walletName
         erase(activeId)
         log.clear()
-        val next = wallets.ids.firstOrNull { wallets.store(it).setupStep >= 4 } ?: wallets.ids.first()
+        val next = wallets.ids.firstOrNull { wallets.store(it).usable() } ?: wallets.ids.first()
         activate(next)
         if (wallets.ids.size > 1 || store.setupStep > 0) outcome = Outcome(true, "$gone forgotten", "Now showing ${walletName}.")
     }
