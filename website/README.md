@@ -37,5 +37,21 @@ desktop, 4:3 on phones.
 `assets/app/markets.png`, `swap.png`, `coin.png` are copies of `docs/assets/`.
 The logo is `assets/aegis-mark.svg` (the app's mark, cream on transparent).
 
-The "Download for Android" button points at the GitHub repository until there
-is a release APK (`TODO` in `index.html`).
+## The APK
+
+"Download for Android" fetches `aegis.apk` from the latest GitHub release
+(`releases/latest/download/aegis.apk`), so the site never hosts the file. To
+ship a new build:
+
+```bash
+android/build-apk.sh
+website/release.sh                      # copies it to website/downloads/aegis.apk, writes version, size, SHA-256 into index.html
+gh release create vX.Y.Z website/downloads/aegis.apk --title "Aegis vX.Y.Z (testnet)"
+```
+
+Commit the `index.html` change so the SHA-256 on the page matches the release.
+
+## Hosting
+
+Vercel serves this folder as a static site (`vercel.json` at the repository
+root: no build, output directory `website`).

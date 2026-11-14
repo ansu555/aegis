@@ -300,6 +300,10 @@ h4 { font-size: 18px; letter-spacing: -0.01em; }
 }
 .download-mark { width: 120px; margin: 0 auto 32px; }
 .download .sub { margin-left: auto; margin-right: auto; }
+.apk-meta { margin-top: 18px; font-size: 13px; color: var(--text-3); overflow-wrap: anywhere; }
+.apk-meta + .apk-meta { margin-top: 6px; }
+.apk-meta code { font-size: 12px; }
+.apk-meta a { color: var(--text-2); text-decoration: underline; }
 
 /* ---------- footer ---------- */
 .footer { border-top: 1px solid var(--line); padding: 56px var(--gutter) 40px; }
