@@ -68,13 +68,18 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.tapvault.core.Asset
+import app.tapvault.core.ChainAddress
 import app.tapvault.core.Near
+import app.tapvault.core.Network
+import app.tapvault.core.TokenAmount
+import app.tapvault.core.Tokens
 import app.tapvault.core.ProposalInfo
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import java.math.BigInteger
 
-private val tabScreens = setOf(Screen.Home, Screen.Activity, Screen.Settings)
+private val tabScreens = setOf(Screen.Home, Screen.Trade, Screen.Activity, Screen.Settings)
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.animation.ExperimentalSharedTransitionApi::class)
 @Composable
@@ -120,6 +125,7 @@ fun TapvaultApp(vm: AppViewModel) {
                             // the header stays put; only what is below it scrolls
                             Column(Modifier.padding(horizontal = 20.dp)) {
                                 when (s) {
+                                    Screen.Trade -> LargeTitle("Trade", if (vm.tradeAvailable) "Swap, bridge, buy and sell" else "Mainnet only")
                                     Screen.Activity -> LargeTitle("Activity", "Approvals, delays and history")
                                     Screen.CardCheck -> TopBar(if (ready) "Your card" else "Card check", onBack = { vm.go(if (ready) vm.cameFrom else Screen.Welcome) })
                                     Screen.Settings -> LargeTitle("Settings")
@@ -137,6 +143,7 @@ fun TapvaultApp(vm: AppViewModel) {
                                     Screen.Setup -> SetupProgress(vm)
                                     Screen.Home -> Home(vm, homeUi)
                                     Screen.Send -> Send(vm)
+                                    Screen.Trade -> TradeScreen(vm)
                                     Screen.Activity -> ActivityScreen(vm)
                                     Screen.CardCheck -> CardCheck(vm)
                                     Screen.Settings -> SettingsScreen(vm)
@@ -237,7 +244,7 @@ private fun delayFor(vm: AppViewModel, p: ProposalInfo): Long {
     val w = vm.wallet ?: return 0
     val phoneIdx = runCatching { w.phoneIndexOf(vm.phone.publicKey) }.getOrNull()
     return if (p.isTransfer) {
-        if (p.isNearTransfer && w.isInstantTo(p.transferReceiver(), p.transferAmount() ?: BigInteger.ZERO)) 0 else w.delays.transfer
+        if (p.isTransfer && w.isInstantTo(p.transferAsset()!!, p.transferReceiver(), p.transferAmount() ?: BigInteger.ZERO)) 0 else w.delays.transfer
     } else if (phoneIdx != null && p.approvedBy(phoneIdx)) w.delays.config else w.delays.recovery
 }
 
@@ -283,7 +290,7 @@ private fun ProposalRow(vm: AppViewModel, p: ProposalInfo, onClick: () -> Unit) 
         if (p.isTransfer) Ic.Send else Ic.Settings, "${proposalTitle(p)} · #${p.id}", st.text,
         tint = st.color, iconBg = st.color.copy(alpha = 0.13f), onClick = onClick, chevron = true,
     ) {
-        p.transferAmount()?.takeIf { p.isNearTransfer }?.let { Text("−${Near.format(it)} NEAR", style = Type.Amount.copy(fontSize = 15.sp)) }
+        p.transferAmount()?.let { a -> Text("−" + TokenAmount.describe(p.transferAsset()!!, a), style = Type.Amount.copy(fontSize = 15.sp), maxLines = 1) }
     }
 }
 
@@ -327,6 +334,7 @@ private fun Home(vm: AppViewModel, ui: HomeUi) {
             }
             w == null && vm.offline == null -> Shimmer(Modifier.size(170.dp, 26.dp))
         }
+        vm.totalUsd?.let { Spacer(Modifier.height(8.dp)); StatusPill("≈ ${app.tapvault.core.Prices.usd(it)} in NEAR and listed tokens", Tv.Text2) }
         securityPill(vm)?.let { (text, color, target) ->
             Spacer(Modifier.height(8.dp))
             StatusPill(text, color, modifier = Modifier.clip(RoundedCornerShape(50)).clickable(enabled = idle) { vm.go(target) })
@@ -334,9 +342,10 @@ private fun Home(vm: AppViewModel, ui: HomeUi) {
     }
 
     // actions
-    Row(Modifier.fillMaxWidth().padding(top = 28.dp).enter(3), horizontalArrangement = Arrangement.spacedBy(30.dp, Alignment.CenterHorizontally)) {
-        ActionButton(Ic.Send, "Send", primary = true, enabled = w?.frozen == false && idle) { vm.go(Screen.Send) }
+    Row(Modifier.fillMaxWidth().padding(top = 28.dp).enter(3), horizontalArrangement = Arrangement.spacedBy(if (vm.tradeAvailable) 20.dp else 30.dp, Alignment.CenterHorizontally)) {
+        ActionButton(Ic.Send, "Send", primary = true, enabled = w?.frozen == false && idle) { vm.openSend() }
         ActionButton(Ic.Receive, "Receive") { ui.receive = true }
+        if (vm.tradeAvailable) ActionButton(Ic.Refresh, "Swap", enabled = idle) { vm.go(Screen.Trade) }
         ActionButton(Ic.Freeze, if (frozen) "Frozen" else "Freeze", tint = Tv.Ice, enabled = w?.frozen == false && idle) { confirmFreeze = true }
     }
 
@@ -505,42 +514,71 @@ private fun ReceiveSheet(vm: AppViewModel, onDismiss: () -> Unit) {
 
 @Composable
 private fun ColumnScope.Send(vm: AppViewModel) {
-    var to by remember { mutableStateOf("") }
-    var amount by remember { mutableStateOf("") }
+    val draft = vm.sendDraft
+    var to by remember { mutableStateOf(draft.to) }
+    var amount by remember { mutableStateOf(draft.amount) }
+    // null = NEAR
+    var token by remember { mutableStateOf(draft.token) }
+    var picking by remember { mutableStateOf(false) }
     var review by remember { mutableStateOf(false) }
     // The receiver came from the clipboard (Paste button, or several characters inserted at once).
-    var pasted by remember { mutableStateOf(false) }
+    var pasted by remember { mutableStateOf(draft.to.isNotEmpty()) }
     val clip = LocalClipboardManager.current
     val focus = androidx.compose.ui.platform.LocalFocusManager.current
     val w = vm.wallet
-    val limit = w?.nearLimit
-    val parsed = runCatching { Near.parse(amount).takeIf { it.signum() > 0 } }.getOrNull()
-    val spendable = vm.balance
-    val validTo = to.matches(Regex("^(([a-z\\d]+[-_])*[a-z\\d]+\\.)*([a-z\\d]+[-_])*[a-z\\d]+$")) && to.length in 2..64
-    val toError = if (to.length >= 2 && !validTo) "That isn't a NEAR account name" else if (to == vm.store.walletAccount) "That's this wallet's own account" else null
+    val asset: Asset = token?.let { Asset.Ft(it.contract) } ?: Asset.Near
+    val symbol = token?.symbol ?: "NEAR"
+    val decimals = token?.decimals ?: 24
+    val limit = w?.limitFor(asset)
+    val parsed = TokenAmount.parse(amount, decimals)
+    val spendable: BigInteger? = if (token == null) vm.balance else vm.tokens?.firstOrNull { it.token.contract == token!!.contract }?.raw
+    fun fmt(v: BigInteger, frac: Int = 4) = if (token == null) Near.format(v, frac) else TokenAmount.format(v, decimals, maxFraction = frac)
+    val validTo = Tokens.isAccount(to)
+    val otherChain = !validTo || Network.isImplicit(to)
+    val chains = if (otherChain) ChainAddress.guess(to) else emptyList()
+    val toError = when {
+        to.length >= 2 && !validTo && chains.isNotEmpty() -> "That's an address on another chain (${chains.first().name}…). Use Trade → Bridge to send there."
+        to.length >= 2 && !validTo -> "That isn't a NEAR account name"
+        to == vm.store.walletAccount -> "That's this wallet's own account"
+        else -> null
+    }
     val tooMuch = parsed != null && spendable != null && parsed > spendable
-    val instant = parsed != null && w?.isInstantTo(to, parsed) == true
+    val instant = parsed != null && w?.isInstantTo(asset, to, parsed) == true
     fun press(k: Char) {
         focus.clearFocus()
         amount = when (k) {
             '<' -> amount.dropLast(1)
-            '.' -> if ('.' in amount) amount else if (amount.isEmpty()) "0." else "$amount."
+            '.' -> if ('.' in amount || decimals == 0) amount else if (amount.isEmpty()) "0." else "$amount."
             else -> if (amount == "0") "$k" else "$amount$k"
-        }.take(14)
+        }.take(18)
     }
 
-    PinnedTopBar("Send NEAR", onBack = { vm.go(Screen.Home) })
+    PinnedTopBar("Send $symbol", onBack = { vm.go(Screen.Home) })
     Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
         Spacer(Modifier.height(6.dp))
+        draft.label?.let { Notice(Ic.Info, it, "Check the address and amount against what the provider shows.", Tv.Text2, Modifier.padding(bottom = 12.dp)) }
+        // what to send: NEAR or one of the wallet's tokens
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Tv.Glass).clickable(enabled = vm.busy == null) { picking = true }.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Asset", style = Type.Caption, color = Tv.Text2)
+                Text(if (token?.verified == false) "$symbol · unverified" else symbol, style = Type.BodyStrong, color = if (token?.verified == false) Tv.Warn else Tv.Text)
+            }
+            TvIcon(Ic.ChevronDown, 18.dp, Tv.Text2)
+        }
+        Spacer(Modifier.height(14.dp))
         TvField("To", to, { v ->
-            val nv = v.trim().lowercase()
+            val nv = v.trim().let { if (it.startsWith("0x") || Tokens.isAccount(it.lowercase())) it.lowercase() else it }
             pasted = when { nv.isEmpty() -> false; nv.length - to.length > 1 -> true; else -> pasted }
             to = nv
         }, placeholder = vm.network.example("name"), error = toError, trailing = {
-            Box(Modifier.clip(RoundedCornerShape(12.dp)).background(Tv.GlassStrong).clickable { clip.getText()?.text?.let { to = it.trim().lowercase(); pasted = true } }.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Box(Modifier.clip(RoundedCornerShape(12.dp)).background(Tv.GlassStrong).clickable { clip.getText()?.text?.let { to = it.trim().let { s -> if (Tokens.isAccount(s.lowercase())) s.lowercase() else s }; pasted = true } }.padding(horizontal = 12.dp, vertical = 8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) { TvIcon(Ic.Paste, 16.dp, Tv.Text); Spacer(Modifier.width(6.dp)); Text("Paste", style = Type.CaptionStrong, color = Tv.Text) }
             }
         })
+        if (validTo && to.startsWith("0x")) Caption("0x… is a NEAR account here (an Ethereum-style implicit account). To pay an address on Ethereum or another chain, use Trade → Bridge.", Modifier.padding(top = 6.dp, start = 4.dp), color = Tv.Warn)
         ContactChips(vm, to) { to = it; pasted = false }
         // the amount, typed on the keypad below
         Column(Modifier.fillMaxWidth().padding(top = 22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -552,23 +590,28 @@ private fun ColumnScope.Send(vm: AppViewModel) {
                     shown, maxLines = 1,
                     style = Type.Balance.copy(fontSize = fs.sp, lineHeight = (fs * 1.12f).sp, brush = if (amount.isEmpty()) null else Tv.titanium()),
                     color = if (amount.isEmpty()) Tv.Text3 else Tv.Text,
-                    modifier = Modifier.semantics { contentDescription = "Amount ${amount.ifEmpty { "0" }} NEAR" },
+                    modifier = Modifier.semantics { contentDescription = "Amount ${amount.ifEmpty { "0" }} $symbol" },
                 )
-                Text(" NEAR", style = Type.BodyStrong, color = Tv.Text2, modifier = Modifier.padding(bottom = (fs * 0.2f).dp))
+                Text(" $symbol", style = Type.BodyStrong, color = Tv.Text2, modifier = Modifier.padding(bottom = (fs * 0.2f).dp))
             }
             Spacer(Modifier.height(6.dp))
+            val usd = parsed?.let { vm.prices?.value(token?.contract, it, decimals) }
             Text(
-                if (tooMuch) "More than the wallet holds" else "Available: ${spendable?.let { Near.format(it, 4) } ?: "…"} NEAR",
-                style = Type.Caption, color = if (tooMuch) Tv.Danger else Tv.Text2,
+                when {
+                    tooMuch -> "More than the wallet holds"
+                    amount.isNotEmpty() && parsed == null -> "$symbol has $decimals decimals"
+                    else -> "Available: ${spendable?.let { fmt(it) } ?: "…"} $symbol" + (usd?.let { " · ≈ ${app.tapvault.core.Prices.usd(it)}" } ?: "")
+                },
+                style = Type.Caption, color = if (tooMuch || (amount.isNotEmpty() && parsed == null)) Tv.Danger else Tv.Text2,
             )
             Spacer(Modifier.height(14.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Chip("Half") { spendable?.let { amount = Near.format(it.divide(BigInteger.valueOf(2)), 4) } }
+                Chip("Half") { spendable?.let { amount = fmt(it.divide(BigInteger.valueOf(2)), minOf(decimals, 6)) } }
                 Chip(if (vm.seedWallet) "Max" else "Max instant") {
-                    // keep a little behind so the wallet can always pay for its own storage
-                    val buffer = Near.parse("0.01")
-                    val most = listOfNotNull(limit?.availableNow(), spendable?.minus(buffer)).minOrNull()
-                    most?.let { amount = Near.format(it.max(BigInteger.ZERO), 4) }
+                    // NEAR: keep a little behind so the wallet can always pay for its own storage
+                    val most = if (token == null) listOfNotNull(limit?.availableNow(), spendable?.minus(Near.parse("0.01"))).minOrNull()
+                    else listOfNotNull(limit?.availableNow()?.takeIf { !vm.seedWallet }, spendable).minOrNull()
+                    most?.let { amount = fmt(it.max(BigInteger.ZERO), if (token == null) 4 else decimals) }
                 }
             }
             Spacer(Modifier.height(14.dp))
@@ -576,6 +619,7 @@ private fun ColumnScope.Send(vm: AppViewModel) {
                 vm.seedWallet -> Caption(if (parsed == null) "You'll approve with your security key and your fingerprint" else "Goes out at once and can't be undone", color = Tv.Text3)
                 parsed == null -> Caption(if (w?.phoneOnly == true) "You'll approve with your security key and your fingerprint" else "You'll approve with your fingerprint, a card tap and your security key", color = Tv.Text3)
                 instant -> StatusPill("Goes out instantly", Tv.Positive, Ic.CheckCircle)
+                limit == null && token != null -> StatusPill("$symbol has no instant limit · waits ${hoursLabel(w?.delays?.transfer ?: 3600)}", Tv.Warn, Ic.Timer)
                 else -> StatusPill("Waits ${hoursLabel(w?.delays?.transfer ?: 3600)} · you can cancel it", Tv.Warn, Ic.Timer)
             }
         }
@@ -584,11 +628,33 @@ private fun ColumnScope.Send(vm: AppViewModel) {
     Keypad(Modifier.padding(horizontal = 20.dp), ::press)
     TvButton("Review", Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), enabled = vm.busy == null && validTo && toError == null && parsed != null && !tooMuch) { focus.clearFocus(); review = true }
 
+    if (picking) GlassSheet({ picking = false }) {
+        Text("Send which?", style = Type.H2)
+        Caption("NEAR, or a token this wallet shows on Home.", Modifier.padding(top = 4.dp, bottom = 14.dp))
+        Group {
+            Row_(Ic.Wallet, "NEAR", vm.balance?.let { Near.format(it, 4) } ?: "…", chevron = token == null, onClick = { token = null; amount = ""; picking = false })
+            vm.shownTokens.forEach { tb ->
+                GroupDivider()
+                Row_(
+                    if (tb.token.verified) Ic.Layers else Ic.Warning, tb.token.symbol,
+                    TokenAmount.format(tb.raw, tb.token.decimals) + if (!tb.token.verified) " · unverified" else "",
+                    tint = if (tb.token.verified) Tv.Text else Tv.Warn,
+                    onClick = { token = tb.token; amount = ""; picking = false },
+                )
+            }
+        }
+        if (vm.shownTokens.isEmpty()) Caption("No tokens on Home yet. Add one in Manage tokens.", Modifier.padding(top = 10.dp, start = 4.dp), color = Tv.Text3)
+        Spacer(Modifier.height(10.dp))
+    }
+
     if (review && parsed != null) {
         GlassSheet({ review = false }) {
-            Text("Review payment", style = Type.H2, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+            Text(draft.label ?: "Review payment", style = Type.H2, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
             Spacer(Modifier.height(18.dp))
-            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { Amount(parsed, 4, Type.Balance.copy(fontSize = 40.sp), metal = true) }
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                if (token == null) Amount(parsed, 4, Type.Balance.copy(fontSize = 40.sp), metal = true)
+                else Text("${TokenAmount.format(parsed, decimals, maxFraction = decimals)} $symbol", style = Type.Balance.copy(fontSize = 34.sp, brush = Tv.titanium()), maxLines = 1)
+            }
             Spacer(Modifier.height(18.dp))
             // The receiver in full, never cut, the last 6 characters bold: what an address swap changes is easy to see.
             Column(Modifier.fillMaxWidth().surface(20.dp).padding(horizontal = 16.dp, vertical = 12.dp)) {
@@ -611,7 +677,8 @@ private fun ColumnScope.Send(vm: AppViewModel) {
                 if (alike != null) add("Looks like $alike, which you paid before, but isn't the same account. Check every letter.")
                 else if (!r.isKnown(to)) add("First payment to this receiver from this phone.")
                 if (pasted) add("Pasted · check it: clipboard malware swaps addresses.")
-                if (spendable != null && spendable.signum() > 0 && parsed * BigInteger.TWO > spendable) add("More than half of this wallet's balance.")
+                if (spendable != null && spendable.signum() > 0 && parsed * BigInteger.TWO > spendable) add("More than half of this wallet's $symbol.")
+                if (token?.verified == false) add("$symbol is an unverified token: its name is whatever its creator chose.")
             }
             if (warnings.isNotEmpty()) {
                 Spacer(Modifier.height(10.dp))
@@ -620,9 +687,10 @@ private fun ColumnScope.Send(vm: AppViewModel) {
             Spacer(Modifier.height(10.dp))
             Column(Modifier.fillMaxWidth().surface(20.dp).padding(horizontal = 16.dp, vertical = 8.dp)) {
                 InfoRow("From", vm.walletName)
+                token?.let { InfoRow("Token contract", shortAccount(it.contract, 24)) }
                 if (vm.seedWallet) InfoRow("Arrives", "Now · can't be undone", Tv.Warn)
                 else InfoRow("Arrives", if (instant) "Now (within your limit)" else "In ${hoursLabel(w?.delays?.transfer ?: 3600)} · you can cancel", if (instant) Tv.Positive else Tv.Warn)
-                limit?.let { InfoRow("Instant left today after", "${Near.format((if (instant) it.availableNow() - parsed else it.availableNow()).max(BigInteger.ZERO), 2)} NEAR") }
+                limit?.let { InfoRow("Instant left today after", "${fmt((if (instant) it.availableNow() - parsed else it.availableNow()).max(BigInteger.ZERO), 2)} $symbol") }
                 InfoRow("Network fee", if (vm.seedWallet) "About 0.0001 NEAR, from this wallet" else "Paid by your fee account")
                 InfoRow("Network", vm.network.displayName, if (vm.network.isMainnet) Tv.Text else Tv.Warn)
             }
@@ -638,7 +706,7 @@ private fun ColumnScope.Send(vm: AppViewModel) {
                 }
             }
             Spacer(Modifier.height(22.dp))
-            SlideToConfirm("Slide to approve") { review = false; vm.send(to, amount) }
+            SlideToConfirm("Slide to approve") { review = false; vm.send(to, amount, token, draft.label) }
             Spacer(Modifier.height(6.dp))
             TvButton("Edit", Modifier.fillMaxWidth(), Btn.Ghost) { review = false }
         }
@@ -736,7 +804,7 @@ private fun ProposalCard(vm: AppViewModel, p: ProposalInfo, @Suppress("UNUSED_PA
                 Text(proposalTitle(p), style = Type.BodyStrong, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text("${proposalSubtitle(vm, p)} · #${p.id}", style = Type.Caption, color = Tv.Text2, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            p.transferAmount()?.takeIf { p.isNearTransfer }?.let { Text("−${Near.format(it)} NEAR", style = Type.Amount) }
+            p.transferAmount()?.let { a -> Text("−" + TokenAmount.describe(p.transferAsset()!!, a), style = Type.Amount, maxLines = 1) }
         }
         // approval tracker: phone → card → delay/ready
         Row(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 4.dp), verticalAlignment = Alignment.Top) {

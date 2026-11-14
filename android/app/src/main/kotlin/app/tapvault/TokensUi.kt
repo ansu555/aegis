@@ -39,6 +39,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.tapvault.core.Asset
 import app.tapvault.core.Near
+import app.tapvault.core.MAX_LIMITS
+import app.tapvault.core.Prices
 import app.tapvault.core.TokenAmount
 import app.tapvault.core.TokenBalance
 import app.tapvault.core.TokenInfo
@@ -53,14 +55,14 @@ import kotlinx.coroutines.launch
 fun TokensSection(vm: AppViewModel, modifier: Modifier = Modifier) {
     var manage by remember { mutableStateOf(false) }
     var open by remember { mutableStateOf<TokenBalance?>(null) }
-    LaunchedEffect(vm.activeId) { vm.refreshTokens() }
+    LaunchedEffect(vm.activeId, vm.network) { vm.refreshTokens(); vm.refreshPrices() }
     Column(modifier) {
         SectionHeader("Tokens", action = "Manage") { manage = true }
         Group {
-            TokenRow("NEAR", "NEAR", vm.balance?.let { Near.format(it, 4) }, verified = true)
+            TokenRow("NEAR", "NEAR", vm.balance?.let { Near.format(it, 4) }, verified = true, usd = vm.balance?.let { b -> vm.prices?.value(null, b, 24) })
             vm.shownTokens.forEach { tb ->
                 GroupDivider()
-                TokenRow(tb.token.symbol, tb.token.name, TokenAmount.format(tb.raw, tb.token.decimals), tb.token.verified) { open = tb }
+                TokenRow(tb.token.symbol, tb.token.name, TokenAmount.format(tb.raw, tb.token.decimals), tb.token.verified, vm.prices?.value(tb.token.contract, tb.raw, tb.token.decimals)) { open = tb }
             }
             if (vm.tokens == null) {
                 GroupDivider()
@@ -75,7 +77,7 @@ fun TokensSection(vm: AppViewModel, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun TokenRow(symbol: String, name: String, amount: String?, verified: Boolean, onClick: (() -> Unit)? = null) {
+private fun TokenRow(symbol: String, name: String, amount: String?, verified: Boolean, usd: java.math.BigDecimal? = null, onClick: (() -> Unit)? = null) {
     Row(
         Modifier.fillMaxWidth().let { if (onClick != null) it.clickable(onClick = onClick) else it }.heightIn(min = 64.dp).padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -87,13 +89,16 @@ private fun TokenRow(symbol: String, name: String, amount: String?, verified: Bo
             Text(if (verified) name else "Unverified · $name", style = Type.Caption, color = if (verified) Tv.Text2 else Tv.Warn, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Spacer(Modifier.width(10.dp))
-        if (amount == null) Shimmer(Modifier.size(60.dp, 18.dp)) else Text(amount, style = Type.Amount, maxLines = 1)
+        if (amount == null) Shimmer(Modifier.size(60.dp, 18.dp)) else Column(horizontalAlignment = Alignment.End) {
+            Text(amount, style = Type.Amount, maxLines = 1)
+            usd?.let { Text(Prices.usd(it), style = Type.Caption, color = Tv.Text2, maxLines = 1) }
+        }
     }
 }
 
 /** A token's mark: its symbol's first letter in a circle (token icons are whatever their creator uploaded, so none are drawn). */
 @Composable
-private fun TokenMark(symbol: String, size: Dp = 40.dp) {
+fun TokenMark(symbol: String, size: Dp = 40.dp) {
     Box(Modifier.size(size).background(Tv.GlassStrong, CircleShape).glassRim(size / 2, shape = CircleShape), contentAlignment = Alignment.Center) {
         Text(symbol.trim().firstOrNull()?.uppercase() ?: "?", style = Type.Title.copy(fontSize = (size.value * 0.4f).sp), color = Tv.Text)
     }
@@ -220,6 +225,9 @@ fun TokenSheet(vm: AppViewModel, tb: TokenBalance, onDismiss: () -> Unit) {
         }
         Spacer(Modifier.height(18.dp))
         Text(TokenAmount.format(tb.raw, t.decimals, maxFraction = 8) + " " + t.symbol, style = Type.Hero)
+        vm.prices?.let { p ->
+            p.of(t.contract)?.let { price -> Caption("${Prices.usd(p.value(t.contract, tb.raw, t.decimals))} · 1 ${t.symbol} = ${Prices.usd(price)}", Modifier.padding(top = 4.dp)) }
+        }
         Spacer(Modifier.height(16.dp))
 
         Column(Modifier.fillMaxWidth().surface(20.dp).padding(horizontal = 16.dp, vertical = 8.dp)) {
@@ -257,8 +265,17 @@ fun TokenSheet(vm: AppViewModel, tb: TokenBalance, onDismiss: () -> Unit) {
                 }
             }
         }
-        Caption("Sending tokens from Tapvault comes in the next update; until then you can receive and hold them.", Modifier.padding(top = 14.dp, start = 4.dp), color = Tv.Text3)
         Spacer(Modifier.height(14.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            TvButton("Send", Modifier.weight(1f), icon = Ic.Send, height = 48.dp, enabled = vm.busy == null && tb.raw.signum() > 0 && vm.wallet?.frozen != true) {
+                onDismiss(); vm.openSend(AppViewModel.SendDraft(token = t))
+            }
+            if (vm.tradeAvailable) TvButton("Swap", Modifier.weight(1f), Btn.Secondary, icon = Ic.Refresh, height = 48.dp, enabled = vm.busy == null) {
+                onDismiss(); vm.go(Screen.Trade)
+            }
+        }
+        if (!vm.seedWallet && vm.wallet != null) LimitEditor(vm, t)
+        Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             TvButton("Explorer", Modifier.weight(1f), Btn.Secondary, icon = Ic.External, height = 48.dp) { uri.openUri(vm.near.explorerAccount(t.contract)) }
             val shown = vm.tokenPrefs.isShown(t.contract, t.verified, tb.raw)
@@ -268,5 +285,52 @@ fun TokenSheet(vm: AppViewModel, tb: TokenBalance, onDismiss: () -> Unit) {
             }
         }
         Spacer(Modifier.height(8.dp))
+    }
+}
+
+/**
+ * A token's instant limit: without one every transfer of it waits the
+ * transfer delay (and swaps from it aren't possible). Setting or removing it
+ * is a settings change that runs after the settings delay.
+ */
+@Composable
+private fun LimitEditor(vm: AppViewModel, t: TokenInfo) {
+    val w = vm.wallet ?: return
+    val limit = w.limitFor(Asset.Ft(t.contract))
+    var editing by remember { mutableStateOf(false) }
+    var instant by remember { mutableStateOf(limit?.let { TokenAmount.format(it.instantMax, t.decimals, maxFraction = t.decimals) } ?: "") }
+    var daily by remember { mutableStateOf(limit?.let { TokenAmount.format(it.dailyMax, t.decimals, maxFraction = t.decimals) } ?: "") }
+    val pending = vm.proposals.any { p -> !p.stale && (p.describe().contains("SetLimit") || p.describe().contains("RemoveLimit")) }
+    Column(Modifier.fillMaxWidth().padding(top = 14.dp).surface(20.dp).padding(14.dp)) {
+        Text("Instant limit", style = Type.BodyStrong)
+        Caption(
+            when {
+                limit != null -> "Up to ${TokenAmount.format(limit.instantMax, t.decimals)} ${t.symbol} at once, ${TokenAmount.format(limit.dailyMax, t.decimals)} a day go out instantly; more waits ${hoursLabel(w.delays.transfer)}. ${TokenAmount.format(limit.availableNow(), t.decimals)} left now."
+                !w.canAddLimit(Asset.Ft(t.contract)) -> "The wallet already has $MAX_LIMITS instant limits, the most it holds. Every ${t.symbol} payment waits ${hoursLabel(w.delays.transfer)}."
+                else -> "None: every ${t.symbol} payment waits ${hoursLabel(w.delays.transfer)}, and swaps from ${t.symbol} aren't possible."
+            },
+            Modifier.padding(top = 2.dp),
+        )
+        if (pending) Caption("A limit change is waiting in Activity.", Modifier.padding(top = 6.dp), color = Tv.Warn)
+        if (editing) {
+            Spacer(Modifier.height(10.dp))
+            TvField("At once (${t.symbol})", instant, { instant = it.trim().replace(',', '.') }, placeholder = "50", number = true)
+            Spacer(Modifier.height(8.dp))
+            TvField("A day (${t.symbol})", daily, { daily = it.trim().replace(',', '.') }, placeholder = "200", number = true)
+            Caption("Takes effect after ${hoursLabel(w.delays.config)}, approved " + (if (w.phoneOnly) "with your phone." else "with your phone and card."), Modifier.padding(top = 6.dp), color = Tv.Text3)
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TvButton("Request", Modifier.weight(1f), height = 46.dp, enabled = vm.busy == null && TokenAmount.parse(instant, t.decimals) != null && TokenAmount.parse(daily, t.decimals) != null) {
+                    editing = false; vm.setTokenLimit(t, instant, daily)
+                }
+                TvButton("Cancel", Modifier.weight(1f), Btn.Ghost, height = 46.dp) { editing = false }
+            }
+        } else if (w.canAddLimit(Asset.Ft(t.contract))) {
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TvButton(if (limit == null) "Make instant" else "Change", Modifier.weight(1f), Btn.Secondary, height = 46.dp, enabled = vm.busy == null && !w.frozen) { editing = true }
+                if (limit != null) TvButton("Remove", Modifier.weight(1f), Btn.Ghost, height = 46.dp, enabled = vm.busy == null && !w.frozen) { vm.removeTokenLimit(t) }
+            }
+        }
     }
 }

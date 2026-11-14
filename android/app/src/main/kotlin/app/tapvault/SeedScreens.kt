@@ -259,7 +259,7 @@ fun SeedHome(vm: AppViewModel, ui: HomeUi) {
         )
     }
     Row(Modifier.fillMaxWidth().padding(top = 28.dp).enter(3), horizontalArrangement = Arrangement.spacedBy(30.dp, Alignment.CenterHorizontally)) {
-        ActionButton(Ic.Send, "Send", primary = true, enabled = idle) { vm.go(Screen.Send) }
+        ActionButton(Ic.Send, "Send", primary = true, enabled = idle) { vm.openSend() }
         ActionButton(Ic.Receive, "Receive") { ui.receive = true }
         ActionButton(Ic.Card, "Protect", tint = Tv.Accent, enabled = idle) { vm.protectWithCard() }
     }

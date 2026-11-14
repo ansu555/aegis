@@ -509,6 +509,7 @@ data class NavItem(val screen: Screen, val icon: Ic, val label: String)
 /** The tab bar: everyday screens only. Card check lives under Settings › Your card. */
 val navItems = listOf(
     NavItem(Screen.Home, Ic.Wallet, "Wallet"),
+    NavItem(Screen.Trade, Ic.Refresh, "Trade"),
     NavItem(Screen.Activity, Ic.History, "Activity"),
     NavItem(Screen.Settings, Ic.Settings, "Settings"),
 )

@@ -176,6 +176,11 @@ class Store(context: Context, file: String = WalletIndex.prefsFile(WalletIndex.F
         get() = app.tapvault.core.TokenPrefs.decode(p.getString("token_prefs", null))
         set(v) { p.edit().putString("token_prefs", v.encode()).commit() }
 
+    /** This wallet's swaps, bridges and sales ([app.tapvault.core.SwapRecord]), newest first. */
+    var swaps: List<app.tapvault.core.SwapRecord>
+        get() = app.tapvault.core.SwapRecord.decodeAll(p.getString("swaps", null))
+        set(v) { p.edit().putString("swaps", app.tapvault.core.SwapRecord.encodeAll(v.take(app.tapvault.core.SwapRecord.KEEP))).commit() }
+
     fun clear() { p.edit().clear().commit() }
 }
 

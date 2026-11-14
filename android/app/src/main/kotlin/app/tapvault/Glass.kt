@@ -150,6 +150,7 @@ private fun lightsFor(s: Screen): Pair<Offset, Offset> = when (s) {
     Screen.Settings -> Offset(0.1f, 0.04f) to Offset(0.95f, 0.7f)
     Screen.Security -> Offset(0.85f, 0.06f) to Offset(0.1f, 0.85f)
     Screen.Send -> Offset(0.5f, 0.28f) to Offset(0.9f, 0.95f)
+    Screen.Trade -> Offset(0.75f, 0.08f) to Offset(0.15f, 0.8f)
     Screen.CardCheck -> Offset(0.5f, 0.2f) to Offset(0.0f, 0.95f)
     Screen.Welcome -> Offset(0.5f, 0.3f) to Offset(0.9f, 0.9f)
     Screen.Limits, Screen.Setup, Screen.Recover, Screen.Guardian, Screen.SeedCreate, Screen.SeedImport -> Offset(0.2f, 0.1f) to Offset(0.85f, 0.85f)

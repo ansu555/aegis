@@ -40,6 +40,20 @@ import app.tapvault.core.LimitInit
 import app.tapvault.core.Near
 import app.tapvault.core.NearClient
 import app.tapvault.core.TokenBalance
+import app.tapvault.core.TokenAmount
+import app.tapvault.core.KnownTokens
+import app.tapvault.core.IntentToken
+import app.tapvault.core.OneClick
+import app.tapvault.core.Prices
+import app.tapvault.core.QuoteAsk
+import app.tapvault.core.Ramp
+import app.tapvault.core.Swap
+import app.tapvault.core.SwapQuote
+import app.tapvault.core.SwapRecord
+import app.tapvault.core.SwapState
+import app.tapvault.core.ChainAddress
+import app.tapvault.core.MAX_LIMITS
+import app.tapvault.core.str
 import app.tapvault.core.TokenInfo
 import app.tapvault.core.TokenPrefs
 import app.tapvault.core.Tokens
@@ -71,7 +85,7 @@ import java.util.Locale
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 
-enum class Screen { Welcome, Limits, Setup, Home, Send, Activity, CardCheck, Settings, Security, Recover, Guardian, SeedCreate, SeedImport }
+enum class Screen { Welcome, Limits, Setup, Home, Send, Trade, Activity, CardCheck, Settings, Security, Recover, Guardian, SeedCreate, SeedImport }
 
 /**
  * A card tap the UI is waiting for; [reading] once a card is in the field,
@@ -254,7 +268,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun go(s: Screen) {
         outcome = null
-        if (screen in setOf(Screen.Home, Screen.Activity, Screen.Settings)) cameFrom = screen
+        if (screen in setOf(Screen.Home, Screen.Trade, Screen.Activity, Screen.Settings)) cameFrom = screen
         screen = s
     }
 
@@ -1068,31 +1082,130 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- send ----
 
-    fun send(receiver: String, amountNear: String) = run("Sending") {
-        val amount = try { Near.parse(amountNear.trim().replace(',', '.')) } catch (e: Exception) { throw IllegalArgumentException("Enter an amount like 0.5") }
-        require(amount.signum() > 0) { "Amount must be more than zero" }
-        val to = receiver.trim().lowercase()
-        require(to.matches(Regex("^(([a-z\\d]+[-_])*[a-z\\d]+\\.)*([a-z\\d]+[-_])*[a-z\\d]+$")) && to.length in 2..64) { "That isn't a NEAR account id" }
+    /** What Send opens with: a token picked on its sheet, or a sale's deposit address. */
+    data class SendDraft(val token: TokenInfo? = null, val to: String = "", val amount: String = "", val label: String? = null)
 
-        if (store.seedWallet && store.setupStep == 1) return@run sendFromSeed(to, amount)
+    var sendDraft by mutableStateOf(SendDraft())
+
+    fun openSend(d: SendDraft = SendDraft()) {
+        sendDraft = d
+        go(Screen.Send)
+    }
+
+    /** "1.5 USDC" / "0.25 NEAR": an amount of [token] (null = NEAR) in full. */
+    fun amountText(token: TokenInfo?, raw: BigInteger): String =
+        if (token == null) "${Near.format(raw)} NEAR" else "${TokenAmount.format(raw, token.decimals, maxFraction = token.decimals)} ${token.symbol}"
+
+    /** How a payment ended: sent now, or saved and waiting (a proposal to execute later). */
+    private sealed interface Paid {
+        class Sent(val hash: String) : Paid
+        class Waiting(val id: Long, val why: String, val hash: String?) : Paid
+    }
+
+    /**
+     * Send NEAR or a token ([token]) to a NEAR account. [label] names what the
+     * payment is for ("Sale via Ramp Network") on the review, the prompt and
+     * the outcome.
+     */
+    fun send(receiver: String, amountText: String, token: TokenInfo? = null, label: String? = null) = run("Sending") {
+        val decimals = token?.decimals ?: 24
+        val amount = TokenAmount.parse(amountText.trim().replace(',', '.'), decimals)
+            ?: throw IllegalArgumentException("Enter an amount like 0.5" + if (token != null) " (at most ${token.decimals} decimals)" else "")
+        val to = receiver.trim().lowercase()
+        require(Tokens.isAccount(to)) { "That isn't a NEAR account id" }
+        val asset = token?.let { Asset.Ft(it.contract) } ?: Asset.Near
+        val what = amountText(token, amount)
+        checkCanPay(asset, token, amount, to)
+        val paid = pay(asset, amount, to, what, label)
+        rememberReceiver(to)
+        outcome = when (paid) {
+            is Paid.Sent -> {
+                note("sent: ${near.explorerTx(paid.hash)}")
+                Outcome(true, "Sent $what", "to $to" + (label?.let { " · $it" } ?: ""), near.explorerTx(paid.hash))
+            }
+            is Paid.Waiting -> Outcome(true, "Approved, waiting ${hoursText(wallet?.delays?.transfer ?: 3600)}", paid.why, paid.hash?.let { near.explorerTx(it) })
+        }
+        refresh()
+        refreshTokens(force = true)
+    }
+
+    /** Refuses a payment the chain would refuse anyway: too much, an unknown receiver, a receiver the token won't credit. */
+    private fun checkCanPay(asset: Asset, token: TokenInfo?, amount: BigInteger, to: String) {
+        val acct = store.walletAccount ?: throw IllegalStateException("no wallet yet")
+        require(to != acct) { "That's this wallet's own account" }
+        // 64-hex implicit accounts come into existence when they receive NEAR.
+        require(Network.isImplicit(to) || near.accountExists(to)) { "$to doesn't exist on ${network.displayName}" }
+        if (token == null) {
+            val (available, _) = near.spendable(acct)
+            require(amount <= available) { "The wallet only has ${Near.format(available, 4)} NEAR available to send" }
+        } else {
+            val tk = Tokens(near)
+            val have = tk.balanceOf(token.contract, acct)
+            require(amount <= have) { "The wallet only has ${TokenAmount.format(have, token.decimals, maxFraction = token.decimals)} ${token.symbol}" }
+            // A token refuses to credit an account that isn't registered with it; the contract would give the allowance back, but say it first.
+            if (tk.isRegistered(token.contract, to) == false) throw IllegalStateException("$to can't receive ${token.symbol} yet: it isn't registered with the token. Ask them to enable ${token.symbol} first.")
+        }
+    }
+
+    /**
+     * Pay [amount] of [asset] to [to], the way this wallet pays: a seed phrase
+     * wallet signs a plain transfer; a phone-only wallet proposes and
+     * executes; a card wallet proposes on the phone, taps the card and
+     * executes when within the limits. [what] ("1.5 USDC") names it in the
+     * prompt, which is built from the same values that get hashed.
+     */
+    private suspend fun pay(asset: Asset, amount: BigInteger, to: String, what: String, label: String? = null): Paid {
+        val reason = "Send $what to $to" + (label?.let { " ($it)" } ?: "")
+        if (store.seedWallet && store.setupStep == 1) {
+            requireSecurityKey("To send $what to $to.")
+            progress("Approve on your phone")
+            phone.reason = reason
+            phone.sign(sha256("tapvault/app/v1/seed-send".toByteArray(), app.tapvault.core.Borsh.of { asset.borsh(this) }, to.toByteArray(), amount.toByteArray()))
+            progress("Sending")
+            val acct = store.walletAccount!!
+            val key = NearKey.fromSecret(store.walletKey!!)
+            val r = when (asset) {
+                Asset.Near -> SeedWallet(near, acct, key).send(to, amount)
+                is Asset.Ft -> Tokens(near).transferFrom(asset.token, acct, key, to, amount)
+            }
+            return Paid.Sent(r.hash)
+        }
         val w = walletClient()
         val st = w.state()
         if (st.frozen) throw IllegalStateException("The wallet is frozen. Request an unfreeze first.")
         val phoneIdx = st.phoneIndexOf(phone.publicKey) ?: throw IllegalStateException("This phone isn't a signer of the wallet")
-        if (st.phoneOnly) return@run sendPhoneOnly(w, st, phoneIdx, to, amount)
+        val instant = st.isInstantTo(asset, to, amount)
+        val hours = hoursText(st.delays.transfer)
+        val limit = st.limitFor(asset)
+        val why = (when {
+            limit == null && asset == Asset.Near -> "Spending limits are off, so every payment waits."
+            limit == null -> "${TokenAmount.symbolOf(asset)} has no instant limit, so sending it always waits."
+            limit.isInstant(amount) -> "$to isn't one of your instant receivers."
+            else -> "This is over your instant limit."
+        }) + " In $hours, open Activity and tap Execute. Until then you can cancel it or freeze the wallet."
+
+        if (st.phoneOnly) {
+            requireSecurityKey("To send $what to $to.")
+            progress("Approve on your phone")
+            phone.reason = reason
+            val id = w.proposeByPhone(Action.Transfer(asset, amount, to), phone, phoneIdx).also { note("proposal #$it created (phone only)") }
+            if (!instant) return Paid.Waiting(id, why, null)
+            progress("Submitting")
+            return try {
+                Paid.Sent(w.execute(id).hash)
+            } catch (e: TapvaultException) {
+                // The contract decides "instant" with its own clock and allowance.
+                if ("Delay has not elapsed" in (e.message ?: "")) Paid.Waiting(id, why, null) else throw e
+            }
+        }
+
         requireNfc()
         if (st.cards().isEmpty()) throw IllegalStateException("No card enrolled")
-        require(to != w.account) { "That's this wallet's own account" }
-        val (available, _) = near.spendable(w.account)
-        require(amount <= available) { "The wallet only has ${Near.format(available, 4)} NEAR available to send" }
-        // 64-hex implicit accounts come into existence when they receive NEAR.
-        require(Network.isImplicit(to) || near.accountExists(to)) { "$to doesn't exist on ${network.displayName}" }
-
         // An unfinished identical payment (phone approved, card tap failed) is
         // finished instead of creating a second one.
         val now = System.currentTimeMillis() / 1000
         val existing = w.proposals().firstOrNull { p ->
-            p.isNearTransfer && p.transferAmount() == amount && p.transferReceiver() == to && p.approvedBy(phoneIdx) &&
+            p.transferAsset() == asset && p.transferAmount() == amount && p.transferReceiver() == to && p.approvedBy(phoneIdx) &&
                 st.cards().none { p.approvedBy(it.index) } && !p.stale && (p.cardDeadlineTs ?: Long.MAX_VALUE) > now + 30
         }
         val id = if (existing != null) {
@@ -1100,19 +1213,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             existing.id
         } else {
             progress("Approve on your phone")
-            phone.reason = "Send ${Near.format(amount)} NEAR to $to"
-            w.proposeByPhone(Action.Transfer(Asset.Near, amount, to), phone, phoneIdx).also { note("proposal #$it created") }
+            phone.reason = reason
+            w.proposeByPhone(Action.Transfer(asset, amount, to), phone, phoneIdx).also { note("proposal #$it created") }
         }
         progress("Waiting for the card challenge")
         val ch = w.awaitCardChallenge(id)
         val t = try {
-            tapWalletCard("Tap your card to approve sending ${Near.format(amount)} NEAR", st, ch)
+            tapWalletCard("Tap your card to approve sending $what", st, ch)
         } catch (e: Exception) {
             refresh()
             throw IllegalStateException("${e.message}\n\nPayment #$id is saved and waits 10 minutes for your card: send the same amount again, or approve or cancel it in Activity.")
         }
         try {
-            requireSecurityKey("To send ${Near.format(amount)} NEAR to $to.")
+            requireSecurityKey("To send $what to $to.")
         } catch (e: ForgotSecurityKey) {
             throw e
         } catch (e: Exception) {
@@ -1120,95 +1233,266 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             throw IllegalStateException("${e.message}\n\nNothing was sent. Payment #$id is saved and waits 10 minutes for your card: send the same amount again, or cancel it in Activity.")
         }
         progress("Submitting")
-        rememberReceiver(to)
-        val instant = st.isInstantTo(to, amount)
         val sent = if (instant) approveAndMaybeExecute(w, id, t.index, t.sig) else null
-        if (sent != null) {
-            note("sent: ${near.explorerTx(sent.hash)}")
-            outcome = Outcome(true, "Sent ${Near.format(amount)} NEAR", "to $to", near.explorerTx(sent.hash))
-        } else if (instant) {
+        if (sent != null) return Paid.Sent(sent.hash)
+        if (instant) {
             note("approved #$id; the contract didn't count it as instant, so it waits")
-            outcome = Outcome(true, "Approved, waiting", "The wallet didn't treat this as within your limits (the phone's clock may be off). Execute it from Activity when it's ready.")
-        } else {
-            val r = w.approveCard(id, t.index, t.sig)
-            val hours = st.delays.transfer / 3600
-            note("approved #$id; over the limit, executes after $hours h")
-            outcome = Outcome(
-                true, "Approved, waiting $hours h",
-                (when {
-                    st.nearLimit == null -> "Spending limits are off, so every payment waits."
-                    st.nearLimit?.isInstant(amount) == true -> "$to isn't one of your instant receivers."
-                    else -> "This is over your instant limit."
-                }) + " In $hours h, open Activity and tap Execute. Until then you can cancel it or freeze the wallet.",
-                near.explorerTx(r.hash),
-            )
+            return Paid.Waiting(id, "The wallet didn't treat this as within your limits (the phone's clock may be off). Execute it from Activity when it's ready.", null)
         }
-        refresh()
+        val r = w.approveCard(id, t.index, t.sig)
+        note("approved #$id; executes after $hours")
+        return Paid.Waiting(id, why, r.hash)
     }
 
-    /**
-     * A seed-phrase wallet: a plain NEAR transfer signed with the phrase's key,
-     * after the security key and the phone's fingerprint prompt (the app's own
-     * gate; the chain only sees the account's key).
-     */
-    private suspend fun sendFromSeed(to: String, amount: java.math.BigInteger) {
-        val acct = store.walletAccount!!
-        require(to != acct) { "That's this wallet's own account" }
-        val (available, _) = near.spendable(acct)
-        require(amount <= available) { "The wallet only has ${Near.format(available, 4)} NEAR available to send" }
-        require(Network.isImplicit(to) || near.accountExists(to)) { "$to doesn't exist on ${network.displayName}" }
-        requireSecurityKey("To send ${Near.format(amount)} NEAR to $to.")
-        progress("Approve on your phone")
-        phone.reason = "Send ${Near.format(amount)} NEAR to $to"
-        phone.sign(sha256("tapvault/app/v1/seed-send".toByteArray(), to.toByteArray(), amount.toByteArray()))
-        progress("Sending")
-        rememberReceiver(to)
-        val r = SeedWallet(near, acct, NearKey.fromSecret(store.walletKey!!)).send(to, amount)
-        note("sent: ${near.explorerTx(r.hash)}")
-        outcome = Outcome(true, "Sent ${Near.format(amount)} NEAR", "to $to", near.explorerTx(r.hash))
-        refresh()
-    }
+    // ---- token limits ----
 
     /**
-     * Contract v0.3, a wallet without a card yet: the phone's proposal is its
-     * only approval (threshold 1), so a payment within the limits executes
-     * right after it; a bigger one waits the transfer delay like any other.
+     * Make [t] instant up to [instant] at once and [daily] a day: a settings
+     * change (`SetLimit`) approved like any other, which runs after the
+     * settings delay. The contract holds at most [MAX_LIMITS] limits.
      */
-    private suspend fun sendPhoneOnly(w: TapvaultWallet, st: WalletState, phoneIdx: Int, to: String, amount: java.math.BigInteger) {
-        require(to != w.account) { "That's this wallet's own account" }
-        val (available, _) = near.spendable(w.account)
-        require(amount <= available) { "The wallet only has ${Near.format(available, 4)} NEAR available to send" }
-        require(Network.isImplicit(to) || near.accountExists(to)) { "$to doesn't exist on ${network.displayName}" }
-        requireSecurityKey("To send ${Near.format(amount)} NEAR to $to.")
+    fun setTokenLimit(t: TokenInfo, instant: String, daily: String) = run("Setting ${t.symbol} limit") {
+        val i = TokenAmount.parse(instant.trim().replace(',', '.'), t.decimals) ?: throw IllegalArgumentException("Enter an amount at once, like 50")
+        val d = TokenAmount.parse(daily.trim().replace(',', '.'), t.decimals) ?: throw IllegalArgumentException("Enter an amount a day, like 200")
+        require(i <= d) { "The amount at once can't be more than the amount a day." }
+        changeLimit(t, ConfigOp.SetLimit(LimitInit(Asset.Ft(t.contract), i, d)),
+            "Make ${t.symbol} instant up to ${amountText(t, i)} at once, ${amountText(t, d)} a day")
+    }
+
+    /** Remove [t]'s limit: every transfer of it waits again. */
+    fun removeTokenLimit(t: TokenInfo) = run("Removing ${t.symbol} limit") {
+        changeLimit(t, ConfigOp.RemoveLimit(Asset.Ft(t.contract)), "Stop instant ${t.symbol} payments")
+    }
+
+    private suspend fun changeLimit(t: TokenInfo, op: ConfigOp, what: String) {
+        if (store.seedWallet && store.setupStep == 1) throw IllegalStateException("A seed phrase wallet has no limits: everything goes out at once.")
+        val w = walletClient()
+        val st = w.state()
+        if (op is ConfigOp.SetLimit && !st.canAddLimit(op.limit.asset)) throw IllegalStateException("The wallet already has $MAX_LIMITS instant limits, the most it holds. Remove one first.")
+        if (op is ConfigOp.RemoveLimit && st.limitFor(op.asset) == null) throw IllegalStateException("${t.symbol} has no instant limit.")
+        val idx = phoneIndex(st)
+        val hours = hoursText(st.delays.config)
+        if (!st.phoneOnly) requireNfc()
+        requireSecurityKey("To change the instant limit for ${t.symbol}.")
         progress("Approve on your phone")
-        phone.reason = "Send ${Near.format(amount)} NEAR to $to"
-        val id = w.proposeByPhone(Action.Transfer(Asset.Near, amount, to), phone, phoneIdx).also { note("proposal #$it created (phone only)") }
-        rememberReceiver(to)
-        val sent = if (st.isInstantTo(to, amount)) {
-            progress("Submitting")
-            try {
-                w.execute(id)
-            } catch (e: app.tapvault.core.TapvaultException) {
-                // The contract decides "instant" with its own clock and allowance.
-                if ("Delay has not elapsed" in (e.message ?: "")) null else throw e
+        phone.reason = "$what (after $hours)"
+        val id = w.proposeByPhone(Action.Config(listOf(op)), phone, idx)
+        if (st.phoneOnly) {
+            outcome = Outcome(true, "Limit changes in $hours", "After the wait, open Activity and tap Execute.")
+        } else {
+            val ch = w.awaitCardChallenge(id)
+            val tp = try { tapWalletCard("Tap a card of this wallet to approve", st, ch) } catch (e: Exception) {
+                refresh(); throw IllegalStateException("${e.message}\n\nRequest #$id is saved: approve it with your card in Activity within 10 minutes, or cancel it there.")
             }
-        } else null
-        val hours = st.delays.transfer / 3600
-        outcome = if (sent != null) {
-            note("sent: ${near.explorerTx(sent.hash)}")
-            Outcome(true, "Sent ${Near.format(amount)} NEAR", "to $to", near.explorerTx(sent.hash))
-        } else {
-            note("proposal #$id waits $hours h")
-            Outcome(
-                true, "Approved, waiting $hours h",
-                (when {
-                    st.nearLimit == null -> "Spending limits are off, so every payment waits."
-                    st.nearLimit?.isInstant(amount) == true -> "$to isn't one of your instant receivers."
-                    else -> "This is over your instant limit."
-                }) + " In $hours h, open Activity and tap Execute. Until then you can cancel it or freeze the wallet.",
-            )
+            val res = w.approveCard(id, tp.index, tp.sig)
+            outcome = Outcome(true, "Limit changes in $hours", "After the wait, open Activity and tap Execute.", near.explorerTx(res.hash))
         }
         refresh()
+    }
+
+    // ---- prices, swaps, bridges, buy and sell (mainnet only) ----
+
+    private val oneClick by lazy { OneClick(jwt = BuildConfig.ONECLICK_JWT.ifBlank { null }) }
+
+    /** USD prices for the shown network (mainnet only; null until loaded or on testnet). */
+    var prices by mutableStateOf<Prices?>(null)
+        private set
+
+    /** Everything NEAR Intents swaps (mainnet), loaded on first use of Trade. */
+    var intentTokens by mutableStateOf<List<IntentToken>>(emptyList())
+        private set
+
+    /** This wallet's swaps and bridges, newest first. */
+    var swaps by mutableStateOf(store.swaps)
+        private set
+
+    /** Swap, bridge, buy and sell work only on mainnet, and only in a build with mainnet. */
+    val tradeAvailable get() = network.isMainnet && mainnetEnabled
+
+    /** Load 1Click's token list (and prices from it) at most every 5 minutes. */
+    fun refreshPrices(force: Boolean = false) {
+        if (!tradeAvailable) { prices = null; return }
+        if (!force && (prices?.at ?: 0) > System.currentTimeMillis() - 5 * 60_000) return
+        viewModelScope.launch {
+            try {
+                val list = withContext(Dispatchers.IO) { oneClick.tokens() }
+                intentTokens = list
+                prices = Prices.from(list, KnownTokens.on(Network.MAINNET).map { it.contract }.toSet())
+            } catch (e: Exception) {
+                note("prices: ${e.message}")
+            }
+        }
+    }
+
+    /** The wallet's total in USD, counting only priced (built-in) tokens; null without prices. */
+    val totalUsd: java.math.BigDecimal?
+        get() {
+            val p = prices ?: return null
+            val nearValue = balance?.let { p.value(null, it, 24) } ?: return null
+            return shownTokens.fold(nearValue) { acc, tb -> acc + (p.value(tb.token.contract, tb.raw, tb.token.decimals) ?: java.math.BigDecimal.ZERO) }
+        }
+
+    /** A token on NEAR as Tapvault shows it (built-in metadata when it has it). */
+    fun tokenInfoOf(t: IntentToken): TokenInfo? = t.nearContract?.let { c -> KnownTokens.find(network, c) ?: TokenInfo(c, t.symbol, t.symbol, t.decimals, verified = false) }
+
+    /** A preview quote (no deposit address, nothing reserved): what [amount] of [from] gets of [to]. */
+    suspend fun previewSwap(from: TokenInfo, to: IntentToken, amount: BigInteger, recipient: String? = null): SwapQuote = withContext(Dispatchers.IO) {
+        val acct = store.walletAccount ?: throw IllegalStateException("no wallet yet")
+        oneClick.quote(askFor(from, to, amount, recipient ?: acct, acct, dry = true))
+    }
+
+    private fun askFor(from: TokenInfo, to: IntentToken, amount: BigInteger, recipient: String, refundTo: String, dry: Boolean) = QuoteAsk(
+        originAsset = Swap.assetOf(from.contract), destinationAsset = to.assetId, amount = amount,
+        recipient = recipient, refundTo = refundTo, deadline = java.time.Instant.now().plusSeconds(Swap.ASK_DEADLINE_SECS), dry = dry,
+    )
+
+    /** Whether paying [amount] of [from] to a fresh address would go out at once (swaps must; see the plan, section 1). */
+    fun swapIsInstant(from: TokenInfo, amount: BigInteger): Boolean =
+        (store.seedWallet && store.setupStep == 1) || wallet?.let { it.allowlist.isEmpty() && it.limitFor(Asset.Ft(from.contract))?.isInstant(amount) == true } == true
+
+    /**
+     * Swap [amountText] of [from] (a NEAR token the wallet holds) for [to]:
+     * on NEAR, or on another chain to [recipient] (a bridge). Gets a wet
+     * quote, checks it is for what was asked ([Swap.check]), makes sure the
+     * deposit address and (on NEAR) this wallet can hold the tokens, then
+     * pays the deposit address like any payment and tells 1Click.
+     */
+    fun swap(from: TokenInfo, to: IntentToken, amountText: String, recipient: String? = null) = run(if (to.onNear) "Swapping" else "Bridging") {
+        if (!tradeAvailable) throw IllegalStateException("Swaps work on NEAR mainnet only.")
+        val acct = store.walletAccount ?: throw IllegalStateException("no wallet yet")
+        val amount = TokenAmount.parse(amountText.trim().replace(',', '.'), from.decimals) ?: throw IllegalArgumentException("Enter an amount like 10")
+        val bridge = !to.onNear
+        val dest = if (bridge) {
+            val r = recipient?.trim().orEmpty()
+            ChainAddress.problem(to.blockchain, r)?.let { throw IllegalArgumentException(it) }
+            r
+        } else acct
+        if (!swapIsInstant(from, amount)) throw IllegalStateException(
+            "Swaps have to go out at once, and this one would wait ${hoursText(wallet?.delays?.transfer ?: 3600)}: a quote doesn't last that long. " +
+                "Make ${from.symbol} instant (its token page → Instant limit) or swap a smaller amount.",
+        )
+        val tk = Tokens(near)
+        val have = tk.balanceOf(from.contract, acct)
+        require(amount <= have) { "The wallet only has ${TokenAmount.format(have, from.decimals, maxFraction = from.decimals)} ${from.symbol}" }
+        val (payer, payerKey) = feePayer()
+        // The output arrives as a token on NEAR: the wallet must be registered with it, or the payout fails.
+        if (!bridge) {
+            val out = to.nearContract ?: throw IllegalStateException("That token can't be received on NEAR.")
+            if (tk.isRegistered(out, acct) == false) {
+                progress("Enabling ${to.symbol}")
+                tk.register(out, acct, payer, payerKey).also { note("registered on $out: ${near.explorerTx(it.hash)}") }
+            }
+        }
+        progress("Getting a quote")
+        val ask = askFor(from, to, amount, dest, acct, dry = false)
+        val q = oneClick.quote(ask)
+        val transfer = Swap.check(ask, q, from.contract)
+        val depositAddr = transfer.receiver
+        // The deposit address is a fresh account: register it on the token, or the deposit bounces back.
+        if (tk.isRegistered(from.contract, depositAddr) == false) {
+            progress("Preparing the deposit address")
+            tk.register(from.contract, depositAddr, payer, payerKey)
+        }
+        val outText = "≥ " + TokenAmount.format(q.minAmountOut, to.decimals, maxFraction = 6) + " " + to.symbol
+        val kind = if (bridge) SwapRecord.Kind.BRIDGE_OUT else SwapRecord.Kind.SWAP
+        val chainName = ChainAddress.chain(to.blockchain)?.name
+        val rec = SwapRecord(kind, depositAddr, from.symbol, to.symbol, amountText(from, amount), outText, System.currentTimeMillis(), chain = chainName, deadline = q.deadline?.toEpochMilli())
+        val label = if (bridge) "bridge to $chainName via NEAR Intents, $outText to $dest" else "swap for $outText via NEAR Intents"
+        val paid = pay(transfer.asset, transfer.amount, depositAddr, amountText(from, amount), label)
+        when (paid) {
+            is Paid.Sent -> {
+                saveSwap(rec.copy(txHash = paid.hash, state = SwapState.KNOWN_DEPOSIT_TX))
+                runCatching { oneClick.submitDeposit(paid.hash, depositAddr, acct) }.onFailure { note("submit deposit: ${it.message}") }
+                outcome = Outcome(true, if (bridge) "Bridging to $chainName" else "Swapping", "${rec.amountIn} → $outText. Trade shows when it's done.", near.explorerTx(paid.hash))
+            }
+            is Paid.Waiting -> {
+                saveSwap(rec)
+                outcome = Outcome(true, "Deposit waits", "The contract didn't send it at once, so 1Click may refund it if the price moves. " + paid.why)
+            }
+        }
+        refresh()
+        refreshTokens(force = true)
+    }
+
+    /**
+     * Receive from another chain: a 1Click deposit address on [from]'s chain
+     * that delivers [to] (a NEAR token) to this wallet. Refunds go to
+     * [refundTo] on that chain. Nothing is signed on the phone.
+     */
+    fun bridgeIn(from: IntentToken, to: IntentToken, amountText: String, refundTo: String, onAddress: (SwapRecord) -> Unit) = run("Getting a deposit address") {
+        if (!tradeAvailable) throw IllegalStateException("Bridging works on NEAR mainnet only.")
+        val acct = store.walletAccount ?: throw IllegalStateException("no wallet yet")
+        ChainAddress.problem(from.blockchain, refundTo.trim())?.let { throw IllegalArgumentException("Refund address: $it") }
+        val amount = TokenAmount.parse(amountText.trim().replace(',', '.'), from.decimals) ?: throw IllegalArgumentException("Enter an amount like 10")
+        val out = to.nearContract ?: throw IllegalStateException("Pick a token on NEAR to receive.")
+        val tk = Tokens(near)
+        if (tk.isRegistered(out, acct) == false) {
+            progress("Enabling ${to.symbol}")
+            val (payer, key) = feePayer()
+            tk.register(out, acct, payer, key)
+        }
+        val ask = QuoteAsk(from.assetId, to.assetId, amount, acct, refundTo.trim(), deadline = java.time.Instant.now().plusSeconds(24 * 3600), dry = false)
+        val q = oneClick.quote(ask)
+        val e = q.echoed
+        if (e.str("recipient") != acct || e.str("destinationAsset") != to.assetId || e.str("refundTo") != refundTo.trim()) throw TapvaultException("NEAR Intents answered for a different transfer, so no address is shown.")
+        if (!q.depositMemo.isNullOrEmpty()) throw TapvaultException("This chain needs a memo with the deposit, which Tapvault doesn't support yet.")
+        val addr = q.depositAddress ?: throw TapvaultException("NEAR Intents sent no deposit address.")
+        val chain = ChainAddress.chain(from.blockchain)?.name ?: from.blockchain
+        val rec = SwapRecord(
+            SwapRecord.Kind.BRIDGE_IN, addr, from.symbol, to.symbol,
+            TokenAmount.format(amount, from.decimals, maxFraction = from.decimals) + " " + from.symbol,
+            "≥ " + TokenAmount.format(q.minAmountOut, to.decimals, maxFraction = 6) + " " + to.symbol,
+            System.currentTimeMillis(), chain = chain, deadline = q.deadline?.toEpochMilli(),
+        )
+        saveSwap(rec)
+        withContext(Dispatchers.Main) { onAddress(rec) }
+    }
+
+    /** Who pays registrations: the fee account, or a seed phrase wallet itself. */
+    private fun feePayer(): Pair<String, NearKey> = when {
+        store.gasAccount != null && store.gasKey != null -> store.gasAccount!! to NearKey.fromSecret(store.gasKey!!)
+        store.seedWallet && store.walletKey != null -> store.walletAccount!! to NearKey.fromSecret(store.walletKey!!)
+        else -> throw IllegalStateException("This wallet has no fee account on this phone to pay for it.")
+    }
+
+    private suspend fun saveSwap(r: SwapRecord) {
+        val l = listOf(r) + store.swaps.filter { it.depositAddress != r.depositAddress }
+        store.swaps = l
+        withContext(Dispatchers.Main) { swaps = store.swaps }
+    }
+
+    private val checkingSwaps = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Ask 1Click where each unfinished swap is (Trade calls it while shown). */
+    fun refreshSwaps() {
+        if (!tradeAvailable || swaps.none { !it.state.done }) return
+        if (!checkingSwaps.compareAndSet(false, true)) return
+        val st = store
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    for (r in st.swaps.filter { !it.state.done }) {
+                        val s = runCatching { oneClick.status(r.depositAddress) }.getOrNull() ?: continue
+                        // A bridge-in address nobody used stays "waiting"; forget it after its deadline.
+                        val expired = r.deadline?.let { System.currentTimeMillis() > it } == true && s.state == SwapState.PENDING_DEPOSIT
+                        val next = if (expired) SwapState.FAILED else s.state
+                        if (next != r.state && next != SwapState.UNKNOWN) {
+                            st.swaps = st.swaps.map { if (it.depositAddress == r.depositAddress) it.copy(state = next) else it }
+                            if (next == SwapState.SUCCESS) refreshTokens(force = true)
+                        }
+                    }
+                }
+                if (st === store) swaps = st.swaps
+            } finally {
+                checkingSwaps.set(false)
+            }
+        }
+    }
+
+    /** Buy or sell for cash: the provider's page with this wallet's account ([Ramp]). */
+    fun rampUrl(buy: Boolean, asset: String): String {
+        val acct = store.walletAccount ?: throw IllegalStateException("no wallet yet")
+        return if (buy) Ramp.buyUrl(acct, asset, BuildConfig.RAMP_KEY.ifBlank { null }) else Ramp.sellUrl(acct, asset, BuildConfig.RAMP_KEY.ifBlank { null })
     }
 
     // ---- pending proposals ----
@@ -1219,8 +1503,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val ch = p.cardChallenge ?: w.awaitCardChallenge(p.id)
         // A NEAR payment the phone already approved can go out in the same transaction if it's within the limits.
         val phoneIdx = phoneIndex(st)
-        val canRunNow = !st.frozen && p.isNearTransfer && p.approvedBy(phoneIdx) &&
-            st.isInstantTo(p.transferReceiver(), p.transferAmount()!!)
+        val canRunNow = !st.frozen && p.isTransfer && p.approvedBy(phoneIdx) &&
+            st.isInstantTo(p.transferAsset()!!, p.transferReceiver(), p.transferAmount()!!)
         val t = tapWalletCard("Tap your card to approve: ${p.describe()}", st, ch) { s ->
             if (p.approvedBy(s.index)) "${cardName(s)} already approved this. Tap another card of this wallet." else null
         }
@@ -2162,6 +2446,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         hasSecurityKey = store.securityKey != null
         isV02 = null
         tokens = null; foundTokens = emptyList(); tokenPrefs = store.tokenPrefs; tokensAt = 0
+        swaps = store.swaps; sendDraft = SendDraft()
+        if (!tradeAvailable) prices = null
         outcome = null
         screen = startScreen(store)
         reloadWalletList()
@@ -2190,6 +2476,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         hasSecurityKey = false
         seedWallet = false
         tokens = null; foundTokens = emptyList(); tokenPrefs = store.tokenPrefs; tokensAt = 0
+        swaps = emptyList(); sendDraft = SendDraft()
         setStep(0)
         wallet = null; balance = null; storageLocked = null; proposals = emptyList(); cardReport = null
         cardBook = store.cards; holdSeconds = store.holdSeconds; backup = null
