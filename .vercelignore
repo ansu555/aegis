@@ -1,0 +1,7 @@
+# Vercel serves website/ only (vercel.json). Everything else stays out of the upload.
+/*
+!/website
+!/vercel.json
+/website/downloads
+/website/ASSET-PROMPTS.md
+/website/release.sh
