@@ -14,7 +14,7 @@ test first ([TESTING.md](TESTING.md#real-phone-test-plan)).
   marks the end of each card read).
 - **APK:** built from the current code with `android/build-apk.sh`. Its
   `verifyWasm` check guarantees the app deploys the shipped contract (code hash
-  `DdhpDh3c2gbVJK4iFQLU7C3c2W4Bgg6JYTBSBtBDRcS7`). Install fresh. If an older
+  `93djY2LQU6NbNHJ93GmCDtKXecdrZhQPVCZTUcWt1Kxy`). Install fresh. If an older
   build made a wallet on this phone, uninstall it or use Settings →
   `Forget this wallet on this phone`: wallets created before 12 Nov run the previous
   contract build, which rejects Visa online signatures.
@@ -63,7 +63,7 @@ All links come from the app's **View on explorer** (testnet.nearblocks.io).
   a deployed contract. Its first transactions: deploy + `new` (from the wallet
   account to itself), `setup_add_signer`, `setup_finalize` (which deletes the
   key it was signed with). To show the code hash, check it beforehand:
-  `view_account` must return `DdhpDh3c2gbVJK4iFQLU7C3c2W4Bgg6JYTBSBtBDRcS7`
+  `view_account` must return `93djY2LQU6NbNHJ93GmCDtKXecdrZhQPVCZTUcWt1Kxy`
   (command in [TESTING.md](TESTING.md#4-check-the-wallet-on-the-explorer)).
 - **The payment** (the link in "Sent 0.5 NEAR"): signed by the fee account
   `tv-…-gas…`, sent to the wallet account, two function calls `approve_card`

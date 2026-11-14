@@ -118,9 +118,9 @@ The app's own log is in memory: Settings → Advanced → Technical log (last 60
 
 ```bash
 shasum -a 256 contract/res/tapvault_contract.wasm
-# bbb34d0898d18ab7bb8687c61ba8605def6e7c9a33be91659b199d0834ca2f1c
+# 778a310ad4db8a87d6d0d52e8509d7ea4f5014782a0832106ab1cd2946e582c6
 
-# base58 form (NEAR's code_hash): DdhpDh3c2gbVJK4iFQLU7C3c2W4Bgg6JYTBSBtBDRcS7
+# base58 form (NEAR's code_hash): 93djY2LQU6NbNHJ93GmCDtKXecdrZhQPVCZTUcWt1Kxy
 python3 - contract/res/tapvault_contract.wasm <<'EOF'
 import hashlib, sys
 d = hashlib.sha256(open(sys.argv[1], 'rb').read()).digest()

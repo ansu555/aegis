@@ -14,6 +14,9 @@ object Integrity {
     /** The v0.1 build shipped from 12 Nov to 14 Nov (before contract v0.3): official, no possession proofs or upgrade path. */
     const val V01_BUILD = "5Db4uQQKpTkTtUspdQcx5iVcnvT7MSXCNMdKwhQibwcf"
 
+    /** The v0.3 build shipped on 14 Nov before contract v0.4: official, phone-only wallets, no inheritance. */
+    const val V03_BUILD = "DdhpDh3c2gbVJK4iFQLU7C3c2W4Bgg6JYTBSBtBDRcS7"
+
     enum class Status { OK, NOTE, FAIL }
 
     data class Check(val name: String, val status: Status, val detail: String)
@@ -48,6 +51,7 @@ object Integrity {
     ): Report {
         val code = when (codeHash) {
             shippedCodeHash -> Check("Wallet code", Status.OK, "the official build this app ships")
+            V03_BUILD -> Check("Wallet code", Status.NOTE, "the 14 Nov build (v0.3): still yours and official; it has no inheritance (wallets made with this app version do)")
             V01_BUILD -> Check("Wallet code", Status.NOTE, "the 12 Nov build (v0.1): still yours and official; it doesn't check new keys on chain and can't be upgraded")
             PREVIOUS_BUILD -> Check("Wallet code", Status.NOTE, "the older build from before 12 Nov: still yours, but it refuses Visa online signatures and can't be upgraded")
             else -> Check("Wallet code", Status.FAIL, "unknown code ($codeHash): this isn't a Tapvault build this app knows")

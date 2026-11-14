@@ -81,7 +81,7 @@ class Phase2Test {
     @Test
     fun shippedWasmHasTheDocumentedCodeHash() {
         val wasm = File(System.getenv("TAPVAULT_WASM") ?: return).readBytes()
-        assertEquals("DdhpDh3c2gbVJK4iFQLU7C3c2W4Bgg6JYTBSBtBDRcS7", Integrity.codeHashOf(wasm))
+        assertEquals("93djY2LQU6NbNHJ93GmCDtKXecdrZhQPVCZTUcWt1Kxy", Integrity.codeHashOf(wasm))
     }
 
     @Test
@@ -90,6 +90,10 @@ class Phase2Test {
         val good = Integrity.evaluate(shipped, emptyList(), state(), phone.publicKey, shipped)
         assertTrue(good.ok, good.toString())
         assertTrue(good.checks.all { it.status == Integrity.Status.OK })
+
+        val v03 = Integrity.evaluate(Integrity.V03_BUILD, emptyList(), state(), phone.publicKey, shipped)
+        assertTrue(v03.ok)
+        assertEquals(Integrity.Status.NOTE, v03.checks[0].status)
 
         val old = Integrity.evaluate(Integrity.PREVIOUS_BUILD, emptyList(), state(), phone.publicKey, shipped)
         assertTrue(old.ok)

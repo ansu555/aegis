@@ -191,15 +191,17 @@ The app deploys `contract/res/tapvault_contract.wasm` to every new wallet:
 
 | | |
 |---|---|
-| SHA-256 (base58, NEAR `code_hash`) | `DdhpDh3c2gbVJK4iFQLU7C3c2W4Bgg6JYTBSBtBDRcS7` |
-| SHA-256 (hex) | `bbb34d0898d18ab7bb8687c61ba8605def6e7c9a33be91659b199d0834ca2f1c` |
-| Size | 352,170 bytes (3.52 NEAR of storage; with the account and the wallet's state, each wallet locks about 3.53 NEAR) |
+| SHA-256 (base58, NEAR `code_hash`) | `93djY2LQU6NbNHJ93GmCDtKXecdrZhQPVCZTUcWt1Kxy` |
+| SHA-256 (hex) | `778a310ad4db8a87d6d0d52e8509d7ea4f5014782a0832106ab1cd2946e582c6` |
+| Size | 369,809 bytes (3.70 NEAR of storage; with the account and the wallet's state, each wallet locks about 3.71 NEAR) |
 | Built with | rustc 1.86.0, cargo-near 0.17.0, `cargo near build non-reproducible-wasm` |
 
 Every wallet created with the current app should show this `code_hash` on
-chain and have no access keys. This build (14 Nov, contract v0.3.0) adds
-phone-only wallets (set up without a card, card added later) and is the first
-shipped build with the v0.2 features. Wallets created from 12 Nov until it run
+chain and have no access keys. This build (14 Nov, contract v0.4.0) adds
+**inheritance**: name an heir who receives the wallet after a period with no
+activity from any of its keys. Wallets created earlier on 14 Nov run the v0.3.0
+build `DdhpDh3c2gbVJK4iFQLU7C3c2W4Bgg6JYTBSBtBDRcS7` (phone-only wallets, and
+the first shipped build with the v0.2 features). Wallets created from 12 Nov until then run
 `5Db4uQQKpTkTtUspdQcx5iVcnvT7MSXCNMdKwhQibwcf` (for example
 [`tv-e2e-cc807a553f.testnet`](https://testnet.nearblocks.io/address/tv-e2e-cc807a553f.testnet));
 wallets created before 12 Nov run the previous build

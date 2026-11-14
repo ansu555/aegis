@@ -44,7 +44,7 @@ class PhoneOnlyE2ETest {
         val w = TapvaultWallet(near, a.wallet, a.gas, a.gasKey)
         val st = w.state()
         assertTrue(st.phoneOnly, "phone-only: $st")
-        assertEquals("0.3.0", w.contractVersion())
+        assertEquals("0.4.0", w.contractVersion())
         val phoneIdx = st.phoneIndexOf(phone.publicKey)!!
 
         step("pay 0.5 NEAR with the phone alone: propose, then execute")

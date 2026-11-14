@@ -1288,11 +1288,11 @@ deploys to every new wallet. Details: [`contract/res/README.md`](../contract/res
 
 | | |
 |---|---|
-| SHA-256 (hex) | `bbb34d0898d18ab7bb8687c61ba8605def6e7c9a33be91659b199d0834ca2f1c` |
-| SHA-256 (base58, NEAR `code_hash`) | `DdhpDh3c2gbVJK4iFQLU7C3c2W4Bgg6JYTBSBtBDRcS7` |
-| Size | 352,170 bytes |
+| SHA-256 (hex) | `778a310ad4db8a87d6d0d52e8509d7ea4f5014782a0832106ab1cd2946e582c6` |
+| SHA-256 (base58, NEAR `code_hash`) | `93djY2LQU6NbNHJ93GmCDtKXecdrZhQPVCZTUcWt1Kxy` |
+| Size | 369,809 bytes |
 | Built with | rustc 1.86.0 (`rust-toolchain.toml`), cargo-near 0.17.0, `cargo near build non-reproducible-wasm` |
-| Shipped since | 14 Nov 2026: contract v0.3.0 (phone-only wallets, plus everything in v0.2). Wallets made from 12 Nov until then run `5Db4uQQKpTkTtUspdQcx5iVcnvT7MSXCNMdKwhQibwcf` (v0.1; accepts Signed Data Format `05` and `95`) |
+| Shipped since | 14 Nov 2026 (afternoon): contract v0.4.0 (inheritance, plus everything in v0.3 and v0.2). Wallets made earlier on 14 Nov run `DdhpDh3c2gbVJK4iFQLU7C3c2W4Bgg6JYTBSBtBDRcS7` (v0.3.0, no inheritance); wallets made from 12 Nov until then run `5Db4uQQKpTkTtUspdQcx5iVcnvT7MSXCNMdKwhQibwcf` (v0.1; accepts Signed Data Format `05` and `95`) |
 | Previous build | `GniW1i9n8vAH6ers3jAZTnpCox3u5VwWvsmN9cY9Foow` (wallets created before 12 Nov): accepts only `05`, so it refuses Visa online fDDA signatures |
 
 - **Hash-checked by the Android build.** In `android/app/build.gradle.kts`,
@@ -1324,7 +1324,7 @@ curl -s "$RPC" -H 'Content-Type: application/json' -d '{
   "jsonrpc": "2.0", "id": "tv", "method": "query",
   "params": {"request_type": "view_account", "finality": "final", "account_id": "'"$ACCOUNT"'"}
 }' | python3 -c 'import json, sys; print(json.load(sys.stdin)["result"]["code_hash"])'
-# DdhpDh3c2gbVJK4iFQLU7C3c2W4Bgg6JYTBSBtBDRcS7
+# 93djY2LQU6NbNHJ93GmCDtKXecdrZhQPVCZTUcWt1Kxy
 
 curl -s "$RPC" -H 'Content-Type: application/json' -d '{
   "jsonrpc": "2.0", "id": "tv", "method": "query",

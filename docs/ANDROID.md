@@ -987,9 +987,9 @@ tapvault.sponsor.key=ed25519:<that account's private key>
 The app deploys the wallet contract itself, so the APK carries it:
 
 - `verifyWasm` checks that `contract/res/tapvault_contract.wasm` has SHA-256
-  `bbb34d0898d18ab7bb8687c61ba8605def6e7c9a33be91659b199d0834ca2f1c`
+  `778a310ad4db8a87d6d0d52e8509d7ea4f5014782a0832106ab1cd2946e582c6`
   (`contractWasmSha256`; NEAR `code_hash`
-  `DdhpDh3c2gbVJK4iFQLU7C3c2W4Bgg6JYTBSBtBDRcS7`). Failures: "Missing
+  `93djY2LQU6NbNHJ93GmCDtKXecdrZhQPVCZTUcWt1Kxy`). Failures: "Missing
   <path>: it is committed to the repo; restore it with git." or
   "contract/res/tapvault_contract.wasm has SHA-256 <hash>, expected <hash>. If
   you changed the contract on purpose, update contractWasmSha256 here and the

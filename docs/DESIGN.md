@@ -454,8 +454,9 @@ terminal does). It must not store or transmit it.
   own key, kept in the app's storage during setup, controls everything.
 * **The code is fixed.** With no keys and no upgrade method, a wallet keeps
   the code it was deployed with. Check a wallet by its `code_hash`:
-  `DdhpDh3c2gbVJK4iFQLU7C3c2W4Bgg6JYTBSBtBDRcS7` for the build shipped since
-  14 Nov (contract v0.3.0; `5Db4uQQKpTkTtUspdQcx5iVcnvT7MSXCNMdKwhQibwcf` for wallets made
+  `93djY2LQU6NbNHJ93GmCDtKXecdrZhQPVCZTUcWt1Kxy` for the build shipped since
+  14 Nov afternoon (contract v0.4.0; `DdhpDh3c2gbVJK4iFQLU7C3c2W4Bgg6JYTBSBtBDRcS7` for v0.3
+  wallets made earlier that day, `5Db4uQQKpTkTtUspdQcx5iVcnvT7MSXCNMdKwhQibwcf` for wallets made
   from 12 Nov until then; committed as `contract/res/tapvault_contract.wasm`, hash-checked by
   the Android build).
 * Proposals live in contract storage and are deleted on execute, cancel or
