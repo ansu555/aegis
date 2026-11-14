@@ -63,7 +63,7 @@ private fun RecoverStart(vm: AppViewModel) {
         "Two of the wallet's cards can add this phone in place of the old one. It takes effect after the wallet's recovery wait (24 h), and the old phone can cancel it until then.",
         style = Type.Body, color = Tv.Text2, modifier = Modifier.padding(top = 8.dp, bottom = 18.dp),
     )
-    TvField("Wallet account", account, { account = it.trim(); vm.recoverLookup = null }, placeholder = "tv-1a2b3c4d5e.testnet")
+    TvField("Wallet account", account, { account = it.trim(); vm.recoverLookup = null }, placeholder = vm.network.example("tv-1a2b3c4d5e"))
     Spacer(Modifier.height(10.dp))
     if (look == null) {
         TvButton("Find the wallet", Modifier.fillMaxWidth(), Btn.Secondary, icon = Ic.Scan, enabled = vm.busy == null && account.length > 3) { vm.findWalletToRecover(account) }
@@ -160,7 +160,7 @@ fun ColumnScope.GuardianScreen(vm: AppViewModel) {
         if (code == null) {
             Text("Help guard someone's wallet", style = Type.H1, modifier = Modifier.padding(top = 8.dp))
             Text(Guardian.WARNING, style = Type.Body, color = Tv.Text2, modifier = Modifier.padding(top = 8.dp, bottom = 18.dp))
-            TvField("Their wallet account", account, { account = it.trim() }, placeholder = "tv-1a2b3c4d5e.testnet")
+            TvField("Their wallet account", account, { account = it.trim() }, placeholder = vm.network.example("tv-1a2b3c4d5e"))
             Spacer(Modifier.height(14.dp))
             TvButton("Make my guardian code", Modifier.fillMaxWidth(), icon = Ic.Key, enabled = vm.busy == null && account.length > 3) { vm.becomeGuardian(account) }
         } else {
@@ -267,7 +267,7 @@ fun AllowlistSheet(vm: AppViewModel, onDismiss: () -> Unit) {
             }
             Spacer(Modifier.height(12.dp))
         }
-        TvField("Add a receiver", receiver, { receiver = it.trim() }, placeholder = "bob.testnet")
+        TvField("Add a receiver", receiver, { receiver = it.trim() }, placeholder = vm.network.example("bob"))
         Spacer(Modifier.height(12.dp))
         TvButton("Add (phone + card)", Modifier.fillMaxWidth(), icon = Ic.Plus, enabled = vm.busy == null && receiver.length > 2 && vm.hasNfc) {
             onDismiss(); vm.changeAllowlist(receiver, add = true)

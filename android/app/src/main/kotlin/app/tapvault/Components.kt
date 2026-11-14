@@ -387,12 +387,29 @@ fun Avatar(name: String, size: Dp = 40.dp) {
     ) { Text(name.trim().firstOrNull()?.uppercase() ?: "W", style = Type.Title.copy(fontSize = (size.value * 0.42f).sp), color = Tv.OnAccent) }
 }
 
-/** An amount with the decimals dimmer than the whole part: 6.133 NEAR. [metal] paints the whole part in titanium. */
+/**
+ * An amount with the decimals dimmer than the whole part: 6.133 NEAR. [metal] paints the whole part in titanium.
+ * [fracScale] below 1 also draws the decimals smaller, like cents on a price tag (one text, so the baselines line up).
+ */
 @Composable
-fun Amount(yocto: BigInteger?, decimals: Int = 4, style: TextStyle = Type.Balance, unit: String? = "NEAR", modifier: Modifier = Modifier, metal: Boolean = false) {
+fun Amount(yocto: BigInteger?, decimals: Int = 4, style: TextStyle = Type.Balance, unit: String? = "NEAR", modifier: Modifier = Modifier, metal: Boolean = false, fracScale: Float = 1f) {
     val s = yocto?.let { Near.format(it, decimals) } ?: "–"
     val whole = s.substringBefore('.')
     val frac = if ('.' in s) "." + s.substringAfter('.') else ""
+    if (fracScale != 1f) {
+        val text = androidx.compose.ui.text.buildAnnotatedString {
+            pushStyle(if (metal) androidx.compose.ui.text.SpanStyle(brush = Tv.titanium()) else androidx.compose.ui.text.SpanStyle(color = Tv.Text))
+            append(whole); pop()
+            pushStyle(androidx.compose.ui.text.SpanStyle(color = Tv.Text2, fontSize = style.fontSize * fracScale, letterSpacing = 0.sp))
+            append(frac); pop()
+            unit?.let {
+                pushStyle(androidx.compose.ui.text.SpanStyle(color = Tv.Text2, fontSize = style.fontSize * 0.38f, letterSpacing = 0.8.sp, fontWeight = FontWeight.Medium))
+                append("  $it"); pop()
+            }
+        }
+        Text(text, modifier, style = style, maxLines = 1, softWrap = false)
+        return
+    }
     Row(modifier, verticalAlignment = Alignment.Bottom) {
         Text(whole, style = if (metal) style.copy(brush = Tv.titanium()) else style, color = Tv.Text)
         if (frac.isNotEmpty()) Text(frac, style = style, color = Tv.Text2)
@@ -402,7 +419,7 @@ fun Amount(yocto: BigInteger?, decimals: Int = 4, style: TextStyle = Type.Balanc
 
 /** [Amount] that counts from its previous value to a new one, so a balance change is seen, not just swapped. */
 @Composable
-fun CountingAmount(yocto: BigInteger, decimals: Int = 4, style: TextStyle = Type.Balance, modifier: Modifier = Modifier, metal: Boolean = false) {
+fun CountingAmount(yocto: BigInteger, decimals: Int = 4, style: TextStyle = Type.Balance, modifier: Modifier = Modifier, metal: Boolean = false, fracScale: Float = 1f) {
     var from by remember { mutableStateOf(BigInteger.ZERO) }
     var to by remember { mutableStateOf(BigInteger.ZERO) }
     val p = remember { Animatable(1f) }
@@ -413,7 +430,7 @@ fun CountingAmount(yocto: BigInteger, decimals: Int = 4, style: TextStyle = Type
         p.snapTo(0f)
         p.animateTo(1f, tween(900, easing = FastOutSlowInEasing))
     }
-    Amount(lerp(from, to, p.value), decimals, style, modifier = modifier, metal = metal)
+    Amount(lerp(from, to, p.value), decimals, style, modifier = modifier, metal = metal, fracScale = fracScale)
 }
 
 private fun lerp(a: BigInteger, b: BigInteger, t: Float): BigInteger =
@@ -688,10 +705,15 @@ fun GlassSheet(onDismiss: () -> Unit, secure: Boolean = false, content: @Composa
 /**
  * The card, in brushed dark titanium: chip, contactless mark, last four digits.
  * [tilt] (−1…1 on each axis, from the phone's motion) leans it and slides the
- * sheen across; [frozen] frosts it over in ice.
+ * sheen across; [frozen] frosts it over in ice. With [showBalance] the chip and
+ * contactless mark move up beside each other and the balance sits mid-card.
  */
 @Composable
-fun CardArt(modifier: Modifier = Modifier, last4: String? = null, network: String? = null, frozen: Boolean = false, compact: Boolean = false, tilt: Offset = Offset.Zero) {
+fun CardArt(
+    modifier: Modifier = Modifier, last4: String? = null, network: String? = null, frozen: Boolean = false, compact: Boolean = false, tilt: Offset = Offset.Zero,
+    /** Show the wallet balance on the card (Home); null [balance] shimmers while it loads. */
+    showBalance: Boolean = false, balance: BigInteger? = null,
+) {
     val r = if (compact) 14.dp else 24.dp
     val shape = RoundedCornerShape(r)
     val grain = rememberGrain()
@@ -724,6 +746,10 @@ fun CardArt(modifier: Modifier = Modifier, last4: String? = null, network: Strin
             .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(alpha = 0.38f), Color.White.copy(alpha = 0.06f), Color.White.copy(alpha = 0.16f))), shape)
             .padding(if (compact) 10.dp else 22.dp),
     ) {
+        if (showBalance && !compact) {
+            CardBalanceFace(last4, network, frozen, frost, balance)
+            return@Box
+        }
         if (!compact) Text("tapvault", Modifier.align(Alignment.TopStart), style = Type.BodyStrong.copy(letterSpacing = 0.6.sp, brush = Tv.titanium()))
         TvIcon(Ic.Nfc, if (compact) 14.dp else 22.dp, Tv.Text.copy(alpha = 0.7f), Modifier.align(Alignment.TopEnd))
         // EMV chip
@@ -744,6 +770,38 @@ fun CardArt(modifier: Modifier = Modifier, last4: String? = null, network: Strin
         }
         if (frozen && !compact) TvIcon(Ic.Freeze, 22.dp, Tv.Ice.copy(alpha = frost), Modifier.align(Alignment.TopEnd).offset(x = (-34).dp))
     }
+}
+
+/** The EMV chip: gold contacts with their dividing lines. */
+@Composable
+private fun CardChip(modifier: Modifier, w: Dp, h: Dp, r: Dp) {
+    Box(
+        modifier.size(w, h)
+            .background(Brush.linearGradient(listOf(Color(0xFFEFE2BC), Color(0xFFB9A169), Color(0xFFE6D3A0), Color(0xFFA8905A))), RoundedCornerShape(r))
+            .drawBehind {
+                val c = Color(0x66705A26); val sw = 1.2f
+                drawLine(c, Offset(size.width * 0.33f, 0f), Offset(size.width * 0.33f, size.height), sw)
+                drawLine(c, Offset(size.width * 0.67f, 0f), Offset(size.width * 0.67f, size.height), sw)
+                drawLine(c, Offset(0f, size.height * 0.5f), Offset(size.width, size.height * 0.5f), sw)
+            },
+    )
+}
+
+/** [CardArt]'s face on Home: wordmark and contactless mark on top, the balance mid-card with the chip to its right, number and network. */
+@Composable
+private fun BoxScope.CardBalanceFace(last4: String?, network: String?, frozen: Boolean, frost: Float, balance: BigInteger?) {
+    Text("tapvault", Modifier.align(Alignment.TopStart), style = Type.BodyStrong.copy(letterSpacing = 0.6.sp, brush = Tv.titanium()))
+    TvIcon(Ic.Nfc, 22.dp, Tv.Text.copy(alpha = 0.7f), Modifier.align(Alignment.TopEnd))
+    if (frozen) TvIcon(Ic.Freeze, 22.dp, Tv.Ice.copy(alpha = frost), Modifier.align(Alignment.TopEnd).offset(x = (-34).dp))
+    CardChip(Modifier.align(Alignment.CenterEnd).offset(y = 6.dp), 44.dp, 33.dp, 8.dp)
+    Column(Modifier.align(Alignment.CenterStart).offset(y = 6.dp).padding(end = 58.dp)) { // clear of the chip
+        Text(if (frozen) "BALANCE · FROZEN" else "BALANCE", style = Type.Overline.copy(fontSize = 11.sp, letterSpacing = 1.6.sp), color = if (frozen) Tv.Ice else Tv.Text3)
+        Spacer(Modifier.height(4.dp))
+        if (balance == null) Shimmer(Modifier.size(170.dp, 36.dp))
+        else CountingAmount(balance, 4, Type.Balance.copy(fontSize = 36.sp, lineHeight = 40.sp, letterSpacing = (-1).sp), metal = true, fracScale = 0.58f)
+    }
+    Text(last4?.let { "••••  $it" } ?: "••••  ••••", Modifier.align(Alignment.BottomStart), style = Type.Mono.copy(fontSize = 15.sp, letterSpacing = 1.6.sp), color = Tv.Text.copy(alpha = 0.85f))
+    network?.let { Text(it.uppercase(), Modifier.align(Alignment.BottomEnd), style = Type.Title.copy(fontSize = 14.sp, letterSpacing = 1.4.sp, brush = Tv.titanium())) }
 }
 
 // ---------------------------------------------------------------- card tap sheet

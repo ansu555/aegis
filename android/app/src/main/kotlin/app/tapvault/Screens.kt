@@ -37,12 +37,15 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -97,6 +100,9 @@ fun TapvaultApp(vm: AppViewModel) {
             val focus = androidx.compose.ui.platform.LocalFocusManager.current
             LaunchedEffect(vm.screen) { focus.clearFocus(force = true) }
             val tabs = vm.screen in tabScreens && ready
+            // Home's header floats over the content as glass, so its sheet state lives out here
+            val homeUi = remember { HomeUi() }
+            LaunchedEffect(vm.screen) { if (vm.screen != Screen.Home) { homeUi.picker = false; homeUi.receive = false } }
             CompositionLocalProvider(LocalHaze provides haze) {
                 // Everything on screen is the blur source for the floating glass (tab bar, banners, sheets).
                 Box(Modifier.fillMaxSize().hazeSource(haze)) { androidx.compose.animation.SharedTransitionLayout { CompositionLocalProvider(LocalSharedScope provides this) {
@@ -109,13 +115,11 @@ fun TapvaultApp(vm: AppViewModel) {
                         label = "screen",
                     ) { s -> CompositionLocalProvider(LocalScreenScope provides this) {
                         val scroll = rememberScrollState()
-                        val homeUi = remember { HomeUi() }
                         val body: @Composable () -> Unit = {
                             Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
                             // the header stays put; only what is below it scrolls
                             Column(Modifier.padding(horizontal = 20.dp)) {
                                 when (s) {
-                                    Screen.Home -> HomeHeader(vm, homeUi)
                                     Screen.Activity -> LargeTitle("Activity", "Approvals, delays and history")
                                     Screen.CardCheck -> TopBar(if (ready) "Your card" else "Card check", onBack = { vm.go(if (ready) vm.cameFrom else Screen.Welcome) })
                                     Screen.Settings -> LargeTitle("Settings")
@@ -125,6 +129,8 @@ fun TapvaultApp(vm: AppViewModel) {
                                 }
                             }
                             Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(scroll).padding(horizontal = 20.dp)) {
+                                // room for the floating glass header; the content scrolls under it
+                                if (s == Screen.Home) Spacer(Modifier.height(HOME_HEADER_SPACE))
                                 when (s) {
                                     Screen.Welcome -> Welcome(vm)
                                     Screen.Limits -> LimitsScreen(vm)
@@ -158,12 +164,28 @@ fun TapvaultApp(vm: AppViewModel) {
                                 }
                             }
                         } else if ((s == Screen.Home || s == Screen.Activity) && ready) {
-                            PullToRefreshBox(vm.pulling, { vm.pullRefresh() }, Modifier.fillMaxSize()) { body() }
+                            val ptr = rememberPullToRefreshState()
+                            PullToRefreshBox(
+                                vm.pulling, { vm.pullRefresh() }, Modifier.fillMaxSize(), state = ptr,
+                                indicator = {
+                                    PullToRefreshDefaults.Indicator(
+                                        state = ptr, isRefreshing = vm.pulling,
+                                        modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = if (s == Screen.Home) HOME_HEADER_SPACE else 0.dp),
+                                    )
+                                },
+                            ) { body() }
                         } else body()
                     } }
                 } } }
                 // Frosted strip behind the status bar so scrolled content never runs under the clock.
                 Box(Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars).frosted(RectangleShape, strength = 0.6f))
+                // Home's header: frosted glass over the scrolling content (outside the blur source, so it can blur it)
+                AnimatedVisibility(
+                    vm.screen == Screen.Home, Modifier.align(Alignment.TopCenter),
+                    enter = fadeIn(tween(240, delayMillis = 70)), exit = fadeOut(tween(90)),
+                ) {
+                    Box(Modifier.statusBarsPadding().padding(horizontal = 14.dp)) { HomeHeader(vm, homeUi) }
+                }
                 AnimatedVisibility(
                     tabs, Modifier.align(Alignment.BottomCenter),
                     enter = slideInVertically(spring(dampingRatio = 0.8f, stiffness = 400f)) { it } + fadeIn(),
@@ -292,15 +314,11 @@ private fun Home(vm: AppViewModel, ui: HomeUi) {
         Modifier.fillMaxWidth().padding(top = 24.dp, start = 6.dp, end = 6.dp).sharedCard()
             .pressable(haptic = true) { vm.go(Screen.CardCheck) }.semantics { contentDescription = "Your card" },
         last4 = vm.mainCard?.last4, network = vm.mainCard?.network, frozen = frozen, tilt = tilt,
+        showBalance = true, balance = vm.balance,
     )
 
-    // balance
-    Column(Modifier.fillMaxWidth().padding(top = 30.dp).enter(2), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("Total balance", style = Type.CaptionStrong, color = Tv.Text2)
-        Spacer(Modifier.height(6.dp))
-        val bal = vm.balance
-        if (bal == null) Shimmer(Modifier.size(200.dp, 52.dp)) else CountingAmount(bal, 4, metal = true)
-        Spacer(Modifier.height(12.dp))
+    // status under the card (the balance is on it)
+    Column(Modifier.fillMaxWidth().padding(top = 22.dp).enter(2), horizontalAlignment = Alignment.CenterHorizontally) {
         when {
             frozen -> StatusPill("Frozen", Tv.Ice, Ic.Freeze)
             w?.nearLimit != null -> {
@@ -350,6 +368,8 @@ private fun Home(vm: AppViewModel, ui: HomeUi) {
         }
     }
 
+    TokensSection(vm, Modifier.enter(4))
+
     // today's spending
     w?.nearLimit?.let { l ->
         val now = System.currentTimeMillis() / 1000
@@ -387,17 +407,26 @@ class HomeUi {
     var receive by mutableStateOf(false)
 }
 
-/** Home's header (wallet switcher + receive); it stays put while Home scrolls. */
+/** Height Home keeps free at its top for [HomeHeader]: the capsule and the gap above it. */
+private val HOME_HEADER_SPACE = 70.dp
+
+/** Home's header (wallet switcher + receive): a floating capsule of frosted glass; Home scrolls beneath it. */
 @Composable
 private fun HomeHeader(vm: AppViewModel, ui: HomeUi) {
     val idle = vm.busy == null
-    // header: wallet switcher + receive
-    Row(Modifier.fillMaxWidth().padding(top = 10.dp).enter(0), verticalAlignment = Alignment.CenterVertically) {
+    val shape = RoundedCornerShape(50)
+    Row(
+        Modifier.fillMaxWidth().padding(top = 8.dp).height(60.dp)
+            .shadow(24.dp, shape, ambientColor = Color.Black, spotColor = Color.Black)
+            .frosted(shape, strength = 0.38f).glassRim(30.dp, shape = shape)
+            .padding(start = 8.dp, end = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Box(Modifier.weight(1f)) { Row(
-            Modifier.clip(RoundedCornerShape(50)).clickable(enabled = idle) { ui.picker = true }.padding(end = 10.dp, top = 4.dp, bottom = 4.dp),
+            Modifier.clip(shape).clickable(enabled = idle) { ui.picker = true }.padding(end = 10.dp, top = 1.dp, bottom = 1.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Avatar(vm.walletName, 42.dp)
+            Avatar(vm.walletName, 44.dp)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f, fill = false)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -409,7 +438,7 @@ private fun HomeHeader(vm: AppViewModel, ui: HomeUi) {
             }
         } }
         Spacer(Modifier.width(12.dp))
-        RoundIcon(Ic.Qr, "Receive", 44.dp) { ui.receive = true }
+        RoundIcon(Ic.Qr, "Receive", 44.dp, bg = Color.White.copy(alpha = 0.07f)) { ui.receive = true }
     }
 }
 
@@ -457,7 +486,7 @@ private fun ReceiveSheet(vm: AppViewModel, onDismiss: () -> Unit) {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { QrCode(acct, Modifier.size(232.dp)) }
         Spacer(Modifier.height(20.dp))
         Column(Modifier.fillMaxWidth().surface(20.dp).padding(16.dp)) {
-            Text("${vm.walletName} · NEAR testnet", style = Type.CaptionStrong, color = Tv.Text2)
+            Text("${vm.walletName} · ${vm.network.displayName}", style = Type.CaptionStrong, color = Tv.Text2)
             Text(acct, style = Type.Mono, modifier = Modifier.padding(top = 4.dp))
         }
         Spacer(Modifier.height(14.dp))
@@ -467,7 +496,8 @@ private fun ReceiveSheet(vm: AppViewModel, onDismiss: () -> Unit) {
                 ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, acct), "Share account"))
             }
         }
-        Notice(Ic.Info, "Testnet only", "Send only testnet NEAR to this account. Real NEAR sent here can't be recovered.", Tv.Warn, Modifier.padding(top = 16.dp))
+        if (vm.network.isTestnet) Notice(Ic.Info, "Testnet only", "Send only testnet NEAR to this account. Real NEAR sent here can't be recovered.", Tv.Warn, Modifier.padding(top = 16.dp))
+        else Notice(Ic.Info, "NEAR mainnet", "Send only NEAR on the NEAR network to this account. Tokens sent from another chain, or testnet NEAR, don't arrive.", Tv.Text2, Modifier.padding(top = 16.dp))
     }
 }
 
@@ -506,7 +536,7 @@ private fun ColumnScope.Send(vm: AppViewModel) {
             val nv = v.trim().lowercase()
             pasted = when { nv.isEmpty() -> false; nv.length - to.length > 1 -> true; else -> pasted }
             to = nv
-        }, placeholder = "name.testnet", error = toError, trailing = {
+        }, placeholder = vm.network.example("name"), error = toError, trailing = {
             Box(Modifier.clip(RoundedCornerShape(12.dp)).background(Tv.GlassStrong).clickable { clip.getText()?.text?.let { to = it.trim().lowercase(); pasted = true } }.padding(horizontal = 12.dp, vertical = 8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) { TvIcon(Ic.Paste, 16.dp, Tv.Text); Spacer(Modifier.width(6.dp)); Text("Paste", style = Type.CaptionStrong, color = Tv.Text) }
             }
@@ -594,7 +624,7 @@ private fun ColumnScope.Send(vm: AppViewModel) {
                 else InfoRow("Arrives", if (instant) "Now (within your limit)" else "In ${hoursLabel(w?.delays?.transfer ?: 3600)} · you can cancel", if (instant) Tv.Positive else Tv.Warn)
                 limit?.let { InfoRow("Instant left today after", "${Near.format((if (instant) it.availableNow() - parsed else it.availableNow()).max(BigInteger.ZERO), 2)} NEAR") }
                 InfoRow("Network fee", if (vm.seedWallet) "About 0.0001 NEAR, from this wallet" else "Paid by your fee account")
-                InfoRow("Network", "NEAR testnet")
+                InfoRow("Network", vm.network.displayName, if (vm.network.isMainnet) Tv.Text else Tv.Warn)
             }
             Spacer(Modifier.height(16.dp))
             Text("Next", style = Type.CaptionStrong, color = Tv.Text2, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp))
@@ -864,6 +894,7 @@ private fun SettingsScreen(vm: AppViewModel) {
     var renaming by remember { mutableStateOf<String?>(null) }
     var keyOpen by remember { mutableStateOf(false) }
     var bookOpen by remember { mutableStateOf(false) }
+    var networkOpen by remember { mutableStateOf(false) }
     val w = vm.wallet
 
     // profile
@@ -886,7 +917,12 @@ private fun SettingsScreen(vm: AppViewModel) {
     Column(Modifier.enter(1)) {
         SectionHeader("Wallets")
         Group {
-            Row_(Ic.Layers, "My wallets", "${vm.walletList.size} on this phone · switch or add one", chevron = true, onClick = { showPicker = true })
+            Row_(Ic.Layers, "My wallets", "${vm.walletList.size} on ${vm.network.displayName} · switch or add one", chevron = true, onClick = { showPicker = true })
+            GroupDivider()
+            Row_(
+                Ic.Layers, "Network", if (vm.network.isMainnet) "Real NEAR" else "Test NEAR, not real money",
+                value = if (vm.network.isMainnet) "Mainnet" else "Testnet", chevron = true, onClick = { if (vm.busy == null) networkOpen = true },
+            )
         }
     }
 
@@ -958,7 +994,7 @@ private fun SettingsScreen(vm: AppViewModel) {
     Column(Modifier.enter(6)) {
         SectionHeader("About")
         Group {
-            Row_(Ic.Info, "Network", "NEAR testnet", value = "v${BuildConfig.VERSION_NAME}")
+            Row_(Ic.Info, "Network", vm.network.displayName, value = "v${BuildConfig.VERSION_NAME}")
         }
         Spacer(Modifier.height(18.dp))
         TvButton("Forget this wallet on this phone", Modifier.fillMaxWidth(), Btn.Danger, icon = Ic.Trash) { confirmReset = true }
@@ -992,11 +1028,12 @@ private fun SettingsScreen(vm: AppViewModel) {
     if (confirmReset) ConfirmDialog(
         "Forget ${vm.walletName}?",
         if (vm.seedWallet) "This deletes the wallet's key and recovery phrase from this phone. Only your written-down recovery phrase can bring it back; without it, its NEAR is lost. Your other wallets on this phone aren't affected."
-        else "This deletes this wallet's phone key. With a single card the wallet can't approve anything without it, so its NEAR stays locked in the wallet for good (on testnet that is only test NEAR). Your other wallets on this phone aren't affected.",
+        else "This deletes this wallet's phone key. With a single card the wallet can't approve anything without it, so its NEAR stays locked in the wallet for good ${if (vm.network.isTestnet) "(on testnet that is only test NEAR)" else "(this is real NEAR)"}. Your other wallets on this phone aren't affected.",
         "Forget", { confirmReset = false; vm.forgetWallet() }, { confirmReset = false }, dismiss = "Keep", danger = true, icon = Ic.Trash,
     )
     if (keyOpen) SecurityKeySettingsSheet(vm) { keyOpen = false }
     if (bookOpen) AddressBookSheet(vm) { bookOpen = false }
+    if (networkOpen) NetworkSheet(vm) { networkOpen = false }
 }
 
 // ---------------------------------------------------------------- wallet switcher
@@ -1007,7 +1044,7 @@ fun WalletPicker(vm: AppViewModel, onDismiss: () -> Unit) {
     LaunchedEffect(Unit) { vm.reloadWalletList(); vm.loadWalletBalances() }
     GlassSheet(onDismiss) {
         Text("My wallets", style = Type.H2)
-        Text("Each wallet has its own NEAR account, phone key and card.", style = Type.Body, color = Tv.Text2, modifier = Modifier.padding(top = 4.dp, bottom = 16.dp))
+        Text("Your ${vm.network.displayName} wallets. Each has its own NEAR account, phone key and card; change network in Settings.", style = Type.Body, color = Tv.Text2, modifier = Modifier.padding(top = 4.dp, bottom = 16.dp))
         Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             vm.walletList.forEach { e ->
                 val sub = when {

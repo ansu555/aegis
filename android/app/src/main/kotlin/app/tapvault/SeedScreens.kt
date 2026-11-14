@@ -86,7 +86,8 @@ fun ColumnScope.SeedCreateScreen(vm: AppViewModel) {
                 Text("In this order. You'll be asked for three of them next.", style = Type.Body, color = Tv.Text2, modifier = Modifier.padding(top = 8.dp))
                 Spacer(Modifier.height(20.dp))
                 WordGrid(words)
-                Notice(Ic.Info, "Testnet only", "This wallet is on NEAR testnet. Never send real NEAR to it.", Tv.Text2, Modifier.padding(top = 16.dp))
+                if (vm.network.isTestnet) Notice(Ic.Info, "Testnet only", "This wallet is on NEAR testnet. Never send real NEAR to it.", Tv.Text2, Modifier.padding(top = 16.dp))
+                else Notice(Ic.Warning, "These words are the wallet", "Anyone with them can take its NEAR until you protect it with your bank card. Write them on paper; never in a photo or a chat.", Tv.Warn, Modifier.padding(top = 16.dp))
             }
             else -> {
                 Text("Check your words", style = Type.H1, modifier = Modifier.padding(top = 8.dp))
@@ -194,11 +195,15 @@ fun ColumnScope.SeedImportScreen(vm: AppViewModel) {
                 Modifier.padding(top = 8.dp, start = 4.dp),
             )
             Spacer(Modifier.height(16.dp))
-            TvField("Account name (optional)", account, { account = it.trim().lowercase().take(64) }, placeholder = "name.testnet")
+            TvField("Account name (optional)", account, { account = it.trim().lowercase().take(64) }, placeholder = vm.network.example("name"))
             Caption("Leave it empty and Tapvault looks the account up.", Modifier.padding(top = 6.dp, start = 4.dp), color = Tv.Text3)
-            Notice(
+            if (vm.network.isTestnet) Notice(
                 Ic.Warning, "Testnet only",
                 "Don't import a phrase or key that holds real NEAR: the same words control the mainnet account too, and this app keeps them on the phone.",
+                Tv.Warn, Modifier.padding(top = 18.dp),
+            ) else Notice(
+                Ic.Warning, "Real NEAR",
+                "Until you protect it with your bank card, the phrase alone controls this wallet, and this app keeps it on the phone (encrypted).",
                 Tv.Warn, Modifier.padding(top = 18.dp),
             )
         } else {
@@ -210,7 +215,7 @@ fun ColumnScope.SeedImportScreen(vm: AppViewModel) {
                 found.accounts.forEachIndexed { i, a ->
                     if (i > 0) GroupDivider()
                     Row_(
-                        Ic.Wallet, shortAccount(a, 30), "NEAR testnet account",
+                        Ic.Wallet, shortAccount(a, 30), "${vm.network.displayName} account",
                         tint = if (a == chosen) Tv.Positive else Tv.Text, iconBg = if (a == chosen) Tv.PositiveSoft else Tv.GlassStrong,
                         trailingIcon = if (a == chosen) Ic.Check else null, onClick = { pick = a },
                     )
@@ -245,13 +250,9 @@ fun SeedHome(vm: AppViewModel, ui: HomeUi) {
     CardArt(
         Modifier.fillMaxWidth().padding(top = 24.dp, start = 6.dp, end = 6.dp).sharedCard()
             .pressable(haptic = true) { vm.go(Screen.Security) }.semantics { contentDescription = "Wallet security" },
+        showBalance = true, balance = vm.balance,
     )
-    Column(Modifier.fillMaxWidth().padding(top = 30.dp).enter(2), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("Total balance", style = Type.CaptionStrong, color = Tv.Text2)
-        Spacer(Modifier.height(6.dp))
-        val bal = vm.balance
-        if (bal == null) Shimmer(Modifier.width(200.dp).height(52.dp)) else CountingAmount(bal, 4, metal = true)
-        Spacer(Modifier.height(12.dp))
+    Column(Modifier.fillMaxWidth().padding(top = 22.dp).enter(2), horizontalAlignment = Alignment.CenterHorizontally) {
         StatusPill(
             "Recovery phrase only · protect it", Tv.Warn, Ic.Key,
             Modifier.clip(RoundedCornerShape(50)).clickable(enabled = idle) { vm.go(Screen.Security) },
@@ -270,6 +271,7 @@ fun SeedHome(vm: AppViewModel, ui: HomeUi) {
     ) {
         TvButton("Protect with bank card", Modifier.fillMaxWidth(), Btn.Secondary, icon = Ic.Card, height = 48.dp, enabled = idle) { vm.protectWithCard() }
     }
+    TokensSection(vm, Modifier.enter(5))
 }
 
 /** Security for a seed-phrase wallet: what controls it, the phrase, and the way to protect it. */

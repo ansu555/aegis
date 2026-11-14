@@ -2,12 +2,13 @@ package app.tapvault
 
 import android.content.Context
 import app.tapvault.core.CardBook
+import app.tapvault.core.Network
 import app.tapvault.core.Receivers
 
 /**
- * App-private settings. Testnet only: the gas key just pays fees, and the
- * wallet's temporary key is deleted from the chain (and from here) when
- * setup finishes. The exception is a seed-phrase wallet: until it is
+ * App-private settings of one wallet (its network is in [WalletIndex]). The
+ * gas key just pays fees, and the wallet's temporary key is deleted from
+ * the chain (and from here) when setup finishes. The exception is a seed-phrase wallet: until it is
  * protected with a card, its key and phrase (encrypted, [SecretBox]) do
  * control its funds. Writes are synchronous so a crash right after a setup
  * step can't lose what it created.
@@ -170,6 +171,11 @@ class Store(context: Context, file: String = WalletIndex.prefsFile(WalletIndex.F
         get() = p.getString("daily", "2") ?: "2"
         set(v) { p.edit().putString("daily", v).commit() }
 
+    /** Which tokens this wallet shows ([app.tapvault.core.TokenPrefs], encoded): added and hidden ones. */
+    var tokenPrefs: app.tapvault.core.TokenPrefs
+        get() = app.tapvault.core.TokenPrefs.decode(p.getString("token_prefs", null))
+        set(v) { p.edit().putString("token_prefs", v.encode()).commit() }
+
     fun clear() { p.edit().clear().commit() }
 }
 
@@ -182,22 +188,56 @@ class Store(context: Context, file: String = WalletIndex.prefsFile(WalletIndex.F
  * The first wallet ([FIRST]) uses the original file `tapvault` and alias
  * `tapvault_phone_p256`, so a wallet made before multi-wallet support simply
  * becomes wallet 1.
+ *
+ * Each wallet belongs to one [Network] for life, stored here as `net_<id>`
+ * when it is registered; an entry without one is from before networks
+ * existed and is a testnet wallet. [network] is the Settings → Network
+ * switch: it decides which wallets are shown ([idsOn]), never which network
+ * a wallet talks to. There is always at least one wallet (maybe an empty
+ * one, shown as Welcome) on the network shown.
  */
 class WalletIndex(context: Context) {
     private val ctx = context.applicationContext
     private val p = ctx.getSharedPreferences("tapvault_wallets", Context.MODE_PRIVATE)
 
     init {
-        if (ids.isEmpty()) register(FIRST)
+        val existing = p.contains("ids")
+        // Every wallet registered before networks existed is a testnet wallet: say so explicitly.
+        ids.filter { !p.contains("net_$it") }.forEach { p.edit().putString("net_$it", Network.TESTNET.id).commit() }
+        // Existing installs stay on testnet; a new install starts on mainnet once the build allows it.
+        if (!p.contains("network")) p.edit().putString("network", if (existing || !MAINNET_ENABLED) Network.TESTNET.id else Network.MAINNET.id).commit()
+        // A build without mainnet never shows it (its mainnet wallets, if any, stay stored, untouched).
+        if (!MAINNET_ENABLED && network.isMainnet) p.edit().putString("network", Network.TESTNET.id).commit()
+        ensureOn(network)
     }
 
+    /** Every wallet on this phone, on every network. */
     val ids: List<String>
         get() = p.getString("ids", "").orEmpty().split(',').filter { it.isNotEmpty() }
 
-    /** The wallet on screen; always one of [ids]. */
+    /** The network [id] lives on (set when it was registered, never changed). */
+    fun networkOf(id: String): Network = Network.of(p.getString("net_$id", null))
+
+    /** The wallets on [n], in the order they were added. */
+    fun idsOn(n: Network): List<String> = ids.filter { networkOf(it) === n }
+
+    /** The network shown (Settings → Network). Setting it doesn't touch any wallet. */
+    var network: Network
+        get() = Network.of(p.getString("network", null))
+        set(v) {
+            require(v.isTestnet || MAINNET_ENABLED) { "mainnet is off in this build" }
+            p.edit().putString("network", v.id).commit()
+            ensureOn(v)
+        }
+
+    /** The wallet on screen: the last one used on the network shown; always one of [idsOn] it. */
     var active: String
-        get() = p.getString("active", null)?.takeIf { it in ids } ?: ids.first()
-        set(v) { p.edit().putString("active", v).commit() }
+        get() {
+            val on = idsOn(network)
+            val last = p.getString("active_${network.id}", null) ?: p.getString("active", null).takeIf { network.isTestnet }
+            return last?.takeIf { it in on } ?: on.first()
+        }
+        set(v) { p.edit().putString("active_${networkOf(v).id}", v).commit() }
 
     fun name(id: String): String = p.getString("name_$id", null) ?: "Wallet"
 
@@ -208,10 +248,17 @@ class WalletIndex(context: Context) {
         get() = p.getLong("background_at", 0)
         set(v) { p.edit().putLong("background_at", v).commit() }
 
-    /** Saved receivers, shared by every wallet on this phone ([app.tapvault.core.AddressBook], encoded). */
-    var addressBook: app.tapvault.core.AddressBook
-        get() = app.tapvault.core.AddressBook.decode(p.getString("address_book", null))
-        set(v) { p.edit().putString("address_book", v.encode()).commit() }
+    /**
+     * Saved receivers on [n], shared by that network's wallets on this phone
+     * ([app.tapvault.core.AddressBook], encoded). The book from before
+     * networks existed is the testnet one.
+     */
+    fun addressBook(n: Network): app.tapvault.core.AddressBook =
+        app.tapvault.core.AddressBook.decode(p.getString(bookKey(n), null))
+
+    fun setAddressBook(n: Network, b: app.tapvault.core.AddressBook) { p.edit().putString(bookKey(n), b.encode()).commit() }
+
+    private fun bookKey(n: Network) = if (n.isTestnet) "address_book" else "address_book_${n.id}"
 
     /** Whether the user turned on watchtower alerts. */
     var alertsOn: Boolean
@@ -220,33 +267,43 @@ class WalletIndex(context: Context) {
 
     fun store(id: String) = Store(ctx, prefsFile(id))
 
-    /** Register a new, empty wallet and return its id. */
-    fun add(): String {
+    /** Register a new, empty wallet on [n] (the network shown, by default) and return its id. */
+    fun add(n: Network = network): String {
         var id: String
         do {
             id = ByteArray(4).also { java.security.SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }
         } while (id in ids || id == FIRST)
-        register(id)
+        register(id, n)
         return id
     }
 
-    /** Drop [id] from the list (its Store and key are the caller's to clear). Keeps at least one wallet. */
+    /**
+     * Drop [id] from the list (its Store and key are the caller's to clear).
+     * Keeps at least one wallet on the network shown.
+     */
     fun remove(id: String) {
         val rest = ids - id
-        p.edit().remove("name_$id").putString("ids", rest.joinToString(",")).commit()
-        if (rest.isEmpty()) {
-            p.edit().putInt("next", 1).commit()
-            register(FIRST)
-        }
+        p.edit().remove("name_$id").remove("net_$id").putString("ids", rest.joinToString(",")).commit()
+        if (rest.isEmpty()) p.edit().putInt("next", 1).commit()
+        ensureOn(network)
     }
 
-    private fun register(id: String) {
+    /** An empty wallet on [n] if it has none, so the screen always has one to show (Welcome). */
+    private fun ensureOn(n: Network) {
+        if (idsOn(n).isNotEmpty()) return
+        if (FIRST !in ids) register(FIRST, n) else add(n)
+    }
+
+    private fun register(id: String, net: Network) {
         val n = p.getInt("next", 1)
-        p.edit().putString("ids", (ids + id).joinToString(",")).putString("name_$id", "Wallet $n").putInt("next", n + 1).commit()
+        p.edit().putString("ids", (ids + id).joinToString(",")).putString("name_$id", "Wallet $n").putString("net_$id", net.id).putInt("next", n + 1).commit()
     }
 
     companion object {
         const val FIRST = "0"
+
+        /** Whether this build may show mainnet (`tapvault.mainnet=true` in local.properties); off until real-card testing and a contract review. */
+        val MAINNET_ENABLED get() = BuildConfig.MAINNET_ENABLED
 
         fun prefsFile(id: String) = if (id == FIRST) "tapvault" else "tapvault_w_$id"
 

@@ -39,6 +39,11 @@ import app.tapvault.core.FinalizeArgs
 import app.tapvault.core.LimitInit
 import app.tapvault.core.Near
 import app.tapvault.core.NearClient
+import app.tapvault.core.TokenBalance
+import app.tapvault.core.TokenInfo
+import app.tapvault.core.TokenPrefs
+import app.tapvault.core.Tokens
+import app.tapvault.core.Network
 import app.tapvault.core.NearKey
 import app.tapvault.core.NearRpcException
 import app.tapvault.core.Onboarding
@@ -109,7 +114,7 @@ class ForgotSecurityKey : Exception("Security key forgotten")
 data class Outcome(val ok: Boolean, val title: String, val detail: String = "", val link: String? = null)
 
 /** One wallet in the switcher. [account] is null until setup has created it. */
-data class WalletEntry(val id: String, val name: String, val account: String?, val ready: Boolean, val active: Boolean)
+data class WalletEntry(val id: String, val name: String, val account: String?, val ready: Boolean, val active: Boolean, val network: Network = Network.TESTNET)
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Every wallet on this phone; each has its own accounts, card and phone key. */
@@ -125,7 +130,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var walletBalances by mutableStateOf<Map<String, BigInteger>>(emptyMap())
         private set
 
-    val near = NearClient()
+    /** One client per network; a wallet always uses its own network's ([WalletIndex.networkOf]), whatever the switch says. */
+    private val clients = Network.ALL.associateWith { NearClient(it) }
+
+    fun nearFor(n: Network): NearClient = clients.getValue(n)
+
+    /** The active wallet's network (also the network shown: the active wallet is always one of its wallets). */
+    var network by mutableStateOf(wallets.networkOf(activeId))
+        private set
+
+    /** The active wallet's client. Flows can't outlive a wallet switch (switches wait for [busy]); background work captures its own. */
+    val near: NearClient get() = nearFor(network)
+
+    /** Whether this build may show mainnet ([WalletIndex.MAINNET_ENABLED]). */
+    val mainnetEnabled get() = WalletIndex.MAINNET_ENABLED
     private var activityRef = WeakReference<MainActivity>(null)
     val phone = KeystoreSigner({ WalletIndex.aliasOf(store, activeId) }) { activityRef.get() }
 
@@ -149,8 +167,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var hasSecurityKey by mutableStateOf(store.securityKey != null)
         private set
 
-    /** Saved receivers (shared by every wallet on this phone). */
-    var addressBook by mutableStateOf(wallets.addressBook)
+    /** Saved receivers (shared by the wallets on this phone on the active wallet's network). */
+    var addressBook by mutableStateOf(wallets.addressBook(network))
         private set
     var wallet by mutableStateOf<WalletState?>(null)
     var balance by mutableStateOf<BigInteger?>(null)
@@ -406,12 +424,101 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         outcome = Outcome(true, "Security key reset", "Use the new one from now on.")
     }
 
+    // ---- tokens ----
+
+    /** The active wallet's tokens (built-in and added), with balances; null until first loaded. */
+    var tokens by mutableStateOf<List<TokenBalance>?>(null)
+        private set
+
+    /** Tokens the index lists in this wallet that it doesn't show (unverified, never on Home by themselves). */
+    var foundTokens by mutableStateOf<List<TokenBalance>>(emptyList())
+        private set
+
+    var tokenPrefs by mutableStateOf(store.tokenPrefs)
+        private set
+
+    /** The tokens Home lists: shown and not hidden ([TokenPrefs.isShown]). */
+    val shownTokens: List<TokenBalance>
+        get() = tokens.orEmpty().filter { tokenPrefs.isShown(it.token.contract, it.token.verified, it.raw) }
+
+    private val tokenMeta = java.util.concurrent.ConcurrentHashMap<String, TokenInfo>()
+    private var tokensAt = 0L
+    private val loadingTokens = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Reload token balances: at most once a minute unless [force] (pull to refresh, a change in Manage tokens). */
+    fun refreshTokens(force: Boolean = false) {
+        val id = activeId
+        val st = store
+        val nc = near
+        val acct = st.walletAccount ?: return
+        if (!st.usable()) return
+        if (!force && System.currentTimeMillis() - tokensAt < 60_000) return
+        if (!loadingTokens.compareAndSet(false, true)) return
+        viewModelScope.launch {
+            try {
+                // An unfunded implicit account (new mainnet seed wallet) holds nothing yet.
+                val snap = withContext(Dispatchers.IO) {
+                    if (Network.isImplicit(acct) && !nc.accountExists(acct)) Tokens.Snapshot(emptyList(), emptyList())
+                    else Tokens(nc).load(acct, st.tokenPrefs, tokenMeta)
+                }
+                if (activeId == id) { tokens = snap.tokens; foundTokens = snap.found; tokensAt = System.currentTimeMillis() }
+            } catch (e: Exception) {
+                note("tokens: ${e.message}")
+            } finally {
+                loadingTokens.set(false)
+            }
+        }
+    }
+
+    private fun saveTokenPrefs(p: TokenPrefs) {
+        store.tokenPrefs = p
+        tokenPrefs = p
+    }
+
+    fun showToken(contract: String) { saveTokenPrefs(tokenPrefs.show(contract)); refreshTokens(force = true) }
+    fun hideToken(contract: String) = saveTokenPrefs(tokenPrefs.hide(contract))
+    fun removeToken(contract: String) { saveTokenPrefs(tokenPrefs.remove(contract)); refreshTokens(force = true) }
+
+    /** Manage tokens → Add by contract: look the token up on chain (shown as unverified unless built in). */
+    suspend fun lookUpToken(contract: String): TokenInfo = withContext(Dispatchers.IO) {
+        val c = contract.trim().lowercase()
+        Tokens(near).metadata(c).also { tokenMeta[c] = it }
+    }
+
+    /** Whether the active wallet can receive [contract] (null: the token doesn't say). */
+    suspend fun tokenRegistered(contract: String): Boolean? = withContext(Dispatchers.IO) {
+        Tokens(near).isRegistered(contract, store.walletAccount ?: return@withContext null)
+    }
+
+    /**
+     * Register the wallet on a token so it can receive it. The fee account
+     * pays (about 0.00125 NEAR); a seed phrase wallet without one pays from
+     * itself. No card or wallet approval: nothing of the wallet's moves.
+     */
+    fun enableToken(t: TokenInfo, onDone: () -> Unit = {}) = run("Enabling ${t.symbol}") {
+        val acct = store.walletAccount ?: throw IllegalStateException("no wallet yet")
+        val (payer, key) = when {
+            store.gasAccount != null && store.gasKey != null -> store.gasAccount!! to NearKey.fromSecret(store.gasKey!!)
+            store.seedWallet && store.walletKey != null -> acct to NearKey.fromSecret(store.walletKey!!)
+            else -> throw IllegalStateException("This wallet has no fee account on this phone to pay for it.")
+        }
+        val tk = Tokens(near)
+        if (tk.isRegistered(t.contract, acct) == true) {
+            outcome = Outcome(true, "${t.symbol} is ready", "This wallet can already receive ${t.symbol}.")
+        } else {
+            val r = tk.register(t.contract, acct, payer, key)
+            note("registered on ${t.contract}: ${near.explorerTx(r.hash)}")
+            outcome = Outcome(true, "${t.symbol} enabled", "This wallet can now receive ${t.symbol}.", near.explorerTx(r.hash))
+        }
+        withContext(Dispatchers.Main) { if (t.contract !in tokenPrefs.added) showToken(t.contract); onDone() }
+    }
+
     // ---- address book ----
 
     /** Save [account] as [name]; returns a readable problem, or null when saved. */
     fun saveContact(name: String, account: String): String? = try {
         val b = addressBook.put(name, account)
-        wallets.addressBook = b
+        wallets.setAddressBook(network, b)
         addressBook = b
         null
     } catch (e: IllegalArgumentException) {
@@ -420,7 +527,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteContact(account: String) {
         val b = addressBook.remove(account)
-        wallets.addressBook = b
+        wallets.setAddressBook(network, b)
         addressBook = b
     }
 
@@ -574,9 +681,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- wallet ----
 
-    fun walletClient(s: Store = store): TapvaultWallet {
+    fun walletClient(s: Store = store, nc: NearClient = near): TapvaultWallet {
         val acct = s.walletAccount ?: throw IllegalStateException("no wallet yet")
-        return TapvaultWallet(near, acct, s.gasAccount!!, NearKey.fromSecret(s.gasKey!!))
+        return TapvaultWallet(nc, acct, s.gasAccount!!, NearKey.fromSecret(s.gasKey!!))
     }
 
     private val refreshing = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -590,6 +697,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!store.usable() || pulling) return
         pulling = true
         viewModelScope.launch {
+            refreshTokens(force = true)
             refresh()
             while (refreshing.get()) delay(100)
             delay(250)
@@ -602,20 +710,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun refresh() {
         val id = activeId
         val st = store
+        val nc = near
         if (!st.usable()) return
+        refreshTokens()
         if (!refreshing.compareAndSet(false, true)) return
         viewModelScope.launch {
             try {
                 if (st.setupStep < 4) withContext(Dispatchers.IO) {
-                    // A seed-phrase wallet: a plain account, so just its balance.
-                    val (b, locked) = near.spendable(st.walletAccount!!)
+                    // A seed-phrase wallet: a plain account, so just its balance. A mainnet one is an
+                    // implicit account that only exists once NEAR has been sent to it: until then, 0.
+                    val acct = st.walletAccount!!
+                    val (b, locked) = if (Network.isImplicit(acct) && !nc.accountExists(acct)) BigInteger.ZERO to BigInteger.ZERO else nc.spendable(acct)
                     withContext(Dispatchers.Main) {
                         if (activeId == id) { wallet = null; balance = b; storageLocked = locked; proposals = emptyList(); offline = null }
                     }
                 } else withContext(Dispatchers.IO) {
-                    val w = walletClient(st)
+                    val w = walletClient(st, nc)
                     val s = w.state()
-                    val (b, locked) = near.spendable(w.account)
+                    val (b, locked) = nc.spendable(w.account)
                     val ps = w.proposals()
                     // A card stored by an older build has no key hash yet: it's the card setup added.
                     val bound = st.cards.bind(s)?.also { st.cards = it; note("card list migrated") }
@@ -632,7 +744,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
             } catch (e: Exception) {
                 note("refresh failed: ${e.message}")
-                if (activeId == id) offline = "Can't reach NEAR testnet right now. Showing the last known state; retrying."
+                if (activeId == id) offline = "Can't reach ${nc.network.displayName} right now. Showing the last known state; retrying."
             } finally {
                 refreshing.set(false)
                 // A switch while this ran skipped the new wallet's refresh; do it now.
@@ -655,8 +767,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- setup ----
 
+    /** The testnet sponsor in this build; never on mainnet ([Onboarding] refuses one there too). */
     private fun sponsor(): Onboarding.Sponsor? =
-        BuildConfig.SPONSOR_ACCOUNT.takeIf { it.isNotBlank() && BuildConfig.SPONSOR_KEY.isNotBlank() }
+        BuildConfig.SPONSOR_ACCOUNT.takeIf { network.allowsSponsor && it.isNotBlank() && BuildConfig.SPONSOR_KEY.isNotBlank() }
             ?.let { acct ->
                 runCatching { Onboarding.Sponsor(acct, NearKey.fromSecret(BuildConfig.SPONSOR_KEY)) }
                     .onFailure { note("sponsor key in this build is unreadable; using the faucet only") }
@@ -664,7 +777,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
 
     /** Whether this build carries a readable sponsor account (no side effects: used by the UI). */
-    val hasSponsor get() = BuildConfig.SPONSOR_ACCOUNT.isNotBlank() && runCatching { NearKey.fromSecret(BuildConfig.SPONSOR_KEY) }.isSuccess
+    val hasSponsor get() = network.allowsSponsor && BuildConfig.SPONSOR_ACCOUNT.isNotBlank() && runCatching { NearKey.fromSecret(BuildConfig.SPONSOR_KEY) }.isSuccess
 
     /** Throws a readable error unless this phone can read a card right now. */
     private fun requireNfc() {
@@ -737,9 +850,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         ensureLocalKeys()
         // Protecting a seed-phrase wallet: check it's safe before a card is read or anything is sent.
         val seed = store.seedWallet
+        // A mainnet seed wallet is an implicit account that exists only once NEAR has arrived.
+        if (seed && store.setupStep < 2 && !near.accountExists(store.walletAccount!!)) throw IllegalStateException(
+            "Add NEAR to this wallet first (Receive). Protecting it needs about ${Near.format(SeedWallet.storageFor(shippedWasm().size) + Onboarding.Sponsor.GAS_FUNDING, 1)} NEAR " +
+                "for the contract's storage and the fee account.",
+        )
         if (seed && store.setupStep < 2 && near.codeHash(store.walletAccount!!) == NearClient.NO_CODE) {
             progress("Checking your wallet")
-            SeedWallet(near, store.walletAccount!!, NearKey.fromSecret(store.walletKey!!)).preflight(shippedWasm().size, needsFeeAccount = store.gasAccount == null)
+            val sw = SeedWallet(near, store.walletAccount!!, NearKey.fromSecret(store.walletKey!!))
+            sw.preflight(shippedWasm().size, needsFeeAccount = store.gasAccount == null)
+            // The same implicit account protected on both networks would share card signatures.
+            sw.checkNotOnOtherNetwork(nearFor(network.other))
         }
         // A wallet imported with its key has no fee account yet: fund one from the wallet itself.
         if (seed && store.gasAccount == null) {
@@ -749,7 +870,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             note("fee account ${store.gasAccount}")
         }
         if (store.setupStep < 1) {
-            progress("Creating your wallet account on NEAR testnet")
+            progress("Creating your wallet account on ${network.displayName}")
             // Keys are saved before any account exists, so a retry reuses what was already created.
             val plan = Onboarding.Plan.decode(store.setupPlan) ?: Onboarding.Plan.random().also { store.setupPlan = it.encode() }
             val a = ob.createAccounts(sponsor = sponsor(), plan = plan) { note(it) }
@@ -771,7 +892,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // No contract yet is expected; anything else (no connection) must not re-send a step that landed.
             if (e.message?.contains("CodeDoesNotExist") == true || e.message?.contains("MethodNotFound") == true ||
                 e.message?.contains("UNKNOWN_ACCOUNT") == true || e.message?.contains("does not exist") == true
-            ) null else throw IllegalStateException("Can't reach NEAR testnet right now (${e.message?.take(120)}). Try Continue setup again.")
+            ) null else throw IllegalStateException("Can't reach ${network.displayName} right now (${e.message?.take(120)}). Try Continue setup again.")
         }
 
         // Read the card before deploying anything: a card that can't sign
@@ -965,7 +1086,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val (available, _) = near.spendable(w.account)
         require(amount <= available) { "The wallet only has ${Near.format(available, 4)} NEAR available to send" }
         // 64-hex implicit accounts come into existence when they receive NEAR.
-        require(to.matches(Regex("^[0-9a-f]{64}$")) || near.accountExists(to)) { "$to doesn't exist on NEAR testnet" }
+        require(Network.isImplicit(to) || near.accountExists(to)) { "$to doesn't exist on ${network.displayName}" }
 
         // An unfinished identical payment (phone approved, card tap failed) is
         // finished instead of creating a second one.
@@ -1035,7 +1156,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         require(to != acct) { "That's this wallet's own account" }
         val (available, _) = near.spendable(acct)
         require(amount <= available) { "The wallet only has ${Near.format(available, 4)} NEAR available to send" }
-        require(to.matches(Regex("^[0-9a-f]{64}$")) || near.accountExists(to)) { "$to doesn't exist on NEAR testnet" }
+        require(Network.isImplicit(to) || near.accountExists(to)) { "$to doesn't exist on ${network.displayName}" }
         requireSecurityKey("To send ${Near.format(amount)} NEAR to $to.")
         progress("Approve on your phone")
         phone.reason = "Send ${Near.format(amount)} NEAR to $to"
@@ -1057,7 +1178,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         require(to != w.account) { "That's this wallet's own account" }
         val (available, _) = near.spendable(w.account)
         require(amount <= available) { "The wallet only has ${Near.format(available, 4)} NEAR available to send" }
-        require(to.matches(Regex("^[0-9a-f]{64}$")) || near.accountExists(to)) { "$to doesn't exist on NEAR testnet" }
+        require(Network.isImplicit(to) || near.accountExists(to)) { "$to doesn't exist on ${network.displayName}" }
         requireSecurityKey("To send ${Near.format(amount)} NEAR to $to.")
         progress("Approve on your phone")
         phone.reason = "Send ${Near.format(amount)} NEAR to $to"
@@ -1423,31 +1544,48 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * After the words were written down and checked: a testnet account whose
-     * only key comes from the phrase. [protectNow] goes on to "Protect with
-     * bank card" straight away.
+     * After the words were written down and checked: an account whose only
+     * key comes from the phrase. On testnet the faucet (or sponsor) creates a
+     * named account; on mainnet it is the phrase key's implicit account,
+     * which exists once the user sends NEAR to it. [protectNow] goes on to
+     * "Protect with bank card" straight away.
      */
     fun createSeedWallet(protectNow: Boolean) = run("Creating your wallet") {
         val phrase = store.seedPhrase ?: throw IllegalStateException("The recovery phrase is missing. Go back and start again.")
         ensureLocalKeys()
         if (store.setupStep < 1) {
-            progress("Creating your wallet account on NEAR testnet")
+            progress("Creating your wallet account on ${network.displayName}")
             val key = Mnemonic.nearKey(phrase)
-            // Saved before any account exists, so a retry reuses what was already created.
-            val plan = Onboarding.Plan.decode(store.setupPlan)?.takeIf { it.walletKey.publicKeyString == key.publicKeyString }
-                ?: Onboarding.Plan(Onboarding.Plan.random().tag, key, NearKey.random()).also { store.setupPlan = it.encode() }
-            val a = Onboarding(near).createAccounts(sponsor = sponsor(), plan = plan) { note(it) }
-            store.walletAccount = a.wallet; store.walletKey = a.walletKey.secretString()
-            store.gasAccount = a.gas; store.gasKey = a.gasKey.secretString()
-            store.seedWallet = true
-            store.setupPlan = null
-            setStep(1)
-            note("seed phrase wallet ${a.wallet}")
+            if (!network.hasFaucet) {
+                // Nothing to create: the fee account is funded from the wallet when it is protected.
+                val acct = NearClient.implicitAccount(key.publicKey)
+                store.walletAccount = acct; store.walletKey = key.secretString()
+                store.gasAccount = null; store.gasKey = null
+                store.seedWallet = true
+                setStep(1)
+                note("seed phrase wallet $acct (implicit; exists once funded)")
+            } else {
+                // Saved before any account exists, so a retry reuses what was already created.
+                val plan = Onboarding.Plan.decode(store.setupPlan)?.takeIf { it.walletKey.publicKeyString == key.publicKeyString }
+                    ?: Onboarding.Plan(Onboarding.Plan.random().tag, key, NearKey.random()).also { store.setupPlan = it.encode() }
+                val a = Onboarding(near).createAccounts(sponsor = sponsor(), plan = plan) { note(it) }
+                store.walletAccount = a.wallet; store.walletKey = a.walletKey.secretString()
+                store.gasAccount = a.gas; store.gasKey = a.gasKey.secretString()
+                store.seedWallet = true
+                store.setupPlan = null
+                setStep(1)
+                note("seed phrase wallet ${a.wallet}")
+            }
         }
         withContext(Dispatchers.Main) { seedWallet = true; seedDraft = null; screen = Screen.Home; reloadWalletList() }
         refresh()
         if (protectNow) withContext(Dispatchers.Main) { protectWithCard() }
-        else outcome = Outcome(true, "Your wallet is ready", "Your recovery phrase controls it. Protect it with your bank card any time from Home.", near.explorerAccount(store.walletAccount!!))
+        else outcome = Outcome(
+            true, "Your wallet is ready",
+            (if (network.hasFaucet) "" else "Send NEAR to it from an exchange or another wallet to start (Receive). ") +
+                "Your recovery phrase controls it. Protect it with your bank card any time from Home.",
+            near.explorerAccount(store.walletAccount!!),
+        )
     }
 
     /** What the import screen found for the phrase or key the user entered. */
@@ -1460,14 +1598,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val (key, phrase) = SeedWallet.parseImport(input)
         val typed = account.trim().lowercase()
         val accounts = if (typed.isNotEmpty()) {
-            if (!near.accountExists(typed)) throw IllegalStateException("$typed doesn't exist on NEAR testnet.")
+            network.accountProblem(typed)?.let { throw IllegalStateException("$it.") }
+            if (!near.accountExists(typed)) throw IllegalStateException("$typed doesn't exist on ${network.displayName}.")
             if (key.publicKeyString !in near.fullAccessKeys(typed)) throw IllegalStateException("This phrase or key doesn't control $typed (it isn't one of its full-access keys).")
             listOf(typed)
         } else SeedWallet.findAccounts(near, key)
-        if (accounts.isEmpty()) throw IllegalStateException("No NEAR testnet account uses this phrase or key yet. If you know the account name, type it in the second box.")
+        if (accounts.isEmpty()) throw IllegalStateException("No ${network.displayName} account uses this phrase or key yet. If you know the account name, type it in the second box.")
         val plain = accounts.filter { near.codeHash(it) == NearClient.NO_CODE }
         if (plain.isEmpty()) throw IllegalStateException("${accounts.first()} runs a smart contract, so it can't be used as a seed phrase wallet here.")
-        val already = wallets.ids.mapNotNull { wallets.store(it).walletAccount }.toSet()
+        val already = wallets.idsOn(network).mapNotNull { wallets.store(it).walletAccount }.toSet()
         plain.firstOrNull { it in already }?.let { if (plain.size == 1) throw IllegalStateException("$it is already on this phone.") }
         withContext(Dispatchers.Main) { importFound = ImportFound(plain.filter { it !in already }, key, phrase) }
     }
@@ -1524,11 +1663,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun viewOnly(account: String) = TapvaultWallet(near, account, account, NearKey.random())
 
+    /**
+     * Recover and Be a guardian make this phone a fee account from the
+     * faucet. Mainnet has none, and a fee account the user funds isn't built
+     * yet, so both are refused there with a reason.
+     */
+    private fun requireFaucetForJoin() {
+        if (!network.hasFaucet) throw IllegalStateException(
+            "On ${network.displayName} this phone needs a fee account you fund yourself, and that isn't built yet. For now this works on testnet only.",
+        )
+    }
+
     /** Step 1: read the wallet. Nothing is created yet. */
     fun findWalletToRecover(account: String) = run("Looking up the wallet") {
         val a = account.trim().lowercase()
-        if (!Regex("^[a-z0-9._-]{2,64}$").matches(a)) throw IllegalArgumentException("Enter the wallet's account, like tv-1a2b3c4d5e.testnet")
-        if (!a.endsWith(".testnet") && a.length != 64) throw IllegalArgumentException("Tapvault is testnet only: the account ends in .testnet")
+        if (!Regex("^[a-z0-9._-]{2,64}$").matches(a)) throw IllegalArgumentException("Enter the wallet's account, like ${network.example("tv-1a2b3c4d5e")}")
+        network.accountProblem(a)?.let { throw IllegalArgumentException(it) }
         val st = try { viewOnly(a).state() } catch (e: Exception) {
             throw IllegalStateException("No Tapvault wallet found at $a. Check the account name (it's on your old phone's Receive screen).")
         }
@@ -1556,6 +1706,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         if (store.gasAccount == null) {
+            requireFaucetForJoin()
             progress("Creating this phone's fee account")
             val plan = Onboarding.Plan.decode(store.setupPlan) ?: Onboarding.Plan.random().also { store.setupPlan = it.encode() }
             val gas = Onboarding(near).createFeeAccount(sponsor = sponsor(), plan = plan) { note(it) }
@@ -1678,6 +1829,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             throw IllegalStateException("No Tapvault wallet found at $a. Ask the owner for the account on their Receive screen.")
         }
         if (st.setupMode) throw IllegalStateException("That wallet hasn't finished setup yet.")
+        if (store.gasAccount == null) requireFaucetForJoin()
         store.joinMode = "guardian"
         if (!phoneKeyExists) {
             progress("Creating this phone's key in secure hardware")
@@ -1741,7 +1893,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun changeAllowlist(receiver: String, add: Boolean) = run(if (add) "Adding receiver" else "Removing receiver") {
         val r = receiver.trim().lowercase()
-        if (!Regex("^[a-z0-9._-]{2,64}$").matches(r)) throw IllegalArgumentException("Enter a NEAR account, like bob.testnet")
+        if (!Regex("^[a-z0-9._-]{2,64}$").matches(r)) throw IllegalArgumentException("Enter a NEAR account, like ${network.example("bob")}")
         requireNfc()
         requireSecurityKey(if (add) "To add $r to your instant receivers." else "To remove $r from your instant receivers.")
         val w = walletClient()
@@ -1834,7 +1986,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun integrityNow(w: TapvaultWallet, s: WalletState, id: String = activeId, st: Store = store): Integrity.Report {
         // That wallet's own phone key, even if the user switched wallets meanwhile.
         val pub = runCatching { KeystoreSigner({ WalletIndex.aliasOf(st, id) }) { null }.publicKey }.getOrNull()
-        val r = Integrity.evaluate(near.codeHash(w.account), near.accessKeys(w.account), s, pub, shippedCodeHash)
+        val r = Integrity.evaluate(w.near.codeHash(w.account), w.near.accessKeys(w.account), s, pub, shippedCodeHash)
         st.integrity = r.encode()
         note("integrity check: " + if (r.ok) "passed" else "FAILED: " + r.failed.joinToString { it.name })
         return r
@@ -1883,7 +2035,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** A notification was tapped: show its wallet and screen. */
     fun openFromAlert(walletId: String?, target: String?) {
-        if (walletId != null && walletId != activeId && walletId in wallets.ids && busy == null) activate(walletId)
+        if (walletId != null && walletId != activeId && walletId in wallets.ids && busy == null) {
+            // An alert for a wallet on the other network shows that network.
+            val n = wallets.networkOf(walletId)
+            if (n !== network && (n.isTestnet || mainnetEnabled)) wallets.network = n
+            if (n === wallets.network) activate(walletId)
+        }
         when (target) {
             "activity" -> go(Screen.Activity)
             "security" -> go(Screen.Security)
@@ -1923,9 +2080,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun reloadWalletList() {
-        walletList = wallets.ids.map { id ->
+        walletList = wallets.idsOn(network).map { id ->
             val s = wallets.store(id)
-            WalletEntry(id, wallets.name(id), s.walletAccount, s.usable(), id == activeId)
+            WalletEntry(id, wallets.name(id), s.walletAccount, s.usable(), id == activeId, wallets.networkOf(id))
         }
     }
 
@@ -1934,7 +2091,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val ready = walletList.filter { it.ready && it.account != null }
         viewModelScope.launch {
             val found = withContext(Dispatchers.IO) {
-                ready.mapNotNull { e -> runCatching { e.id to near.spendable(e.account!!).first }.getOrNull() }.toMap()
+                ready.mapNotNull { e -> runCatching { e.id to nearFor(e.network).spendable(e.account!!).first }.getOrNull() }.toMap()
             }
             walletBalances = walletBalances + found
         }
@@ -1942,7 +2099,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Show wallet [id]. Refused while something is running, so no flow ever continues on another wallet. */
     fun switchWallet(id: String) {
-        if (busy != null || id == activeId || id !in wallets.ids) return
+        if (busy != null || id == activeId || id !in wallets.idsOn(network)) return
         dropIfEmpty(activeId)
         activate(id)
         note("switched to ${wallets.name(id)}")
@@ -1963,8 +2120,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Leave a new wallet that was never started and go back to another one. */
     fun cancelNewWallet() {
-        val back = wallets.ids.firstOrNull { it != activeId && wallets.store(it).usable() }
-            ?: wallets.ids.firstOrNull { it != activeId } ?: return
+        val on = wallets.idsOn(network)
+        val back = on.firstOrNull { it != activeId && wallets.store(it).usable() }
+            ?: on.firstOrNull { it != activeId } ?: return
         switchWallet(back)
     }
 
@@ -1975,9 +2133,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         reloadWalletList()
     }
 
+    /**
+     * Settings → Network: show [n]'s wallets (the last one used there, or
+     * Welcome if it has none yet). No wallet changes network; refused while
+     * something runs, and mainnet only in builds that allow it.
+     */
+    fun switchNetwork(n: Network) {
+        if (busy != null || n === network) return
+        if (n.isMainnet && !mainnetEnabled) return
+        // An empty wallet left behind stays: it is that network's Welcome when the user comes back.
+        wallets.network = n
+        activate(wallets.active)
+        note("network: ${n.displayName}")
+    }
+
     private fun activate(id: String) {
         wallets.active = id
         activeId = id
+        network = wallets.networkOf(id)
+        addressBook = wallets.addressBook(network)
         store = wallets.store(id)
         setupStep = store.setupStep
         seedWallet = store.seedWallet
@@ -1987,6 +2161,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         receivers = store.receivers; integrity = Integrity.Report.decode(store.integrity)
         hasSecurityKey = store.securityKey != null
         isV02 = null
+        tokens = null; foundTokens = emptyList(); tokenPrefs = store.tokenPrefs; tokensAt = 0
         outcome = null
         screen = startScreen(store)
         reloadWalletList()
@@ -2014,6 +2189,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         store.clear()
         hasSecurityKey = false
         seedWallet = false
+        tokens = null; foundTokens = emptyList(); tokenPrefs = store.tokenPrefs; tokensAt = 0
         setStep(0)
         wallet = null; balance = null; storageLocked = null; proposals = emptyList(); cardReport = null
         cardBook = store.cards; holdSeconds = store.holdSeconds; backup = null
@@ -2028,8 +2204,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val gone = walletName
         erase(activeId)
         log.clear()
-        val next = wallets.ids.firstOrNull { wallets.store(it).usable() } ?: wallets.ids.first()
+        val on = wallets.idsOn(network)
+        val next = on.firstOrNull { wallets.store(it).usable() } ?: on.first()
         activate(next)
-        if (wallets.ids.size > 1 || store.setupStep > 0) outcome = Outcome(true, "$gone forgotten", "Now showing ${walletName}.")
+        if (on.size > 1 || store.setupStep > 0) outcome = Outcome(true, "$gone forgotten", "Now showing ${walletName}.")
     }
 }

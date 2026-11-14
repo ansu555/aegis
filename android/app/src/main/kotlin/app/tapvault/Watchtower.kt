@@ -62,13 +62,17 @@ object Watchtower {
     fun runOnce(ctx: Context): Int {
         val index = WalletIndex(ctx)
         if (!index.alertsOn) return 0
-        val near = NearClient()
+        // Every wallet on its own network, whatever Settings → Network shows.
+        val clients = mutableMapOf<app.tapvault.core.Network, NearClient>()
         var posted = 0
         for (id in index.ids) {
             val st = index.store(id)
             if (st.setupStep < 4) continue
             val acct = st.walletAccount ?: continue
+            val net = index.networkOf(id)
+            if (net.isMainnet && !WalletIndex.MAINNET_ENABLED) continue
             runCatching {
+                val near = clients.getOrPut(net) { NearClient(net) }
                 val w = TapvaultWallet(near, acct, st.gasAccount!!, NearKey.fromSecret(st.gasKey!!))
                 val s = w.state()
                 val ps = w.proposals()
@@ -77,7 +81,8 @@ object Watchtower {
                 val (alerts, memory) = Watch.check(Watch.Memory.decode(st.watchMemory), s, ps, pub?.let { s.phoneIndexOf(it) }, integrityOk)
                 st.watchMemory = memory.encode()
                 for (a in alerts) {
-                    notify(ctx, id, index.name(id), a)
+                    // Name the network once there can be more than one.
+                    notify(ctx, id, if (WalletIndex.MAINNET_ENABLED) "${index.name(id)} · ${net.displayName}" else index.name(id), a)
                     posted++
                 }
             }

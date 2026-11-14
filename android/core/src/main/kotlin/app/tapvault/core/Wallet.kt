@@ -404,6 +404,10 @@ class TapvaultWallet(
  * itself, and a gas account that pays fees), then deploy + `new` in one
  * transaction signed by the wallet's temporary key. `finalize` deletes that
  * key, after which only the contract can move the wallet's funds.
+ *
+ * The faucet and the sponsor are testnet only, and refused here on any
+ * other network. On mainnet a wallet starts as a seed-phrase wallet the user
+ * funds ([SeedWallet]), then the same deploy / add card / finalize steps run.
  */
 class Onboarding(private val near: NearClient) {
     class Accounts(val wallet: String, val walletKey: NearKey, val gas: String, val gasKey: NearKey)
@@ -461,6 +465,12 @@ class Onboarding(private val near: NearClient) {
     ): String = createAccounts(prefix, sponsor, plan, onFallback, walletToo = false).gas
 
     private fun createAccounts(prefix: String, sponsor: Sponsor?, plan: Plan, onFallback: (String) -> Unit, walletToo: Boolean): Accounts {
+        val net = near.network
+        if (!net.hasFaucet) throw TapvaultException(
+            "${net.displayName} has no faucet, so Tapvault can't create accounts for you there. " +
+                "Create a seed phrase wallet, add NEAR to it, then protect it with your bank card.",
+        )
+        if (sponsor != null && !net.allowsSponsor) throw TapvaultException("A sponsor account is for testnet only.")
         var faucetError: String? = if (sponsor != null && System.getenv("TAPVAULT_FORCE_SPONSOR") == "1") "skipped" else null
 
         fun ours(account: String, key: NearKey) =
@@ -468,11 +478,12 @@ class Onboarding(private val near: NearClient) {
 
         // Each account comes from the faucet while it cooperates, otherwise from the sponsor.
         fun create(name: String, key: NearKey, funding: BigInteger): String {
-            listOfNotNull("$name.testnet", sponsor?.let { "$name.${it.account}" }).firstOrNull { ours(it, key) }?.let { return it }
+            val faucetName = "$name${net.accountSuffix}"
+            listOfNotNull(faucetName, sponsor?.let { "$name.${it.account}" }).firstOrNull { ours(it, key) }?.let { return it }
             if (faucetError == null) {
                 try {
-                    near.createTestnetAccount("$name.testnet", key)
-                    return "$name.testnet"
+                    near.createTestnetAccount(faucetName, key)
+                    return faucetName
                 } catch (e: Exception) {
                     faucetError = e.message ?: "faucet failed"
                 }

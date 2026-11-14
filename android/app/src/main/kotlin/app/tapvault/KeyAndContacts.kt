@@ -148,7 +148,7 @@ private fun ContactForm(vm: AppViewModel, entry: AddressBook.Entry?, done: () ->
     var error by remember { mutableStateOf<String?>(null) }
     TvField("Name", name, { name = it.take(32); error = null }, placeholder = "Alice")
     Spacer(Modifier.height(12.dp))
-    TvField("NEAR account", account, { account = it.trim().lowercase(); error = null }, placeholder = "alice.testnet", error = error)
+    TvField("NEAR account", account, { account = it.trim().lowercase(); error = null }, placeholder = vm.network.example("alice"), error = error)
     Spacer(Modifier.height(18.dp))
     TvButton(if (entry == null) "Save" else "Save changes", Modifier.fillMaxWidth(), icon = Ic.Check) {
         if (entry != null && entry.account != account.trim().lowercase()) vm.deleteContact(entry.account)

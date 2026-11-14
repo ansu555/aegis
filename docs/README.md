@@ -15,6 +15,7 @@ real phone's NFC yet ([STATUS.md](STATUS.md)).
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Components and boundaries, accounts and keys, sequence diagrams for every flow, where state lives, the NEAR client, error handling |
 | [CONTRACT.md](CONTRACT.md) | Contract API reference: argument types, every method and its checks, views, events, errors, constants, signed messages, the shipped build, changing the contract safely |
 | [HARDWARE-WALLET-PLAN.md](HARDWARE-WALLET-PLAN.md) | Plan, phase 1 built (13 Nov): hardware-wallet features for Tapvault, Security Center and screens, user flows (backup card, lost card, recover on a new phone, hold-to-sign), build order |
+| [WALLET-FEATURES-PLAN.md](WALLET-FEATURES-PLAN.md) | Plan, step 0 built (14 Nov, mainnet still off): a Mainnet/Testnet switch in Settings, then tokens, send/receive tokens, swap and bridge via NEAR Intents 1Click, buy and sell for cash; all on the current contract, screens, flows, build order |
 | [MANUAL-TESTS.md](MANUAL-TESTS.md) | What only a person with a phone and real cards can test, per plan phase, with what is already tested automatically |
 | [DESIGN.md](DESIGN.md) | Security model and threat analysis: why the card challenge is sealed in a later block, limits and delays, freeze and cancel rules, known gaps |
 | [CARDS.md](CARDS.md) | How the app talks to bank cards over NFC: EMV basics, the three signing methods (DDA, fDDA, CDA), enrolment and later taps command by command, CA keys, privacy, reading a Card check report, expected behaviour per network |
@@ -87,4 +88,5 @@ install updates built on the same computer as the installed APK.
   includes every real card and every real phone).
 - Secrets are never written down: `android/local.properties` holds keys, and
   only its property names (`sdk.dir`, `tapvault.sponsor.account`,
-  `tapvault.sponsor.key`) appear in the docs.
+  `tapvault.sponsor.key`, and the non-secret switch `tapvault.mainnet`)
+  appear in the docs.

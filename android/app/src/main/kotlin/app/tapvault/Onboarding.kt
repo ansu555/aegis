@@ -134,7 +134,7 @@ fun Welcome(vm: AppViewModel) {
             Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 8.dp).clip(RoundedCornerShape(12.dp)).pressable { vm.go(Screen.CardCheck) }.padding(vertical = 4.dp),
             horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Testnet · ", style = Type.Caption, color = Tv.Text3, maxLines = 1)
+            Text(if (vm.network.isMainnet) "Mainnet · " else "Testnet · ", style = Type.Caption, color = Tv.Text3, maxLines = 1)
             Text("Check my card", style = Type.CaptionStrong, color = Mint, maxLines = 1)
         }
     }
@@ -184,8 +184,11 @@ fun WelcomeMenuSheet(vm: AppViewModel, menu: WelcomeMenu) {
             Spacer(Modifier.height(10.dp))
             when (menu) {
                 WelcomeMenu.Create -> {
-                    ChoiceRow(Ic.Card, "With my bank card", if (vm.hasNfc) "Every payment needs your phone and a tap" else "Needs a phone with NFC") {
+                    // Mainnet has no faucet: a wallet starts as a seed phrase wallet you fund, then the card protects it.
+                    if (vm.network.hasFaucet) ChoiceRow(Ic.Card, "With my bank card", if (vm.hasNfc) "Every payment needs your phone and a tap" else "Needs a phone with NFC") {
                         close { vm.chooseSetup(withCard = true) }
+                    } else ChoiceRow(Ic.Card, "With my bank card", "Write down a recovery phrase, add NEAR, then protect it with your card") {
+                        close { vm.startSeedWallet() }
                     }
                     ChoiceRow(Ic.Key, "Create seed phrase wallet", "Start without a bank card; protect it with one later") {
                         close { vm.startSeedWallet() }
@@ -194,8 +197,9 @@ fun WelcomeMenuSheet(vm: AppViewModel, menu: WelcomeMenu) {
                 WelcomeMenu.Existing -> {
                     val others = vm.walletList.count { !it.active }
                     ChoiceRow(Ic.Key, "Import with recovery phrase", "12 or 24 words, or a private key") { close { vm.importFound = null; vm.go(Screen.SeedImport) } }
-                    ChoiceRow(Ic.Refresh, "Recover a wallet", "Move it to this phone") { close { vm.go(Screen.Recover) } }
-                    ChoiceRow(Ic.ShieldCheck, "Be a guardian", "Help a friend recover") { close { vm.go(Screen.Guardian) } }
+                    val later = if (vm.network.hasFaucet) null else " · testnet only for now"
+                    ChoiceRow(Ic.Refresh, "Recover a wallet", "Move it to this phone" + later.orEmpty()) { close { vm.go(Screen.Recover) } }
+                    ChoiceRow(Ic.ShieldCheck, "Be a guardian", "Help a friend recover" + later.orEmpty()) { close { vm.go(Screen.Guardian) } }
                     if (others > 0) {
                         ChoiceRow(Ic.Wallet, "Back to my wallets", if (others == 1) "1 wallet on this phone" else "$others wallets on this phone") {
                             close { vm.cancelNewWallet() }

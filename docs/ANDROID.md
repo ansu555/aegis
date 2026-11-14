@@ -23,7 +23,7 @@ chain's point of view (sequence diagrams) and the NEAR client are in
 | Package | `app.tapvault`, versionCode 1, versionName `0.1.0` |
 | Android | minSdk 28 (Android 9), targetSdk 35, compileSdk 35 |
 | Needs | NFC hardware (declared required), NFC switched on, a screen lock; Android 9 and 10 also an enrolled fingerprint |
-| Network | NEAR testnet only; no switch for mainnet |
+| Network | NEAR testnet. Settings → Network has a Mainnet/Testnet switch; Mainnet shows "Coming soon" unless the build sets `tapvault.mainnet=true` in `local.properties` (off until real-card testing and a contract review). Each wallet keeps the network it was made on |
 | UI | One activity (`MainActivity`), Jetpack Compose, Material 3, dark theme only, portrait only, English only |
 | Build | Gradle 8.11.1, Android Gradle Plugin 8.7.3, Kotlin 2.1.0, JDK 17 |
 | Output | `android/app/build/outputs/apk/debug/app-debug.apk`, signed with the build machine's debug key |

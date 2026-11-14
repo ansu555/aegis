@@ -1,10 +1,12 @@
 # Troubleshooting
 
 Every message the app can show, where it comes from in the code, what it
-means and what to do. Last updated 12 Nov 2026.
+means and what to do. Last updated 14 Nov 2026.
 
 Messages are quoted exactly as the code builds them. `<…>` marks a part that
-changes (an amount, an account, a card's AID). Code locations are
+changes (an amount, an account, a card's AID). `<network>` is the wallet's
+network: `NEAR testnet` or `NEAR mainnet` (Settings → Network; mainnet is
+off in builds without `tapvault.mainnet=true`). Code locations are
 `Class.function` in `android/app/src/main/kotlin/app/tapvault/` (app) or
 `android/core/src/main/kotlin/app/tapvault/core/` (client library), and
 constant names in `contract/src/error.rs`.
@@ -35,7 +37,7 @@ Contents:
 | Busy overlay | Spinner and a label such as `Waiting for the card challenge` | No cancel button. Each network call retries across three RPCs, so with no connection a step can take minutes before it fails |
 | Tap sheet | Card picture, a title saying what the tap is for, a hint line, `Cancel` | A hint after a failed read is not an error: the sheet waits for another tap, up to three attempts |
 | Fingerprint prompt | System dialog titled `Tapvault`; the subtitle is what you approve; `Your phone key signs only what you approve here.` | Dismissing it gives `Approval cancelled: …` |
-| Home banner | `Can't reach NEAR testnet right now. Showing the last known state; retrying.` | The background refresh (every 8 s on Home and Activity) failed |
+| Home banner | `Can't reach <network> right now. Showing the last known state; retrying.` | The background refresh (every 8 s on Home and Activity) failed |
 | Card check report | Badge `Can't sign` and notes | Not an error box; see [Reading the Card check report](#reading-the-card-check-report) |
 | Activity status | `Waiting for approvals`, `Void: signers changed`, `Approved · wallet is frozen`, … | See [Sending, Activity and freeze](#sending-activity-and-freeze) |
 | Log | Settings → Advanced → Technical log: newest first, each line starts with the time | Kept in memory only (200 lines kept, 60 shown); gone when the app process ends, and cleared by Start over and by Forget; can only be opened once a wallet exists (not during setup). Nothing is written to the Android system log |
@@ -81,9 +83,15 @@ Composite messages:
 | **Continue without a card** on the setup screen | `SetupProgress` → `AppViewModel.continueWithoutCard` | Shown during a *With my card* setup until the card is added. It drops the card read so far and locks the wallet with threshold 1 (phone only) | Use it when your card won't sign or isn't at hand; add a card later in Security |
 | `Can't start yet` + `Turn on NFC in Android settings (Connected devices → NFC) first.` | `AppViewModel.beginSetup` | NFC is off | Turn NFC on |
 | `The testnet faucet refused (<reason>). Try again later or from another network.` | `Onboarding.createAccounts` | The faucet failed and this APK has no sponsor | See [Faucet and sponsor funding](#faucet-and-sponsor-funding) |
+| `NEAR mainnet has no faucet, so Tapvault can't create accounts for you there. Create a seed phrase wallet, add NEAR to it, then protect it with your bank card.` | `Onboarding.createAccounts` | A faucet setup was started on mainnet. The app doesn't offer one there (Welcome → Create wallet → With my bank card starts a seed phrase wallet on mainnet), so this is a guard | Create a seed phrase wallet, fund it, then **Protect with bank card** |
+| `A sponsor account is for testnet only.` | `Onboarding.createAccounts` | A sponsor was passed on mainnet. The app never does (`AppViewModel.sponsor` is null there): a guard | Report it |
+| `Add NEAR to this wallet first (Receive). Protecting it needs about <x> NEAR for the contract's storage and the fee account.` | `AppViewModel.continueSetup` | A mainnet seed phrase wallet is an implicit account; it doesn't exist until NEAR arrives | Home → Receive, send NEAR from an exchange or another wallet, then **Continue setup** |
+| `<account> also runs a smart contract on <other network>. Tapvault won't protect the same account on both networks (a card signature for one could be replayed on the other). Move the funds to a new seed phrase wallet and protect that one.` | `SeedWallet.checkNotOnOtherNetwork`, from `AppViewModel.continueSetup` | The same implicit account already has a contract on the other network. Signed messages name the account but not the network ([WALLET-FEATURES-PLAN.md](WALLET-FEATURES-PLAN.md), 0.2) | Make a new seed phrase wallet (new words), move the NEAR there, protect that one |
+| `Can't check <account> on <other network> right now (<detail>). Try again in a minute.` | `SeedWallet.checkNotOnOtherNetwork` | The other network's RPCs didn't answer, and protecting is refused rather than allowed | Wait; **Continue setup** |
+| `On NEAR mainnet this phone needs a fee account you fund yourself, and that isn't built yet. For now this works on testnet only.` | `AppViewModel.startRecovery`, `becomeGuardian` | Recover a wallet and Be a guardian get this phone's fee account from the faucet; mainnet has none yet | Use them on testnet for now |
 | `faucet did not create <account>` (never on its own: it is the reason inside `The testnet faucet refused (…)`, or in the Log line `faucet unavailable (…)` when a sponsor takes over) | `NearClient.createTestnetAccount`, caught by `Onboarding.createAccounts` | The faucet answered but the account didn't appear within about 30 s (20 checks, 1.5 s apart) | **Continue setup**. Names and keys are saved before anything is created, so an account that appears later is reused |
 | `creating <account> failed: <reason>` | `NearClient.createSubAccount` | The sponsor couldn't create the account | See [Faucet and sponsor funding](#faucet-and-sponsor-funding) |
-| `Can't reach NEAR testnet right now (<detail>). Try Continue setup again.` | `AppViewModel.continueSetup` | The wallet's on-chain state couldn't be read; the app won't risk repeating a step that may have landed | Restore internet; **Continue setup** |
+| `Can't reach <network> right now (<detail>). Try Continue setup again.` | `AppViewModel.continueSetup` | The wallet's on-chain state couldn't be read; the app won't risk repeating a step that may have landed | Restore internet; **Continue setup** |
 | `This card can't sign for Tapvault: <reason>. Tap Continue setup to try another contactless card, or Start over.` | `AppViewModel.continueSetup` (a `CardCheckFailed`) | Reading the card or making it sign failed, or the card's key is outside the contract's rules (checked before any signing attempt). The report is shown on the Setup screen. Normally nothing has been deployed yet (the card is read before the deploy) | Tap **Share card report** under the report and send it. **Continue setup** and tap another card. Reasons: [Card check reasons](#reasons-in-the-report-and-in-card-errors) |
 | `deploy failed: <reason>` | `Onboarding.deployAndInit` | Deploy + `new` failed. With `Not enough NEAR: the account must keep enough to pay for its storage` the wallet account has less than about 3.35 NEAR (it should have 10 from the faucet or 5.5 from the sponsor) | **Continue setup**. If NEAR is missing, report it, and send testnet NEAR to the account shown on the Setup screen (`Wallet account: <account>`) from any testnet account, then **Continue setup** |
 | `adding the card failed: <reason>` | `Onboarding.addCard` | `setup_add_signer` refused, for example `Invalid signer key` or `Card signature verification failed` (see [Contract errors](#contract-errors)) | Report it with the card report. **Continue setup** retries the same saved card read, so to use another card you must **Start over** |
@@ -180,7 +188,8 @@ prompt).
 | `The wallet is frozen. Request an unfreeze first.` | `AppViewModel.send` | | Home → `Request unfreeze`, then Execute after 1 h |
 | `That's this wallet's own account` | `AppViewModel.send` | | Use another receiver |
 | `The wallet only has <x> NEAR available to send` | `AppViewModel.send` | Spendable is the balance minus the NEAR locked for the contract's storage (about 3.35). Home shows the spendable amount | Send less, or Home → Receive and top up from any testnet account |
-| `<account> doesn't exist on NEAR testnet` | `AppViewModel.send` | The RPC says the named account doesn't exist (`NearClient.accountExists`). A network failure during this check shows the network error instead ([Network and RPC](#network-and-rpc)). 64-hex implicit accounts are always accepted (they exist once they receive NEAR) | Check the spelling and the `.testnet` suffix |
+| `That's not a testnet account: testnet names end in .testnet` / `That's a testnet account; this wallet is on NEAR mainnet` | `Network.accountProblem`, from `AppViewModel.findWalletToRecover` and `findImport` | Lookups search only the network shown in Settings → Network | Switch network in Settings, or fix the account name |
+| `<account> doesn't exist on <network>` | `AppViewModel.send` | The RPC says the named account doesn't exist (`NearClient.accountExists`). A network failure during this check shows the network error instead ([Network and RPC](#network-and-rpc)). 64-hex implicit accounts are always accepted (they exist once they receive NEAR) | Check the spelling and the suffix (`.testnet` on testnet; `.near` and others on mainnet) |
 | `<message>` + `Payment #<n> is saved and waits 10 minutes for your card: …` | `AppViewModel.send` | The phone approved and the proposal exists, but the card step failed | Within 10 minutes, send the same amount to the same account again: no prompt, just the tap (the app reuses it while more than 30 s remain). Or Activity → `Approve · card`, or `Cancel` |
 | `Approved, waiting` + `The wallet didn't treat this as within your limits (the phone's clock may be off). Execute it from Activity when it's ready.` | `AppViewModel.send` | The app judged the payment instant (phone clock), but the contract refused to execute it at once (by its own clock and allowance, or the wallet was frozen meanwhile). The card approval was then sent on its own, so the payment is approved and waits for the transfer delay (1 h) | Set date and time to automatic. Activity → `Execute` once it shows `Approved · ready: tap Execute` (an earlier Execute fails with `Delay has not elapsed`), or `Cancel` |
 | `no proposal <n>` | `TapvaultWallet.approvePhone`, `cancelByPhone` | Already executed, cancelled or cleaned up | Wait for Activity to refresh |
@@ -239,7 +248,7 @@ prompt).
 | `Not added yet` (guardian phone) | `checkGuardianAdded` | The owner's request hasn't executed | The owner: Activity → Execute after the settings wait |
 | `The network's card challenge for request #<n> doesn't match its own seed. Nothing was signed; try another connection.` | `TapvaultWallet.checkedChallenge` (v0.2 wallets) | The node's proposal view is inconsistent: a broken or dishonest RPC | Retry (RPCs rotate); report it with the Log if it repeats |
 | `A key this proposal adds hasn't proved possession (prove_possession)` | contract v0.2 `execute` | An `AddSigner` request without the new key's possession proof (an older app, or a script) | Propose it again from this app: it sends the proof |
-| `Enter a NEAR account, like bob.testnet` | `AppViewModel.changeAllowlist` | The receiver typed in Instant receivers isn't a valid account name | Type the full account (`name.testnet`) |
+| `Enter a NEAR account, like bob.testnet` (`bob.near` on mainnet) | `AppViewModel.changeAllowlist` | The receiver typed in Instant receivers isn't a valid account name | Type the full account (`name.testnet`, or `name.near` on mainnet) |
 | `This wallet runs an older contract without an allowlist. …` | `AppViewModel.changeAllowlist` | The wallet was created before v0.2 (invariant 4: it keeps its code) | Nothing; the row only shows on v0.2 wallets |
 | `<receiver> is already on the list.` / `<receiver> isn't on the list.` / `The list is full (16 receivers).` | `AppViewModel.changeAllowlist` | The change would do nothing, or the contract's limit (`MAX_ALLOWLIST`) is reached | Pull to refresh; remove one first when full |
 | A payment that was instant now waits the transfer delay | Contract v0.2 allowlist | The wallet has at least one instant receiver, and this receiver isn't on the list | Expected. Add the receiver (it takes the settings delay), or wait and execute |
@@ -248,7 +257,9 @@ prompt).
 
 The app talks to three public testnet RPCs in this order, starting from the one
 that last answered: `rpc.testnet.fastnear.com`, `test.rpc.fastnear.com`,
-`rpc.testnet.near.org`. Each call is tried up to 6 times across them with
+`rpc.testnet.near.org` (mainnet wallets: `rpc.mainnet.fastnear.com`,
+`free.rpc.fastnear.com`, `rpc.mainnet.near.org`; each wallet uses its own
+network's, `Network.kt`). Each call is tried up to 6 times across them with
 growing pauses (0.4 s up to 3 s). Timeouts: 15 s to connect, 60 s per read,
 90 s for sending a transaction, 120 s for the faucet. A signed transaction is
 never signed again with a new nonce unless the chain rejected it before
@@ -270,11 +281,11 @@ about 2 minutes instead of sending it again.
 | `The network refused the transaction: <reason>` | `NearClient.send` | Rejected before running (`INVALID_TRANSACTION`). Usually `Not enough NEAR in the account`: the signer (after setup, the fee account) can't pay the gas | Top up the fee account; see [Faucet and sponsor funding](#faucet-and-sponsor-funding) |
 | `The network didn't confirm transaction <hash> in time. It may still go through: check Activity (or https://testnet.nearblocks.io/txns/<hash>) before trying again.` | `NearClient.awaitOutcome` | The transaction was (or may have been) delivered, but no result came within about 2 minutes. The app never signed a second copy, so it can run at most once | Open the link or Activity. Retry only if it didn't land. During setup, **Continue setup** checks the chain first |
 | A `send_tx: INVALID_TRANSACTION …InvalidNonce…` text | `NearClient.send` | Three nonce conflicts in a row (the fallback text `transaction could not be sent` is not reached in practice) | Try again |
-| `Can't reach NEAR testnet right now. Showing the last known state; retrying.` | `AppViewModel.refresh` (Home banner) | The background refresh failed | Wait; it clears on the next successful refresh |
-| `Can't reach NEAR testnet right now (<detail>). Try Continue setup again.` | `AppViewModel.continueSetup` | See [Setup](#setup) | |
+| `Can't reach <network> right now. Showing the last known state; retrying.` | `AppViewModel.refresh` (Home banner) | The background refresh failed | Wait; it clears on the next successful refresh |
+| `Can't reach <network> right now (<detail>). Try Continue setup again.` | `AppViewModel.continueSetup` | See [Setup](#setup) | |
 | `Not enough NEAR: the account must keep enough to pay for its storage` | `NearClient.readableError` (`LackBalanceForState`) | An account would drop below its storage reserve | Top up that account |
 | `Not enough NEAR in the account` | `NearClient.readableError` (`NotEnoughBalance`, `BalanceExceeded`) | The account can't pay the amount or the gas | Top up that account |
-| `That account doesn't exist on NEAR testnet` | `NearClient.readableError` (`AccountDoesNotExist`) | A receipt went to a missing account | Check the receiver |
+| `That account doesn't exist on <network>` | `NearClient.readableError` (`AccountDoesNotExist`) | A receipt went to a missing account | Check the receiver |
 | `That account already exists` | `NearClient.readableError` (`AccountAlreadyExists`) | Account creation hit an existing name | **Continue setup** (accounts holding this setup's key are reused) |
 | `This key can't sign for the account any more` | `NearClient.readableError` (`AccessKeyNotFound`, `InvalidAccessKeyError`) | The chain rejected the access key the transaction was signed with (it isn't, or is no longer, on the account). A key that was never on the account usually fails earlier, at the nonce lookup (`<account> has no access key …`; see the wrong-sponsor-key row under [Faucet and sponsor funding](#faucet-and-sponsor-funding)) | Report it with the Log |
 | Up to 300 characters of raw JSON | `NearClient.readableError` | A failure it doesn't recognise | Report it |

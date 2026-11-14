@@ -103,13 +103,14 @@ class NearRpcException(
 class TxResult(val hash: String, val ok: Boolean, val error: String?, val returnValue: String?, val logs: List<String>)
 
 /**
- * Minimal NEAR JSON-RPC client (testnet by default). Requests go to the first
- * RPC in [rpcUrls]; when one is down or rate-limits us, the next one is used.
+ * Minimal NEAR JSON-RPC client for one [network] (testnet by default).
+ * Requests go to the first RPC in [rpcUrls]; when one is down or
+ * rate-limits us, the next one is used.
  */
 class NearClient(
-    val rpcUrls: List<String> = TESTNET_RPCS,
-    val faucetUrl: String = "https://helper.nearprotocol.com/account",
-    val indexUrl: String = "https://test.api.fastnear.com",
+    val network: Network = Network.TESTNET,
+    val rpcUrls: List<String> = network.rpcUrls,
+    val indexUrl: String = network.indexUrl,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -249,7 +250,7 @@ class NearClient(
     /** The base58 SHA-256 of the account's contract code (`11111111111111111111111111111111` if none). */
     /**
      * Accounts that list [publicKey] as a full-access key, from FastNEAR's
-     * testnet index (no NEAR RPC answers this). The index can lag a little:
+     * index for [network] (no NEAR RPC answers this). The index can lag a little:
      * callers check each answer on chain ([accessKeys]) before using it.
      */
     fun accountsForKey(publicKey: String): List<String> {
@@ -415,17 +416,19 @@ class NearClient(
         return when {
             "LackBalanceForState" in s -> "Not enough NEAR: the account must keep enough to pay for its storage"
             "NotEnoughBalance" in s || "BalanceExceeded" in s -> "Not enough NEAR in the account"
-            "AccountDoesNotExist" in s -> "That account doesn't exist on NEAR testnet"
+            "AccountDoesNotExist" in s -> "That account doesn't exist on ${network.displayName}"
             "AccountAlreadyExists" in s -> "That account already exists"
             "AccessKeyNotFound" in s || "InvalidAccessKeyError" in s -> "This key can't sign for the account any more"
             else -> s.take(300)
         }
     }
 
-    /** Create `<name>.testnet` with [key] via the testnet faucet (10 NEAR). */
+    /** Create `<name>.testnet` with [key] via the testnet faucet (10 NEAR). Refused on a network without one. */
     fun createTestnetAccount(account: String, key: NearKey) {
+        val faucet = network.faucetUrl ?: throw NearRpcException("${network.displayName} has no faucet")
+        require(account.endsWith(network.accountSuffix)) { "$account isn't a ${network.displayName} account" }
         val body = buildJsonObject { put("newAccountId", account); put("newAccountPublicKey", key.publicKeyString) }
-        post(faucetUrl, body.toString(), 120_000)
+        post(faucet, body.toString(), 120_000)
         repeat(20) {
             if (runCatching { accountExists(account) }.getOrDefault(false)) return
             Thread.sleep(1500)
@@ -448,22 +451,18 @@ class NearClient(
         return r
     }
 
-    fun explorerTx(hash: String) = "https://testnet.nearblocks.io/txns/$hash"
-    fun explorerAccount(account: String) = "https://testnet.nearblocks.io/address/$account"
+    fun explorerTx(hash: String) = network.explorerTx(hash)
+    fun explorerAccount(account: String) = network.explorerAccount(account)
 
     companion object {
-        /** Public testnet RPCs, tried in this order. */
         /** The `code_hash` of an account with no contract. */
         const val NO_CODE = "11111111111111111111111111111111"
 
         /** An implicit account's name: the hex of its ed25519 public key. */
         fun implicitAccount(publicKey: ByteArray): String = publicKey.hex()
 
-        val TESTNET_RPCS = listOf(
-            "https://rpc.testnet.fastnear.com",
-            "https://test.rpc.fastnear.com",
-            "https://rpc.testnet.near.org",
-        )
+        /** Public testnet RPCs, tried in this order ([Network.TESTNET]). */
+        val TESTNET_RPCS get() = Network.TESTNET.rpcUrls
 
         /** RPC error causes that say "try again", not "this is wrong". */
         private val RETRYABLE_CAUSES = setOf(

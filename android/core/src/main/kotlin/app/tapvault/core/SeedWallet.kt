@@ -50,9 +50,32 @@ class SeedWallet(private val near: NearClient, val account: String, val key: Nea
         if (spendable < needed) throw TapvaultException(
             "Protecting the wallet needs about ${Near.format(needed, 2)} NEAR free (the contract's storage" +
                 (if (needsFeeAccount) ", 0.5 NEAR for the fee account" else "") +
-                " and fees); this wallet has ${Near.format(spendable, 2)} NEAR. Add testnet NEAR and try again.",
+                " and fees); this wallet has ${Near.format(spendable, 2)} NEAR. Add ${if (near.network.isTestnet) "testnet NEAR" else "NEAR"} and try again.",
         )
         return Preflight(others, spendable, needed)
+    }
+
+    /**
+     * Refuses when the same account already runs a contract on the other
+     * network ([other] is a client for it). Signed messages name the account
+     * but not the network, so a card signature for one could be shown to the
+     * other (it can't move funds, but could open a request or freeze). Only an
+     * implicit account can exist on both. A network that can't be reached
+     * counts as a refusal: retry later.
+     */
+    fun checkNotOnOtherNetwork(other: NearClient) {
+        if (!Network.isImplicit(account)) return
+        require(other.network !== near.network) { "the other network's client is for the same network" }
+        val code = try {
+            if (!other.accountExists(account)) return
+            other.codeHash(account)
+        } catch (e: NearRpcException) {
+            throw TapvaultException("Can't check $account on ${other.network.displayName} right now (${e.message?.take(80)}). Try again in a minute.")
+        }
+        if (code != NearClient.NO_CODE) throw TapvaultException(
+            "$account also runs a smart contract on ${other.network.displayName}. Tapvault won't protect the same account on both networks " +
+                "(a card signature for one could be replayed on the other). Move the funds to a new seed phrase wallet and protect that one.",
+        )
     }
 
     /**

@@ -35,7 +35,7 @@ class MainActivity : FragmentActivity() {
         // window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         nfc = NfcAdapter.getDefaultAdapter(this)
         vm.attach(this)
-        setContent { TapvaultApp(vm) }
+        setContent { NetworkFrame(vm) }
         openAlert(intent)
     }
 

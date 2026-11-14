@@ -205,7 +205,7 @@ fun SecurityScreen(vm: AppViewModel) {
             )
         }
         Caption(
-            "Keys, limits and waits are read from the wallet contract on NEAR testnet: this is what the chain enforces. The hold timer is this app's own setting.",
+            "Keys, limits and waits are read from the wallet contract on ${vm.network.displayName}: this is what the chain enforces. The hold timer is this app's own setting.",
             Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp), color = Tv.Text3,
         )
     }

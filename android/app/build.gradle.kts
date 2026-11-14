@@ -24,6 +24,9 @@ android {
         }
         buildConfigField("String", "SPONSOR_ACCOUNT", "\"${local.getProperty("tapvault.sponsor.account", "")}\"")
         buildConfigField("String", "SPONSOR_KEY", "\"${local.getProperty("tapvault.sponsor.key", "")}\"")
+        // Mainnet in Settings → Network: off unless local.properties says tapvault.mainnet=true
+        // (keep it off until real cards have been tested and the contract has been reviewed).
+        buildConfigField("boolean", "MAINNET_ENABLED", local.getProperty("tapvault.mainnet", "false").trim().equals("true", ignoreCase = true).toString())
     }
 
     buildTypes {
