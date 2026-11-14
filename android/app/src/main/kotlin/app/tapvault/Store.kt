@@ -98,6 +98,11 @@ class Store(context: Context, file: String = WalletIndex.prefsFile(WalletIndex.F
         get() = p.getString("watch", null)
         set(v) { p.edit().putString("watch", v).commit() }
 
+    /** The key of the last inheritance alert posted ([app.tapvault.core.Watch.inheritance]). */
+    var inheritAlert: String?
+        get() = p.getString("inherit_alert", null)
+        set(v) { p.edit().putString("inherit_alert", v).commit() }
+
     // ---- phase 3 ----
 
     /** The wallet's security key, as a salted hash ([app.tapvault.core.SecurityKey.Record], encoded); null until set. */

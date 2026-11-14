@@ -80,7 +80,11 @@ object Watchtower {
                 val integrityOk = Integrity.Report.decode(st.integrity)?.ok ?: true
                 val (alerts, memory) = Watch.check(Watch.Memory.decode(st.watchMemory), s, ps, pub?.let { s.phoneIndexOf(it) }, integrityOk)
                 st.watchMemory = memory.encode()
-                for (a in alerts) {
+                // v0.4 inheritance: announce each new state once (older code has no such view).
+                val inherit = runCatching { Watch.inheritance(w.inheritance()) }.getOrNull()
+                    ?.takeIf { it.first != st.inheritAlert }
+                    ?.also { st.inheritAlert = it.first }
+                for (a in alerts + listOfNotNull(inherit?.second)) {
                     // Name the network once there can be more than one.
                     notify(ctx, id, if (WalletIndex.MAINNET_ENABLED) "${index.name(id)} · ${net.displayName}" else index.name(id), a)
                     posted++
@@ -97,7 +101,7 @@ object Watchtower {
         val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL, "Wallet alerts", NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "Requests you didn't make, freezes and signer changes"
+                description = "Requests you didn't make, freezes, signer changes and inheritance claims"
             },
         )
         fun open(target: String, code: Int) = PendingIntent.getActivity(

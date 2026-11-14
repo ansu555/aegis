@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import app.tapvault.core.Inheritance
 import app.tapvault.core.Integrity
 import app.tapvault.core.Near
 import app.tapvault.core.ProposalInfo
@@ -41,6 +42,8 @@ fun SecurityScreen(vm: AppViewModel) {
     var guardianOpen by remember { mutableStateOf(false) }
     var strictOpen by remember { mutableStateOf(false) }
     var allowOpen by remember { mutableStateOf(false) }
+    var heirOpen by remember { mutableStateOf(false) }
+    var claimOpen by remember { mutableStateOf(false) }
     var confirmFreeze by remember { mutableStateOf(false) }
 
     if (vm.seedWallet) {
@@ -160,6 +163,21 @@ fun SecurityScreen(vm: AppViewModel) {
                     onClick = { if (idle) allowOpen = true },
                 )
             }
+            // v0.4 wallets report their inheritance; older code has no such view.
+            vm.inheritance?.let { info ->
+                GroupDivider()
+                val stage = info.stage(now)
+                val warn = stage != Inheritance.Stage.NONE && stage != Inheritance.Stage.WATCHING
+                Row_(
+                    Ic.Key, "Inheritance", inheritanceSummary(info, now),
+                    value = if (info.hasHeir) "On" else "Off", chevron = true,
+                    tint = if (warn) Tv.Danger else if (info.hasHeir) Tv.Positive else Tv.Text,
+                    iconBg = if (warn) Tv.DangerSoft else if (info.hasHeir) Tv.PositiveSoft else Tv.GlassStrong,
+                    onClick = { if (idle) heirOpen = true },
+                )
+            }
+            GroupDivider()
+            Row_(Ic.Receive, "Claim an inheritance", "Someone named you as their heir", chevron = true, onClick = { if (idle) claimOpen = true })
             if (android.os.Build.VERSION.SDK_INT >= 30) {
                 GroupDivider()
                 val strict = vm.phone.isStrict
@@ -249,6 +267,8 @@ fun SecurityScreen(vm: AppViewModel) {
     if (guardianOpen) AddGuardianSheet(vm) { guardianOpen = false }
     if (strictOpen) StrictKeySheet(vm) { strictOpen = false }
     if (allowOpen) AllowlistSheet(vm) { allowOpen = false }
+    if (heirOpen) HeirSheet(vm) { heirOpen = false }
+    if (claimOpen) ClaimSheet(vm) { claimOpen = false }
     if (addOpen && vm.backup == null) AddBackupIntro(vm, { addOpen = false })
     vm.backup?.let { BackupReview(vm, it) { addOpen = false } }
     if (holdOpen) HoldTimerSheet(vm) { holdOpen = false }

@@ -21,6 +21,8 @@ import app.tapvault.core.KnownCard
 import app.tapvault.core.SignerInfo
 import app.tapvault.core.SignerKey
 import app.tapvault.core.WrongCardException
+import app.tapvault.core.Inheritance
+import app.tapvault.core.InheritanceInfo
 import app.tapvault.core.Integrity
 import app.tapvault.core.Receivers
 import app.tapvault.core.Watch
@@ -251,6 +253,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     var alertsOn by mutableStateOf(wallets.alertsOn)
+
+    /** v0.4: the wallet's inheritance settings (null: unknown, or code without inheritance). */
+    var inheritance by mutableStateOf<InheritanceInfo?>(null)
+        private set
+
+    /** What "Claim an inheritance" found: the wallet account and its inheritance view. */
+    var claimLookup by mutableStateOf<Pair<String, InheritanceInfo>?>(null)
 
     /** Whether the wallet on screen runs contract v0.2 (null until known). */
     var isV02 by mutableStateOf<Boolean?>(null)
@@ -736,7 +745,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     val acct = st.walletAccount!!
                     val (b, locked) = if (Network.isImplicit(acct) && !nc.accountExists(acct)) BigInteger.ZERO to BigInteger.ZERO else nc.spendable(acct)
                     withContext(Dispatchers.Main) {
-                        if (activeId == id) { wallet = null; balance = b; storageLocked = locked; proposals = emptyList(); offline = null }
+                        if (activeId == id) { wallet = null; balance = b; storageLocked = locked; proposals = emptyList(); offline = null; inheritance = null }
                     }
                 } else withContext(Dispatchers.IO) {
                     val w = walletClient(st, nc)
@@ -747,13 +756,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     val bound = st.cards.bind(s)?.also { st.cards = it; note("card list migrated") }
                     adoptPendingKey(s, ps, st, id)
                     val v = if (activeId == id && isV02 != null) isV02 else runCatching { w.isV02() }.getOrNull()
+                    // v0.4 inheritance (older code has no such view: null).
+                    val inh = runCatching { w.inheritance() }.getOrNull()
                     // Integrity check at most every 6 h; then remember what the user has now seen (no alert for it).
                     val report = Integrity.Report.decode(st.integrity)
                         .let { r -> if (r == null || System.currentTimeMillis() / 1000 - r.atSecs > 6 * 3600) runCatching { integrityNow(w, s, id, st) }.getOrNull() ?: r else r }
                     st.watchMemory = Watch.memoryOf(s, ps, report?.ok ?: true).encode()
                     // The user may have switched wallets meanwhile: never show one wallet's state under another.
                     withContext(Dispatchers.Main) {
-                        if (activeId == id) { wallet = s; balance = b; storageLocked = locked; proposals = ps; offline = null; bound?.let { cardBook = it }; integrity = report; isV02 = v }
+                        if (activeId == id) { wallet = s; balance = b; storageLocked = locked; proposals = ps; offline = null; bound?.let { cardBook = it }; integrity = report; isV02 = v; inheritance = inh }
                     }
                 }
             } catch (e: Exception) {
@@ -2202,6 +2213,118 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
+    // ---- inheritance (contract v0.4) ----
+
+    /**
+     * Name [heir] (or change it): one settings change, after the settings
+     * delay. From then on, if no key of this wallet signs anything for
+     * [inactivity] seconds, anyone may start a claim, and after a further
+     * settings delay with still no activity, the funds can only go to [heir].
+     */
+    fun setHeir(heir: String, inactivity: Long) {
+        val h = heir.trim().lowercase()
+        changeHeir(
+            "Naming your heir", { st, w ->
+                network.accountProblem(h)?.let { throw IllegalArgumentException(it) }
+                if (h == w.account) throw IllegalArgumentException("The heir must be another account, not this wallet.")
+                if (!Inheritance.isValidPeriod(inactivity)) throw IllegalArgumentException("Pick a period from 1 hour to 10 years.")
+                ConfigOp.SetHeir(h, inactivity)
+            },
+            reason = "LEAVE EVERYTHING TO $h if no key of this wallet signs for ${Inheritance.describePeriod(inactivity)}",
+            done = "$h named as heir",
+        )
+    }
+
+    fun removeHeir() = changeHeir("Removing the heir", { _, _ -> ConfigOp.RemoveHeir }, reason = "Remove the heir", done = "Heir removed")
+
+    private fun changeHeir(label: String, op: (WalletState, TapvaultWallet) -> ConfigOp, reason: String, done: String) = run(label) {
+        val w = walletClient()
+        if (!w.isV04()) throw IllegalStateException("This wallet runs an older contract without inheritance. Wallets created with this app version have it.")
+        val st = w.state()
+        val config = op(st, w)
+        if (!st.phoneOnly) requireNfc()
+        requireSecurityKey("To change who inherits this wallet.")
+        val idx = phoneIndex(st)
+        val hours = hoursText(st.delays.config)
+        progress("Approve on your phone")
+        phone.reason = "$reason (after $hours)"
+        val id = w.proposeByPhone(Action.Config(listOf(config)), phone, idx)
+        if (st.phoneOnly) {
+            outcome = Outcome(true, "$done in $hours", "Request #$id can execute in $hours (Activity → Execute). Until then you can cancel it.")
+            refresh()
+            return@run
+        }
+        val ch = w.awaitCardChallenge(id)
+        val t = try { tapWalletCard("Tap a card of this wallet to approve", st, ch) } catch (e: Exception) {
+            refresh(); throw IllegalStateException("${e.message}\n\nRequest #$id is saved: approve it with your card in Activity within 10 minutes, or cancel it there.")
+        }
+        val res = w.approveCard(id, t.index, t.sig)
+        outcome = Outcome(true, "$done in $hours", "After the wait, open Activity and tap Execute.", near.explorerTx(res.hash))
+        refresh()
+    }
+
+    /** "I'm still here": the phone signs a check-in, which restarts the inactivity period and voids any open claim. */
+    fun checkIn() = run("Checking in") {
+        val w = walletClient()
+        val st = w.state()
+        val idx = phoneIndex(st)
+        val info = w.inheritance()
+        if (!info.hasHeir) throw IllegalStateException("This wallet has no heir.")
+        phone.reason = "Check in: you're still here (restarts the ${Inheritance.describePeriod(info.inactivity)} period)"
+        val r = w.checkInByPhone(phone, idx)
+        outcome = Outcome(
+            true, "Checked in",
+            "Your heir can't claim for another ${Inheritance.describePeriod(info.inactivity)}." + if (info.claimTs != null) " The open claim is void." else "",
+            near.explorerTx(r.hash),
+        )
+        refresh()
+    }
+
+    /** A client for someone else's wallet [account], paid by this phone's fee account (claims are permissionless). */
+    private fun otherWallet(account: String): TapvaultWallet {
+        val a = account.trim().lowercase()
+        network.accountProblem(a)?.let { throw IllegalArgumentException(it) }
+        val gas = store.gasAccount ?: throw IllegalStateException("Open a Tapvault wallet on this phone first: its fee account pays the network fee.")
+        return TapvaultWallet(near, a, gas, NearKey.fromSecret(store.gasKey!!))
+    }
+
+    fun lookupInheritance(account: String) = run("Looking up the wallet") {
+        claimLookup = null
+        val w = otherWallet(account)
+        if (!w.isV04()) throw IllegalStateException("${w.account} isn't a Tapvault wallet with inheritance (contract v0.4).")
+        val info = w.inheritance()
+        if (!info.hasHeir) throw IllegalStateException("${w.account} has no heir.")
+        claimLookup = w.account to info
+    }
+
+    fun startInheritanceClaim(account: String) = run("Starting the claim") {
+        val w = otherWallet(account)
+        val r = w.startInheritanceClaim()
+        val info = w.inheritance()
+        claimLookup = w.account to info
+        outcome = Outcome(
+            true, "Claim started",
+            "If the owner doesn't check in within ${hoursText(w.state().delays.config)}, the wallet can be released to ${info.heir}.",
+            near.explorerTx(r.hash),
+        )
+    }
+
+    fun releaseInheritance(account: String) = run("Releasing to the heir") {
+        val w = otherWallet(account)
+        val info = w.inheritance()
+        val heir = info.heir ?: throw IllegalStateException("${w.account} has no heir.")
+        val ft = Tokens(near)
+        val tokens = ft.held(w.account).keys.associateWith { runCatching { ft.balanceOf(it, w.account) }.getOrDefault(BigInteger.ZERO) }
+        val out = w.releaseAllToHeir(heir, tokens)
+        claimLookup = w.account to w.inheritance()
+        val failed = out.filter { it.second != null }
+        outcome = if (failed.isEmpty()) {
+            Outcome(true, "Released to $heir", "Sent ${out.joinToString { it.first }} from ${w.account}.")
+        } else {
+            Outcome(failed.size < out.size, "Released in part", failed.joinToString("\n") { "${it.first}: ${it.second}" })
+        }
+    }
+
     // ---- strict mode for an existing wallet (plan 5.8) ----
 
     /**
@@ -2444,7 +2567,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         cardBook = store.cards; holdSeconds = store.holdSeconds; backup = null
         receivers = store.receivers; integrity = Integrity.Report.decode(store.integrity)
         hasSecurityKey = store.securityKey != null
-        isV02 = null
+        isV02 = null; inheritance = null; claimLookup = null
         tokens = null; foundTokens = emptyList(); tokenPrefs = store.tokenPrefs; tokensAt = 0
         swaps = store.swaps; sendDraft = SendDraft()
         if (!tradeAvailable) prices = null
