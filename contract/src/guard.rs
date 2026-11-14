@@ -31,6 +31,7 @@ impl Tapvault {
             }
         }
         self.proposals.remove(&id.0);
+        crate::inherit::touch();
         events::emit("cancelled", json!({ "id": id }));
     }
 
@@ -50,6 +51,7 @@ impl Tapvault {
                 verify_card(signer, sig, &domain::card_freeze_challenge::<NearSha256>(&account, self.freeze_nonce));
             }
         }
+        crate::inherit::touch();
         self.frozen = true;
         self.freeze_nonce = new_freeze_nonce(self.freeze_nonce);
         events::emit("frozen", json!({ "signer_index": proof.signer_index() }));

@@ -160,6 +160,19 @@ sealed interface ConfigOp {
         override fun borsh(b: Borsh) { b.u8(9).bytes(codeHash) }
         override fun json() = buildJsonObject { put("UpgradeCode", buildJsonObject { put("code_hash", codeHash.b64()) }) }
     }
+
+    // ---- contract v0.4 only ----
+
+    /** Name the heir: after [inactivity] seconds without any signer signature, the funds can go only to [heir]. */
+    class SetHeir(val heir: String, val inactivity: Long) : ConfigOp {
+        override fun borsh(b: Borsh) { b.u8(10).string(heir).i64(inactivity) }
+        override fun json() = buildJsonObject { put("SetHeir", buildJsonObject { put("heir", heir); put("inactivity", inactivity) }) }
+    }
+
+    data object RemoveHeir : ConfigOp {
+        override fun borsh(b: Borsh) { b.u8(11) }
+        override fun json() = JsonPrimitive("RemoveHeir")
+    }
 }
 
 sealed interface Action {
@@ -282,8 +295,11 @@ object ActionJson {
 
     private fun op(j: JsonElement): ConfigOp {
         if (j is JsonPrimitive) {
-            require(j.content == "Unfreeze") { "unknown config op ${j.content}" }
-            return ConfigOp.Unfreeze
+            return when (j.content) {
+                "Unfreeze" -> ConfigOp.Unfreeze
+                "RemoveHeir" -> ConfigOp.RemoveHeir
+                else -> throw IllegalArgumentException("unknown config op ${j.content}")
+            }
         }
         val (name, v) = j.jsonObject.entries.single()
         return when (name) {
@@ -298,6 +314,7 @@ object ActionJson {
             "AllowReceiver" -> ConfigOp.AllowReceiver(v.jsonObject["receiver"]!!.jsonPrimitive.content)
             "DisallowReceiver" -> ConfigOp.DisallowReceiver(v.jsonObject["receiver"]!!.jsonPrimitive.content)
             "UpgradeCode" -> ConfigOp.UpgradeCode(v.jsonObject["code_hash"]!!.jsonPrimitive.content.unb64())
+            "SetHeir" -> ConfigOp.SetHeir(v.jsonObject["heir"]!!.jsonPrimitive.content, v.jsonObject["inactivity"]!!.jsonPrimitive.long)
             else -> throw IllegalArgumentException("unknown config op $name")
         }
     }
@@ -320,6 +337,8 @@ fun Action.describe(): String = when (this) {
             is ConfigOp.AllowReceiver -> "pay ${op.receiver} instantly"
             is ConfigOp.DisallowReceiver -> "stop instant payments to ${op.receiver}"
             is ConfigOp.UpgradeCode -> "REPLACE THE WALLET CODE with build ${Base58.encode(op.codeHash)}"
+            is ConfigOp.SetHeir -> "LEAVE EVERYTHING TO ${op.heir} if no key of this wallet signs anything for ${Inheritance.describePeriod(op.inactivity)}"
+            ConfigOp.RemoveHeir -> "remove the heir"
         }
     }
 }

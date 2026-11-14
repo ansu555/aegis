@@ -50,6 +50,8 @@ impl Tapvault {
             }
         }
 
+        crate::inherit::touch();
+
         // Count only proposals that can still complete: same signer set, and
         // either already approved or still inside the card-approval window.
         // Dead ones don't block the owner; close_stale cleans them up.
@@ -120,6 +122,7 @@ impl Tapvault {
     pub fn approve_p256(&mut self, id: U64, signer_index: u8, sig: P256Sig) {
         let intent = self.pre_approve(id.0, signer_index).intent_hash;
         verify_p256(self.signer(signer_index), &sig, &intent);
+        crate::inherit::touch();
         self.mark_approved(id.0, signer_index);
     }
 
@@ -133,6 +136,7 @@ impl Tapvault {
         check(now_secs() <= sealed.saturating_add(CARD_APPROVAL_WINDOW), ERR_CHALLENGE_EXPIRED);
         let ch = domain::card_approve_challenge::<NearSha256>(&p.intent_hash, &seed);
         verify_card(self.signer(signer_index), &sig, &ch);
+        crate::inherit::touch();
         self.mark_approved(id.0, signer_index);
     }
 }

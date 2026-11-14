@@ -22,6 +22,8 @@ object Domain {
     private val D_KEY_EMV = tag("key/emv")
     private val D_POSSESS = tag("possess")
     private val D_CARD_POSSESS = tag("card-possess")
+    private val D_ALIVE = tag("alive")
+    private val D_CARD_ALIVE = tag("card-alive")
 
     private fun acct(account: String): Array<ByteArray> {
         val b = account.toByteArray()
@@ -62,4 +64,10 @@ object Domain {
 
     /** v0.2: the card form of [possessionMessage]. */
     fun cardPossessionChallenge(account: String, newKeyHash: ByteArray) = sha256(D_CARD_POSSESS, *acct(account), newKeyHash)
+
+    /** v0.4: a check-in ("I'm still here") resets the inheritance timer; the nonce makes it single-use. */
+    fun aliveMessage(account: String, nonce: Long) = sha256(D_ALIVE, *acct(account), u64le(nonce))
+
+    /** v0.4: the card form of [aliveMessage]. */
+    fun cardAliveChallenge(account: String, nonce: Long) = sha256(D_CARD_ALIVE, *acct(account), u64le(nonce))
 }

@@ -27,6 +27,8 @@ pub const D_KEY_P256: &[u8] = b"tapvault/near/v1/key/p256";
 pub const D_KEY_EMV: &[u8] = b"tapvault/near/v1/key/emv";
 pub const D_POSSESS: &[u8] = b"tapvault/near/v1/possess";
 pub const D_CARD_POSSESS: &[u8] = b"tapvault/near/v1/card-possess";
+pub const D_ALIVE: &[u8] = b"tapvault/near/v1/alive";
+pub const D_CARD_ALIVE: &[u8] = b"tapvault/near/v1/card-alive";
 
 fn len32(b: &[u8]) -> [u8; 4] {
     (b.len() as u32).to_le_bytes()
@@ -103,6 +105,17 @@ pub fn card_possession_challenge<H: Sha256Hasher>(account: &[u8], new_key_hash: 
     H::hashv(&[D_CARD_POSSESS, &len32(account), account, new_key_hash])
 }
 
+/// v0.4 check-in: the owner shows they still hold a key, which resets the
+/// inheritance inactivity timer. `alive_nonce` makes each signature single-use.
+pub fn alive_message<H: Sha256Hasher>(account: &[u8], alive_nonce: u64) -> [u8; 32] {
+    H::hashv(&[D_ALIVE, &len32(account), account, &alive_nonce.to_le_bytes()])
+}
+
+/// The card form of [`alive_message`].
+pub fn card_alive_challenge<H: Sha256Hasher>(account: &[u8], alive_nonce: u64) -> [u8; 32] {
+    H::hashv(&[D_CARD_ALIVE, &len32(account), account, &alive_nonce.to_le_bytes()])
+}
+
 pub fn finalize_message<H: Sha256Hasher>(account: &[u8], args: &[u8]) -> [u8; 32] {
     H::hashv(&[D_FINALIZE, &len32(account), account, args])
 }
@@ -116,7 +129,7 @@ mod tests {
     fn domains_are_distinct() {
         let all = [
             D_INTENT, D_CARD_APPROVE, D_CARD_PROPOSE, D_CANCEL, D_CARD_CANCEL, D_FREEZE, D_CARD_FREEZE, D_CREATE,
-            D_SETUP_ADD, D_CARD_ENROLL, D_FINALIZE, D_KEY_P256, D_KEY_EMV, D_POSSESS, D_CARD_POSSESS,
+            D_SETUP_ADD, D_CARD_ENROLL, D_FINALIZE, D_KEY_P256, D_KEY_EMV, D_POSSESS, D_CARD_POSSESS, D_ALIVE, D_CARD_ALIVE,
         ];
         for i in 0..all.len() {
             for j in 0..all.len() {
@@ -138,6 +151,9 @@ mod tests {
         assert_ne!(cancel_message::<S>(&i), card_cancel_challenge::<S>(&i));
         assert_ne!(possession_message::<S>(b"w", &i), card_possession_challenge::<S>(b"w", &i));
         assert_ne!(card_possession_challenge::<S>(b"w", &i), card_enroll_challenge::<S>(b"w", 0, &i));
+        assert_ne!(alive_message::<S>(b"w", 0), card_alive_challenge::<S>(b"w", 0));
+        assert_ne!(alive_message::<S>(b"w", 0), freeze_message::<S>(b"w", 0));
+        assert_ne!(alive_message::<S>(b"w", 0), alive_message::<S>(b"w", 1));
     }
 
     #[test]

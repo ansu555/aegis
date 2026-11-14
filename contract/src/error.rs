@@ -49,6 +49,14 @@ pub const ERR_CODE_HASH: &str = "Code doesn't match the approved code hash";
 pub const ERR_ALLOWLIST: &str = "Receiver allowlist is full or already has that receiver";
 pub const ERR_RECEIVER_NOT_FOUND: &str = "Receiver not on the allowlist";
 
+// v0.4
+pub const ERR_INVALID_HEIR: &str = "Invalid heir: the inactivity period must be 1 hour to 10 years, and the heir can't be the wallet itself";
+pub const ERR_NO_HEIR: &str = "This wallet has no heir";
+pub const ERR_STILL_ACTIVE: &str = "The owner has been active within the inactivity period";
+pub const ERR_NO_CLAIM: &str = "No inheritance claim is open (or the owner was active since it started)";
+pub const ERR_GRACE: &str = "The claim's grace period has not elapsed";
+pub const ERR_NOTHING_TO_RELEASE: &str = "Nothing to release";
+
 pub fn check(cond: bool, msg: &str) {
     if !cond {
         env::panic_str(msg)

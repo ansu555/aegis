@@ -144,6 +144,25 @@
         }
       },
       "name": "config_upgrade"
+    },
+    {
+      "borsh": "01020000000a0c000000686569722e746573746e6574004eed00000000000b",
+      "intent": "2572c83e3c0138c1de538fe62b1a7c317ff7dff6f590d6d63ec604d17392bb0d",
+      "intent_id": 5,
+      "json": {
+        "Config": {
+          "ops": [
+            {
+              "SetHeir": {
+                "heir": "heir.testnet",
+                "inactivity": 15552000
+              }
+            },
+            "RemoveHeir"
+          ]
+        }
+      },
+      "name": "config_v04_ops"
     }
   ],
   "card_key_borsh": "0180000000b4240d3bf0f41a2aa081123cbc2fd5aa5d2424af0a20dfd9fc23a092563f3e509cb0df2d328c134de6f60dd9a10cb26ceccfa19717e0aa0e2d741810cdef307cee1b297c145fb473ff58429795be626cf9a6939c9a1846a6291a8ab442d0f240d96cae324a32e43ada8e69196b79de3f080a3460585c158b4288b68423cf558703000000000404",
@@ -165,7 +184,9 @@
   },
   "finalize_borsh": "02100e000000000000100e00000000000080510100000000000100000000000000a1edccce1bc2d300000000000000000042db999d3784a7010000000000",
   "messages": {
+    "alive_3": "11f710f47c5c81569e4d0efacf0cbf1d613f5486d04511261fa74eb83f066710",
     "cancel": "ce06890c5fafcb2482912a078ab52304fade448e051b9d4fdf70ec34df64f1a5",
+    "card_alive_3": "24e0da048035e04211c1a79ed05d99d4a82d6483621513b1d91a4d486df48f86",
     "card_approve": "3a15dcb1cadbfe551c5adfa5d745691fb4a76eddf486d1c707869df8723639e5",
     "card_cancel": "0444d40d04c87d2ef70151dbe9f42f839029cc2074ce3f23bd9fa61821633df9",
     "card_enroll_1": "114876d9faf58a11c49f10862032de1ebd6d4f30986742e0cf2828da04816c0d",

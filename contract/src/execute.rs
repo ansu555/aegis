@@ -178,6 +178,8 @@ impl Tapvault {
                         .unwrap_or_else(|| env::panic_str(ERR_RECEIVER_NOT_FOUND));
                     self.allowlist.remove(pos);
                 }
+                ConfigOp::SetHeir { heir, inactivity } => inherit::set_heir(Some((heir, inactivity))),
+                ConfigOp::RemoveHeir => inherit::set_heir(None),
                 // Only through execute_upgrade (refused in execute).
                 ConfigOp::UpgradeCode { .. } => env::panic_str(ERR_USE_EXECUTE_UPGRADE),
                 ConfigOp::Unfreeze => {

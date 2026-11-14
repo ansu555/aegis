@@ -648,7 +648,7 @@ fn the_view_returns_the_seed_so_clients_can_check_the_card_challenge() {
     hex_into(p.card_seed.as_deref().unwrap(), &mut seed);
     // recomputed from the intent the client computed itself, not from the view's hash
     assert_eq!(domain::card_approve_challenge::<S>(&intent(id, &send_near(NEAR)), &seed), ch);
-    assert_eq!(w.c.contract_version(), "0.3.0");
+    assert_eq!(w.c.contract_version(), "0.4.0");
 }
 
 #[test]
@@ -829,4 +829,170 @@ fn adding_the_first_card_later_must_raise_the_threshold() {
     });
     w.card_approves(pay);
     assert!(matches!(w.c.execute(U64(pay)), PromiseOrValue::Promise(_)));
+}
+
+// ---- v0.4: inheritance ----
+
+const HEIR: &str = "heir.testnet";
+
+/// Name `heir.testnet` with `inactivity` seconds through a config proposal
+/// (phone + card, then the 1-day config delay). Returns when it applied.
+fn set_heir(w: &mut Wallet, inactivity: i64) -> i64 {
+    let id = w.propose_by_phone(Action::Config { ops: vec![ConfigOp::SetHeir { heir: HEIR.parse().unwrap(), inactivity }] });
+    w.card_approves(id);
+    w.advance(DAY);
+    w.c.execute(U64(id));
+    w.t
+}
+
+fn check_in_by_phone(w: &mut Wallet) {
+    let nonce = w.c.get_inheritance().alive_nonce;
+    let sig = w.phone.sign(&domain::alive_message::<S>(acct(), nonce));
+    w.c.check_in(SignerProof::P256 { signer_index: 0, sig });
+}
+
+#[test]
+fn an_heir_is_set_by_a_delayed_config_change_and_the_bounds_hold() {
+    let mut w = Wallet::new();
+    let v = w.c.get_inheritance();
+    assert!(v.heir.is_none() && v.claimable_at.is_none());
+    fails("This wallet has no heir", || w.c.start_inheritance_claim());
+
+    // out of bounds: refused when proposed
+    for bad in [3_599, 3651 * DAY] {
+        fails("Invalid heir", || {
+            w.propose_by_phone(Action::Config { ops: vec![ConfigOp::SetHeir { heir: HEIR.parse().unwrap(), inactivity: bad }] });
+        });
+    }
+    // the wallet itself can't be its heir: refused at execute
+    let id = w.propose_by_phone(Action::Config { ops: vec![ConfigOp::SetHeir { heir: WALLET.parse().unwrap(), inactivity: DAY }] });
+    w.card_approves(id);
+    w.advance(DAY);
+    fails("Invalid heir", || {
+        w.c.execute(U64(id));
+    });
+    w.cancel_by_phone(id);
+
+    let at = set_heir(&mut w, 30 * DAY);
+    let v = w.c.get_inheritance();
+    assert_eq!(v.heir.as_ref().map(|a| a.as_str()), Some(HEIR));
+    assert_eq!(v.inactivity, 30 * DAY);
+    assert_eq!(v.last_active, at);
+    assert_eq!(v.claimable_at, Some(at + 30 * DAY + 1));
+    assert_eq!(v.releasable_at, None);
+}
+
+#[test]
+fn a_claim_needs_the_whole_inactivity_period_then_the_grace_period() {
+    let mut w = Wallet::new();
+    let at = set_heir(&mut w, 30 * DAY);
+    w.advance(30 * DAY);
+    fails("active within", || w.c.start_inheritance_claim());
+    fails("No inheritance claim", || {
+        w.c.release_to_heir(Asset::Near, None);
+    });
+    w.advance(1);
+    w.c.start_inheritance_claim();
+    let v = w.c.get_inheritance();
+    assert_eq!(v.claim_ts, Some(at + 30 * DAY + 1));
+    // grace = the config delay (1 day here)
+    assert_eq!(v.releasable_at, Some(at + 30 * DAY + 1 + DAY));
+    // starting again doesn't move the claim
+    w.advance(10);
+    w.c.start_inheritance_claim();
+    assert_eq!(w.c.get_inheritance().claim_ts, Some(at + 30 * DAY + 1));
+    fails("grace period", || {
+        w.c.release_to_heir(Asset::Near, None);
+    });
+    w.advance(DAY);
+    // anyone may release, and it only goes to the heir; frozen or not
+    assert!(catch_unwind(AssertUnwindSafe(|| w.c.release_to_heir(Asset::Near, None))).is_ok());
+    w.c.release_to_heir(Asset::Ft { token: "usdc.testnet".parse().unwrap() }, Some(U128(5_000_000)));
+    fails("Nothing to release", || {
+        w.c.release_to_heir(Asset::Ft { token: "usdc.testnet".parse().unwrap() }, None);
+    });
+}
+
+#[test]
+fn any_owner_signature_voids_a_claim() {
+    let mut w = Wallet::new();
+    set_heir(&mut w, DAY);
+
+    // a phone check-in
+    w.advance(DAY + 1);
+    w.c.start_inheritance_claim();
+    w.advance(60);
+    check_in_by_phone(&mut w);
+    let v = w.c.get_inheritance();
+    assert_eq!((v.claim_ts, v.last_active, v.alive_nonce), (None, w.t, 1));
+    w.advance(DAY);
+    fails("No inheritance claim", || {
+        w.c.release_to_heir(Asset::Near, None);
+    });
+    // a check-in signature is single-use
+    let old = w.phone.sign(&domain::alive_message::<S>(acct(), 0));
+    fails("P-256 signature invalid", || w.c.check_in(SignerProof::P256 { signer_index: 0, sig: old }));
+
+    // a card check-in
+    w.advance(DAY + 1);
+    w.c.start_inheritance_claim();
+    let ch = domain::card_alive_challenge::<S>(acct(), w.c.get_inheritance().alive_nonce);
+    let sig = w.card.tap(&ch);
+    w.c.check_in(SignerProof::Card { signer_index: 1, sig });
+    assert_eq!(w.c.get_inheritance().claim_ts, None);
+
+    // a claim started, then the owner proposes a payment: also void
+    w.advance(DAY + 1);
+    w.c.start_inheritance_claim();
+    w.advance(DAY - 10);
+    let id = w.propose_by_phone(send_near(NEAR));
+    assert_eq!(w.c.get_inheritance().claim_ts, None);
+    w.advance(20);
+    fails("No inheritance claim", || {
+        w.c.release_to_heir(Asset::Near, None);
+    });
+    // a card approval counts too: the timer restarts from it
+    w.card_approves(id);
+    assert_eq!(w.c.get_inheritance().last_active, w.t);
+
+    // and a freeze
+    w.advance(DAY + 1);
+    w.c.start_inheritance_claim();
+    let nonce = w.c.get_wallet().freeze_nonce.0;
+    let sig = w.phone.sign(&domain::freeze_message::<S>(acct(), nonce));
+    w.c.freeze(SignerProof::P256 { signer_index: 0, sig });
+    assert_eq!(w.c.get_inheritance().claim_ts, None);
+}
+
+#[test]
+fn removing_the_heir_ends_inheritance() {
+    let mut w = Wallet::new();
+    set_heir(&mut w, DAY);
+    let id = w.propose_by_phone(Action::Config { ops: vec![ConfigOp::RemoveHeir] });
+    w.card_approves(id);
+    w.advance(DAY);
+    w.c.execute(U64(id));
+    assert!(w.c.get_inheritance().heir.is_none());
+    w.advance(10 * DAY);
+    fails("This wallet has no heir", || w.c.start_inheritance_claim());
+    fails("This wallet has no heir", || check_in_by_phone(&mut w));
+    // removing again is refused at execute
+    let id = w.propose_by_phone(Action::Config { ops: vec![ConfigOp::RemoveHeir] });
+    w.card_approves(id);
+    w.advance(DAY);
+    fails("This wallet has no heir", || {
+        w.c.execute(U64(id));
+    });
+}
+
+#[test]
+fn a_phone_only_wallet_can_name_an_heir_with_the_phone_alone() {
+    let mut w = Wallet::phone_only();
+    let id = w.propose_by_phone(Action::Config { ops: vec![ConfigOp::SetHeir { heir: HEIR.parse().unwrap(), inactivity: 3_600 }] });
+    w.advance(DAY);
+    w.c.execute(U64(id));
+    w.advance(3_601);
+    w.c.start_inheritance_claim();
+    w.advance(DAY);
+    w.c.release_to_heir(Asset::Near, Some(U128(NEAR)));
 }

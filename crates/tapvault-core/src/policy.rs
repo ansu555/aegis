@@ -19,6 +19,11 @@
 //! - A config change with a user-verifying approval waits `config_delay`.
 //!   Without one (e.g. phone lost, recovering with two cards) it waits the
 //!   longer `recovery_delay`.
+//! - v0.4, inheritance: the owner may name an heir and an inactivity period.
+//!   Once no signer has signed anything for that long, anyone may start a
+//!   claim; after a further grace period (`config` delay) with still no
+//!   activity, the wallet's funds can only go to the heir. Any signer
+//!   signature voids a pending claim (`inheritance_claimable`, `releasable`).
 //! - v0.3, phone-only wallet: a wallet whose only signer is the phone key may
 //!   use threshold 1 until a card is added (`threshold_is_valid`). Adding a
 //!   key to it must raise the threshold to 2 in the same change.
@@ -30,6 +35,10 @@ pub const MIN_TRANSFER_DELAY: i64 = 3_600;
 pub const MIN_CONFIG_DELAY: i64 = 3_600;
 pub const MIN_RECOVERY_DELAY: i64 = DAY;
 pub const MAX_DELAY: i64 = 30 * DAY;
+
+/// v0.4 inheritance: bounds of the inactivity period.
+pub const MIN_INACTIVITY: i64 = 3_600;
+pub const MAX_INACTIVITY: i64 = 3650 * DAY;
 
 pub const MIN_THRESHOLD: u8 = 2;
 /// v0.3: the threshold of a phone-only wallet (one signer, a P-256 key).
@@ -66,6 +75,23 @@ impl Delays {
 pub fn threshold_is_valid(threshold: u8, signers: usize) -> bool {
     let min = if signers == 1 { PHONE_ONLY_THRESHOLD } else { MIN_THRESHOLD };
     threshold >= min && (threshold as usize) <= signers
+}
+
+/// v0.4: whether an inactivity period is allowed.
+pub fn inactivity_is_valid(inactivity: i64) -> bool {
+    (MIN_INACTIVITY..=MAX_INACTIVITY).contains(&inactivity)
+}
+
+/// v0.4: a claim may start once the owner has been inactive for the whole
+/// period (strictly longer than `inactivity` seconds).
+pub fn inheritance_claimable(last_active: i64, inactivity: i64, now: i64) -> bool {
+    now > last_active.saturating_add(inactivity)
+}
+
+/// v0.4: funds may go to the heir once a claim started at `claim_ts` has
+/// waited out `grace` with no owner activity since (`last_active < claim_ts`).
+pub fn releasable(claim_ts: i64, last_active: i64, grace: i64, now: i64) -> bool {
+    last_active < claim_ts && now >= claim_ts.saturating_add(grace)
 }
 
 /// A leaky-bucket allowance: `used` drains at `daily_max` per day.
@@ -250,6 +276,24 @@ mod tests {
         assert_eq!(check_execution(Upgrade, 2, 1, 2, &d, t, t + d.config), Err(Refusal::TooEarly));
         assert_eq!(check_execution(Upgrade, 2, 1, 2, &d, t, t + d.recovery), Ok(()));
         assert_eq!(check_execution(Upgrade, 1, 1, 2, &d, t, t + d.recovery), Err(Refusal::NotEnoughApprovals));
+    }
+
+    #[test]
+    fn inheritance_rules() {
+        assert!(inactivity_is_valid(MIN_INACTIVITY));
+        assert!(!inactivity_is_valid(MIN_INACTIVITY - 1));
+        assert!(inactivity_is_valid(MAX_INACTIVITY));
+        assert!(!inactivity_is_valid(MAX_INACTIVITY + 1));
+        let t = 1_000_000;
+        assert!(!inheritance_claimable(t, DAY, t + DAY));
+        assert!(inheritance_claimable(t, DAY, t + DAY + 1));
+        assert!(!inheritance_claimable(i64::MAX - 1, DAY, i64::MAX));
+        let claim = t + DAY + 1;
+        assert!(!releasable(claim, t, 3_600, claim + 3_599));
+        assert!(releasable(claim, t, 3_600, claim + 3_600));
+        // any owner activity at or after the claim voids it
+        assert!(!releasable(claim, claim, 3_600, claim + 10 * DAY));
+        assert!(!releasable(claim, claim + 5, 3_600, claim + 10 * DAY));
     }
 
     #[test]

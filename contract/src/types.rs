@@ -162,6 +162,12 @@ pub enum ConfigOp {
     /// Must be the only op of its proposal; waits the recovery delay and is
     /// run with `execute_upgrade(id, code)`.
     UpgradeCode { code_hash: Base64VecU8 },
+    // ---- v0.4 (appended) ----
+    /// Name the heir: after `inactivity` seconds with no signer signature,
+    /// anyone may start a claim, and once the `config` delay has passed with
+    /// still no activity, the funds can only go to `heir`. Resets the timer.
+    SetHeir { heir: AccountId, inactivity: i64 },
+    RemoveHeir,
 }
 
 #[near(serializers = [borsh, json])]
@@ -180,6 +186,9 @@ impl Action {
                 for op in ops {
                     match op {
                         ConfigOp::AddSigner(k) => k.validate(),
+                        ConfigOp::SetHeir { inactivity, .. } => {
+                            check(policy::inactivity_is_valid(*inactivity), ERR_INVALID_HEIR)
+                        }
                         ConfigOp::UpgradeCode { code_hash } => {
                             check(code_hash.0.len() == 32, ERR_INVALID_ACTION);
                             check(ops.len() == 1, ERR_UPGRADE_ALONE);
@@ -293,6 +302,22 @@ pub struct FinalizeArgs {
     pub threshold: u8,
     pub delays: DelaysCfg,
     pub limits: Vec<LimitInit>,
+}
+
+/// v0.4 inheritance state, kept under its own storage key (`inherit.rs`) so
+/// the main state layout is the same as v0.3.
+#[near(serializers = [borsh])]
+#[derive(Clone, Debug, Default)]
+pub struct Inheritance {
+    pub heir: Option<AccountId>,
+    /// Seconds without any signer signature before a claim may start.
+    pub inactivity: i64,
+    /// Last time a signer signed anything (or the heir was set).
+    pub last_active: i64,
+    /// When a claim started; voided by any later signer activity.
+    pub claim_ts: Option<i64>,
+    /// Bumped on every check-in so check-in signatures are single-use.
+    pub alive_nonce: u64,
 }
 
 #[near(serializers = [borsh])]

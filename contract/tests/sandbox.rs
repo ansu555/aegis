@@ -203,7 +203,7 @@ async fn full_flow_and_gas() -> anyhow::Result<()> {
 
     // ---- v0.2: version view, seed in the proposal view, guardian with possession, upgrade ----
     let v: String = contract.view("contract_version").await?.json()?;
-    assert_eq!(v, "0.3.0");
+    assert_eq!(v, "0.4.0");
 
     let propose_config = |ops: Vec<ConfigOp>, possession: Value| {
         let relayer = relayer.clone();
@@ -439,5 +439,117 @@ async fn phone_only_wallet_then_add_the_card() -> anyhow::Result<()> {
     let refused = execute(id).await?;
     assert!(format!("{:?}", refused.failures()).contains("Not enough approvals"), "{:?}", refused.failures());
     println!("  phone alone after the card was added: refused\n");
+    Ok(())
+}
+
+/// v0.4: a phone-only wallet names an heir; after the inactivity period and
+/// the grace period (moved back in time by patching state), anyone releases
+/// the NEAR to the heir, and the wallet keeps its storage reserve.
+#[tokio::test]
+#[ignore = "downloads a nearcore sandbox binary; run with --ignored"]
+async fn inheritance_releases_to_the_heir_after_inactivity() -> anyhow::Result<()> {
+    use near_sdk::borsh::{self, BorshDeserialize};
+    let worker = near_workspaces::sandbox_with_version("2.6.5").await?;
+    let wasm = near_workspaces::compile_project("./").await?;
+    let wallet = worker.dev_create_account().await?;
+    let relayer = worker.dev_create_account().await?;
+    let heir = worker.dev_create_account().await?;
+    let acct = wallet.id().as_str().as_bytes().to_vec();
+    let phone = SigningKey::from_slice(&[7; 32]).unwrap();
+    println!("\n  inheritance step                      gas");
+
+    let pk = phone_key(&phone);
+    wallet
+        .batch(wallet.id())
+        .deploy(&wasm)
+        .call(
+            Function::new("new")
+                .args_json(json!({ "first_signer": pk, "sig": phone_sign(&phone, &domain::create_message::<S>(&acct, &key_hash(&pk))) }))
+                .gas(NearGas::from_tgas(100)),
+        )
+        .transact()
+        .await?
+        .into_result()?;
+    let contract = near_workspaces::Contract::from_secret_key(wallet.id().clone(), wallet.secret_key().clone(), &worker);
+    let args = FinalizeArgs {
+        threshold: 1,
+        delays: DelaysCfg { transfer: 3_600, config: 3_600, recovery: 86_400 },
+        limits: vec![],
+    };
+    let msg = domain::finalize_message::<S>(&acct, &near_sdk::borsh::to_vec(&args)?);
+    wallet
+        .call(contract.id(), "setup_finalize")
+        .args_json(json!({ "args": args, "authorizer_index": 0, "sig": phone_sign(&phone, &msg) }))
+        .max_gas()
+        .transact()
+        .await?
+        .into_result()?;
+
+    // name the heir (1 h of inactivity) through a config proposal
+    let action = Action::Config { ops: vec![ConfigOp::SetHeir { heir: heir.id().as_str().parse().unwrap(), inactivity: 3_600 }] };
+    let intent = domain::intent_hash::<S>(&acct, 0, &near_sdk::borsh::to_vec(&action)?);
+    let r = relayer
+        .call(contract.id(), "propose")
+        .args_json(json!({ "action": action, "proof": SignerProof::P256 { signer_index: 0, sig: phone_sign(&phone, &intent) }, "possession": null }))
+        .max_gas()
+        .transact()
+        .await?;
+    report("propose SetHeir", &r, wallet.id());
+    let state = worker.view_state(contract.id()).await?;
+    for (k, v) in state.iter() {
+        let mut rest: &[u8] = v;
+        let Ok(mut prop) = Proposal::deserialize(&mut rest) else { continue };
+        if prop.intent_hash == intent {
+            prop.ready_ts = Some(prop.ready_ts.unwrap() - 2 * 3600);
+            let mut bytes = borsh::to_vec(&prop)?;
+            bytes.extend_from_slice(rest);
+            worker.patch_state(contract.id(), k, &bytes).await?;
+        }
+    }
+    let r = relayer.call(contract.id(), "execute").args_json(json!({ "id": "0" })).max_gas().transact().await?;
+    report("execute SetHeir", &r, wallet.id());
+    let v: Value = contract.view("get_inheritance").await?.json()?;
+    assert_eq!(v["heir"], heir.id().as_str());
+
+    let claim = || relayer.call(contract.id(), "start_inheritance_claim").max_gas().transact();
+    let early = claim().await?;
+    assert!(format!("{:?}", early.failures()).contains("active within"), "{:?}", early.failures());
+
+    // two hours of silence
+    let shift = |by: i64| {
+        let worker = worker.clone();
+        let id = contract.id().clone();
+        async move {
+            let raw = worker.view_state(&id).await?;
+            let mut h = Inheritance::try_from_slice(raw.get(b"heir".as_slice()).expect("heir state"))?;
+            h.last_active -= by;
+            h.claim_ts = h.claim_ts.map(|c| c - by);
+            worker.patch_state(&id, b"heir", &borsh::to_vec(&h)?).await?;
+            anyhow::Ok(())
+        }
+    };
+    shift(2 * 3600).await?;
+    let r = claim().await?;
+    report("start_inheritance_claim", &r, wallet.id());
+    let release = || {
+        relayer
+            .call(contract.id(), "release_to_heir")
+            .args_json(json!({ "asset": "Near", "amount": null }))
+            .max_gas()
+            .transact()
+    };
+    let grace = release().await?;
+    assert!(format!("{:?}", grace.failures()).contains("grace period"), "{:?}", grace.failures());
+    shift(2 * 3600).await?;
+    let before = heir.view_account().await?.balance.as_yoctonear();
+    let r = release().await?;
+    report("release_to_heir (all NEAR)", &r, wallet.id());
+    let got = heir.view_account().await?.balance.as_yoctonear() - before;
+    let left = wallet.view_account().await?.balance.as_yoctonear();
+    println!("  heir received {} NEAR; wallet kept {} NEAR\n", got as f64 / 1e24, left as f64 / 1e24);
+    assert!(got > NearToken::from_near(50).as_yoctonear(), "heir got {got}");
+    // the wallet still works: its state is readable
+    let v: Value = contract.view("get_inheritance").await?.json()?;
+    assert_eq!(v["heir"], heir.id().as_str());
     Ok(())
 }

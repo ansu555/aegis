@@ -46,6 +46,7 @@ class VectorsTest {
         ),
         "config_v02_ops" to Action.Config(listOf(ConfigOp.AllowReceiver("carol.testnet"), ConfigOp.DisallowReceiver("dave.testnet"))),
         "config_upgrade" to Action.Config(listOf(ConfigOp.UpgradeCode(ByteArray(32) { 0x33 }))),
+        "config_v04_ops" to Action.Config(listOf(ConfigOp.SetHeir("heir.testnet", 15_552_000), ConfigOp.RemoveHeir)),
     )
 
     @Test
@@ -92,5 +93,7 @@ class VectorsTest {
         assertEquals(msg("card_freeze_3"), Domain.cardFreezeChallenge(account, 3).hex())
         assertEquals(msg("possess_card"), Domain.possessionMessage(account, card.keyHash()).hex())
         assertEquals(msg("card_possess_card"), Domain.cardPossessionChallenge(account, card.keyHash()).hex())
+        assertEquals(msg("alive_3"), Domain.aliveMessage(account, 3).hex())
+        assertEquals(msg("card_alive_3"), Domain.cardAliveChallenge(account, 3).hex())
     }
 }

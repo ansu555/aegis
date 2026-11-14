@@ -15,6 +15,7 @@ pub mod error;
 pub mod events;
 pub mod execute;
 pub mod guard;
+pub mod inherit;
 pub mod proposals;
 pub mod setup;
 pub mod types;
@@ -53,7 +54,7 @@ pub struct Tapvault {
 }
 
 /// Reported by the `contract_version` view (absent before v0.2).
-pub const CONTRACT_VERSION: &str = "0.3.0";
+pub const CONTRACT_VERSION: &str = "0.4.0";
 
 #[near]
 impl Tapvault {

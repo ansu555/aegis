@@ -83,6 +83,12 @@ fn actions() -> Vec<(&'static str, Action)> {
             },
         ),
         ("config_upgrade", Action::Config { ops: vec![ConfigOp::UpgradeCode { code_hash: Base64VecU8(vec![0x33; 32]) }] }),
+        (
+            "config_v04_ops",
+            Action::Config {
+                ops: vec![ConfigOp::SetHeir { heir: "heir.testnet".parse().unwrap(), inactivity: 15_552_000 }, ConfigOp::RemoveHeir],
+            },
+        ),
     ]
 }
 
@@ -135,6 +141,8 @@ fn build() -> Value {
             "card_freeze_3": hex(&domain::card_freeze_challenge::<S>(acct, 3)),
             "possess_card": hex(&domain::possession_message::<S>(acct, &key_hash(&ck))),
             "card_possess_card": hex(&domain::card_possession_challenge::<S>(acct, &key_hash(&ck))),
+            "alive_3": hex(&domain::alive_message::<S>(acct, 3)),
+            "card_alive_3": hex(&domain::card_alive_challenge::<S>(acct, 3)),
             "intent_input": hex(&intent),
             "seed_input": hex(&seed),
         },
