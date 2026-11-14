@@ -73,6 +73,16 @@ data class WalletState(
     fun isInstantTo(receiver: String?, amount: BigInteger, nowSecs: Long = System.currentTimeMillis() / 1000): Boolean =
         nearLimit?.isInstant(amount, nowSecs) == true && (allowlist.isEmpty() || receiver in allowlist)
 
+    /** The limit set for [asset], if any (a token without one always waits the transfer delay). */
+    fun limitFor(asset: Asset): LimitInfo? = limits.firstOrNull { it.asset == asset.json() }
+
+    /** [isInstantTo] for any asset: within that asset's limit and, with an allowlist, a listed receiver. */
+    fun isInstantTo(asset: Asset, receiver: String?, amount: BigInteger, nowSecs: Long = System.currentTimeMillis() / 1000): Boolean =
+        limitFor(asset)?.isInstant(amount, nowSecs) == true && (allowlist.isEmpty() || receiver in allowlist)
+
+    /** Whether one more asset can get a limit (the contract holds at most [MAX_LIMITS]). */
+    fun canAddLimit(asset: Asset) = limitFor(asset) != null || limits.size < MAX_LIMITS
+
     /** The first card signer (setup's card while no card has been removed). */
     fun card() = signers.firstOrNull { it.isCard }
 
@@ -114,9 +124,7 @@ data class ProposalInfo(
         val t = action.jsonObject["Transfer"]?.jsonObject
         if (t != null) {
             val amount = BigInteger(t["amount"]!!.jsonPrimitive.content)
-            val asset = t["asset"]!!
-            val what = if (asset == Asset.Near.json()) "${Near.format(amount)} NEAR" else "$amount of ${asset.jsonObject["Ft"]!!.jsonObject["token"]!!.jsonPrimitive.content}"
-            return "Send $what to ${t["receiver"]!!.jsonPrimitive.content}"
+            return "Send ${TokenAmount.describe(transferAsset()!!, amount)} to ${t["receiver"]!!.jsonPrimitive.content}"
         }
         return "Change settings: " + configOps().joinToString(", ") {
             if (it is JsonObject) it.keys.first() else it.jsonPrimitive.content
@@ -157,6 +165,11 @@ data class ProposalInfo(
     /** A transfer of NEAR (not a token). */
     val isNearTransfer get() = action.jsonObject["Transfer"]?.jsonObject?.get("asset") == Asset.Near.json()
 
+    /** The asset a transfer moves (NEAR or a token), or null for a settings change. */
+    fun transferAsset(): Asset? = action.jsonObject["Transfer"]?.jsonObject?.get("asset")?.let { a ->
+        if (a == Asset.Near.json()) Asset.Near else a.jsonObject["Ft"]?.jsonObject?.get("token")?.jsonPrimitive?.content?.let { Asset.Ft(it) }
+    }
+
     fun transferReceiver(): String? =
         action.jsonObject["Transfer"]?.jsonObject?.get("receiver")?.jsonPrimitive?.content
 
@@ -165,6 +178,9 @@ data class ProposalInfo(
 }
 
 class TapvaultException(message: String) : Exception(message)
+
+/** `MAX_LIMITS` in contract/src/types.rs: NEAR plus up to 7 tokens can be instant. */
+const val MAX_LIMITS = 8
 
 /**
  * Client for one Tapvault wallet. Gas is paid by [gasAccount]; all authority

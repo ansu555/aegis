@@ -306,19 +306,15 @@ object ActionJson {
 /** What the phone's prompt says an action does, built from the action itself (the values that get hashed). */
 fun Action.describe(): String = when (this) {
     is Action.Transfer -> {
-        val what = when (asset) {
-            Asset.Near -> "${Near.format(amount)} NEAR"
-            is Asset.Ft -> "$amount of ${asset.token}"
-        }
-        "Send $what to $receiver"
+        "Send ${TokenAmount.describe(asset, amount)} to $receiver"
     }
     is Action.Config -> "Change settings: " + ops.joinToString(", ") { op ->
         when (op) {
             is ConfigOp.AddSigner -> if (op.key is SignerKey.EmvCard) "add a card" else "add a phone key"
             is ConfigOp.RemoveSigner -> "remove signer ${op.keyHash.hex().take(8)}"
             is ConfigOp.SetThreshold -> "approvals needed ${op.threshold}"
-            is ConfigOp.SetLimit -> "limit ${Near.format(op.limit.instantMax)} at once, ${Near.format(op.limit.dailyMax)} a day"
-            is ConfigOp.RemoveLimit -> "remove a limit"
+            is ConfigOp.SetLimit -> "limit ${TokenAmount.describe(op.limit.asset, op.limit.instantMax)} at once, ${TokenAmount.describe(op.limit.asset, op.limit.dailyMax)} a day"
+            is ConfigOp.RemoveLimit -> "remove the instant limit for ${TokenAmount.symbolOf(op.asset)}"
             is ConfigOp.SetDelays -> "waits ${op.delays.transfer / 60} / ${op.delays.config / 60} / ${op.delays.recovery / 60} min"
             ConfigOp.Unfreeze -> "unfreeze"
             is ConfigOp.AllowReceiver -> "pay ${op.receiver} instantly"

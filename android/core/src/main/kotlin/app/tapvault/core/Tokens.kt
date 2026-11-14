@@ -34,6 +34,21 @@ object TokenAmount {
         return shown.stripTrailingZeros().toPlainString()
     }
 
+    /**
+     * "1.5 USDC" for a built-in token (either network: their contracts differ),
+     * "12 units of x.near" for one whose decimals the phone doesn't know here.
+     */
+    fun describe(asset: Asset, raw: BigInteger): String = when (asset) {
+        Asset.Near -> "${Near.format(raw)} NEAR"
+        is Asset.Ft -> KnownTokens.anywhere(asset.token)?.let { "${format(raw, it.decimals, maxFraction = it.decimals)} ${it.symbol}" }
+            ?: "$raw units of ${asset.token}"
+    }
+
+    fun symbolOf(asset: Asset): String = when (asset) {
+        Asset.Near -> "NEAR"
+        is Asset.Ft -> KnownTokens.anywhere(asset.token)?.symbol ?: asset.token
+    }
+
     /** "1.5" → raw units; null if it isn't a positive amount with at most [decimals] fraction digits. */
     fun parse(text: String, decimals: Int): BigInteger? = runCatching {
         val v = BigDecimal(text.trim())
@@ -63,6 +78,9 @@ object KnownTokens {
     fun on(n: Network): List<TokenInfo> = if (n.isMainnet) mainnet else testnet
 
     fun find(n: Network, contract: String): TokenInfo? = on(n).firstOrNull { it.contract == contract }
+
+    /** A built-in token on either network (testnet and mainnet contracts never share a name). */
+    fun anywhere(contract: String): TokenInfo? = (testnet + mainnet).firstOrNull { it.contract == contract }
 }
 
 /**
@@ -142,6 +160,19 @@ class Tokens(private val near: NearClient) {
             NearAction.FunctionCall("storage_deposit", jsonArgs { put("account_id", account); put("registration_only", true) }, gasTgas = 30, deposit = cost),
         ))
         if (!r.ok) throw TapvaultException("enabling the token failed: ${r.error}")
+        return r
+    }
+
+    /**
+     * A seed phrase wallet sends a token itself: `ft_transfer` signed with the
+     * phrase's key, with the 1 yoctoNEAR the standard asks for.
+     */
+    fun transferFrom(contract: String, from: String, key: NearKey, to: String, amount: BigInteger): TxResult {
+        require(amount.signum() > 0) { "amount must be positive" }
+        val r = near.send(from, key, contract, listOf(
+            NearAction.FunctionCall("ft_transfer", jsonArgs { put("receiver_id", to); put("amount", amount.toString()) }, gasTgas = 30, deposit = BigInteger.ONE),
+        ))
+        if (!r.ok) throw TapvaultException("sending the token failed: ${r.error}")
         return r
     }
 
