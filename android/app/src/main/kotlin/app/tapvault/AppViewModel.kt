@@ -45,6 +45,11 @@ import app.tapvault.core.TokenBalance
 import app.tapvault.core.TokenAmount
 import app.tapvault.core.KnownTokens
 import app.tapvault.core.IntentToken
+import app.tapvault.core.ChartRange
+import app.tapvault.core.MarketCoin
+import app.tapvault.core.Markets
+import app.tapvault.core.PriceSeries
+import app.tapvault.core.TrendingToken
 import app.tapvault.core.OneClick
 import app.tapvault.core.Prices
 import app.tapvault.core.QuoteAsk
@@ -1320,20 +1325,110 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Swap, bridge, buy and sell work only on mainnet, and only in a build with mainnet. */
     val tradeAvailable get() = network.isMainnet && mainnetEnabled
 
-    /** Load 1Click's token list (and prices from it) at most every 5 minutes. */
+    /**
+     * Everywhere else (testnet, or a build without mainnet) Trade is a
+     * mainnet preview: live markets, charts and dry quotes, and nothing
+     * that pays, reserves a deposit address or opens a provider. Every
+     * path that moves funds still checks [tradeAvailable] itself.
+     */
+    val tradePreview get() = !tradeAvailable
+
+    private var intentTokensAt = 0L
+
+    /**
+     * Load 1Click's token list at most every 5 minutes. Its prices value
+     * this wallet's balances only on mainnet: a testnet balance is never
+     * shown in dollars.
+     */
     fun refreshPrices(force: Boolean = false) {
-        if (!tradeAvailable) { prices = null; return }
-        if (!force && (prices?.at ?: 0) > System.currentTimeMillis() - 5 * 60_000) return
+        if (!tradeAvailable) prices = null
+        if (!force && intentTokensAt > System.currentTimeMillis() - 5 * 60_000) return
+        intentTokensAt = System.currentTimeMillis()
         viewModelScope.launch {
             try {
                 val list = withContext(Dispatchers.IO) { oneClick.tokens() }
                 intentTokens = list
-                prices = Prices.from(list, KnownTokens.on(Network.MAINNET).map { it.contract }.toSet())
+                prices = if (tradeAvailable) Prices.from(list, KnownTokens.on(Network.MAINNET).map { it.contract }.toSet()) else null
             } catch (e: Exception) {
+                intentTokensAt = 0
                 note("prices: ${e.message}")
             }
         }
     }
+
+    // ---- markets (read only, mainnet data on every network) ----
+
+    private val markets by lazy { Markets() }
+
+    /** Coins NEAR Intents can trade, with market data; empty until loaded. */
+    var marketCoins by mutableStateOf<List<MarketCoin>>(emptyList())
+        private set
+
+    /** Tokens trending on NEAR. */
+    var trending by mutableStateOf<List<TrendingToken>>(emptyList())
+        private set
+
+    var marketError by mutableStateOf<String?>(null)
+        private set
+
+    var marketsLoading by mutableStateOf(false)
+        private set
+
+    private var marketsAt = 0L
+    private val charts = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, PriceSeries>>()
+
+    /** Load market data for what 1Click lists (and what trends on NEAR), at most every 2 minutes. */
+    fun refreshMarkets(force: Boolean = false) {
+        if (marketsLoading || (!force && marketsAt > System.currentTimeMillis() - 2 * 60_000)) return
+        marketsLoading = true
+        viewModelScope.launch {
+            try {
+                val list = intentTokens.ifEmpty { withContext(Dispatchers.IO) { oneClick.tokens() }.also { intentTokens = it; intentTokensAt = System.currentTimeMillis() } }
+                val ids = (list.mapNotNull { it.coingeckoId } + Markets.EXTRA_IDS).toSet()
+                marketCoins = withContext(Dispatchers.IO) { markets.coins(ids) }
+                trending = runCatching { withContext(Dispatchers.IO) { markets.trending() } }.onFailure { note("trending: ${it.message}") }.getOrDefault(trending)
+                marketError = null
+                marketsAt = System.currentTimeMillis()
+            } catch (e: Exception) {
+                marketError = e.message ?: "Market data isn't available right now."
+                note("markets: ${e.message}")
+            } finally {
+                marketsLoading = false
+            }
+        }
+    }
+
+    /** A chart for a coin ([coinId], from CoinGecko) or a NEAR token in a pool ([pool] + [token]); cached for 3 minutes. */
+    suspend fun chart(coinId: String?, pool: String?, token: String?, range: ChartRange): PriceSeries = withContext(Dispatchers.IO) {
+        val key = "${coinId ?: "$pool|$token"}|$range"
+        charts[key]?.takeIf { it.first > System.currentTimeMillis() - 3 * 60_000 }?.let { return@withContext it.second }
+        val s = when {
+            coinId != null -> markets.chart(coinId, range)
+            pool != null && token != null -> markets.poolChart(pool, token, range)
+            else -> PriceSeries(emptyList(), emptyList())
+        }
+        charts[key] = System.currentTimeMillis() to s
+        s
+    }
+
+    /** What NEAR Intents trades for a coin: the asset on NEAR first, then the others. */
+    fun assetsOf(coinId: String): List<IntentToken> = intentTokens.filter { it.coingeckoId == coinId }.sortedBy { !it.onNear }
+
+    /** CoinGecko's logo for coin [coinId], once markets have loaded. */
+    fun iconOf(coinId: String?): String? = coinId?.let { id -> marketCoins.firstOrNull { it.id == id }?.image }
+
+    /** The logo of a NEAR Intents asset. */
+    fun iconFor(t: IntentToken?): String? = t?.let { iconOf(it.coingeckoId ?: it.nearContract?.let { c -> Markets.ICON_IDS[c] }) }
+
+    /** The logo of NEAR token [contract] (null: NEAR itself), matched by contract only, never by name. */
+    fun iconForContract(contract: String?): String? =
+        if (contract == null) iconOf("near") else iconOf(Markets.ICON_IDS[contract] ?: intentTokens.firstOrNull { it.nearContract == contract }?.coingeckoId)
+
+    /** The NEAR Intents asset whose NEP-141 token is [address] (on NEAR, or a bridged asset held as that token). */
+    fun assetFor(address: String): IntentToken? = intentTokens.firstOrNull { it.assetId == "nep141:$address" || it.assetId.endsWith(":nep141:$address") }
+
+    /** The NEAR Intents asset for NEAR token [address], if 1Click trades it. */
+    fun assetOnNear(address: String): IntentToken? = intentTokens.firstOrNull { it.onNear && it.nearContract == address }
 
     /** The wallet's total in USD, counting only priced (built-in) tokens; null without prices. */
     val totalUsd: java.math.BigDecimal?
@@ -1344,12 +1439,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
 
     /** A token on NEAR as Tapvault shows it (built-in metadata when it has it). */
-    fun tokenInfoOf(t: IntentToken): TokenInfo? = t.nearContract?.let { c -> KnownTokens.find(network, c) ?: TokenInfo(c, t.symbol, t.symbol, t.decimals, verified = false) }
+    fun tokenInfoOf(t: IntentToken): TokenInfo? = t.nearContract?.let { c -> KnownTokens.find(Network.MAINNET, c) ?: TokenInfo(c, t.symbol, t.symbol, t.decimals, verified = false) }
 
     /** A preview quote (no deposit address, nothing reserved): what [amount] of [from] gets of [to]. */
     suspend fun previewSwap(from: TokenInfo, to: IntentToken, amount: BigInteger, recipient: String? = null): SwapQuote = withContext(Dispatchers.IO) {
-        val acct = store.walletAccount ?: throw IllegalStateException("no wallet yet")
+        // A preview never tells NEAR Intents this wallet's account (it may not even be on mainnet): a dry quote to nobody.
+        val acct = if (tradePreview) Markets.PREVIEW_ACCOUNT else store.walletAccount ?: throw IllegalStateException("no wallet yet")
         oneClick.quote(askFor(from, to, amount, recipient ?: acct, acct, dry = true))
+    }
+
+    /** A dry quote for bringing [amount] of [from] (on another chain) into a NEAR token [to]: preview only, no deposit address. */
+    suspend fun previewBridgeIn(from: IntentToken, to: IntentToken, amount: BigInteger, refundTo: String): SwapQuote = withContext(Dispatchers.IO) {
+        val acct = if (tradePreview) Markets.PREVIEW_ACCOUNT else store.walletAccount ?: throw IllegalStateException("no wallet yet")
+        oneClick.quote(QuoteAsk(from.assetId, to.assetId, amount, acct, refundTo.trim(), deadline = java.time.Instant.now().plusSeconds(Swap.ASK_DEADLINE_SECS), dry = true))
     }
 
     private fun askFor(from: TokenInfo, to: IntentToken, amount: BigInteger, recipient: String, refundTo: String, dry: Boolean) = QuoteAsk(

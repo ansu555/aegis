@@ -125,7 +125,7 @@ fun TapvaultApp(vm: AppViewModel) {
                             // the header stays put; only what is below it scrolls
                             Column(Modifier.padding(horizontal = 20.dp)) {
                                 when (s) {
-                                    Screen.Trade -> LargeTitle("Trade", if (vm.tradeAvailable) "Swap, bridge, buy and sell" else "Mainnet only")
+                                    Screen.Trade -> LargeTitle("Trade", if (vm.tradeAvailable) null else "Mainnet preview")
                                     Screen.Activity -> LargeTitle("Activity", "Approvals, delays and history")
                                     Screen.CardCheck -> TopBar(if (ready) "Your card" else "Card check", onBack = { vm.go(if (ready) vm.cameFrom else Screen.Welcome) })
                                     Screen.Settings -> LargeTitle("Settings")

@@ -1,6 +1,9 @@
 package app.tapvault
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,10 +14,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -26,65 +33,63 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import app.tapvault.core.ChainAddress
 import app.tapvault.core.IntentToken
 import app.tapvault.core.KnownTokens
-import app.tapvault.core.Prices
-import app.tapvault.core.Ramp
-import app.tapvault.core.Swap
+import app.tapvault.core.Markets
+import app.tapvault.core.Network
 import app.tapvault.core.SwapQuote
 import app.tapvault.core.SwapRecord
 import app.tapvault.core.SwapState
 import app.tapvault.core.TokenAmount
 import app.tapvault.core.TokenInfo
 import kotlinx.coroutines.delay
+import java.math.BigDecimal
 import java.math.BigInteger
+import java.math.MathContext
+import java.math.RoundingMode
 
-private enum class TradeTab(val label: String) { Swap("Swap"), Bridge("Bridge"), Buy("Buy"), Sell("Sell") }
+private enum class TradeTab(val label: String) { Markets("Markets"), Swap("Swap") }
 
 /**
- * Trade: swap tokens and bridge to and from other chains through NEAR
- * Intents, buy and sell for cash through Ramp Network. Mainnet only; every
- * swap and bridge-out is a normal payment from the wallet to a deposit
- * address, approved like any other.
+ * Trade: markets and one swap screen. A swap whose token is on another
+ * chain (either side) is a bridge through NEAR Intents. On mainnet (in a
+ * build with mainnet) every swap is a normal payment to a deposit address,
+ * approved like any other; elsewhere Trade is a preview
+ * ([AppViewModel.tradePreview]) with live markets and dry quotes, and
+ * nothing is sent.
  */
 @Composable
 fun TradeScreen(vm: AppViewModel) {
-    LaunchedEffect(vm.network, vm.activeId) { vm.refreshPrices(); vm.refreshTokens() }
+    LaunchedEffect(vm.network, vm.activeId) { vm.refreshPrices(); vm.refreshTokens(); vm.refreshMarkets() }
     // follow unfinished swaps while Trade is open
     LaunchedEffect(vm.swaps) {
         while (vm.swaps.any { !it.state.done }) { vm.refreshSwaps(); delay(10_000) }
     }
-    if (!vm.tradeAvailable) {
-        Spacer(Modifier.height(10.dp))
-        Notice(
-            Ic.Info, "Mainnet only",
-            if (vm.network.isTestnet && vm.mainnetEnabled) "Swaps, bridges, buying and selling use real markets, which only exist on NEAR mainnet. Switch in Settings → Network."
-            else "Swaps, bridges, buying and selling use real markets, which only exist on NEAR mainnet. This build is testnet only until Tapvault has been tested with real cards and its contract reviewed.",
-            Tv.Text2,
-        )
-        Spacer(Modifier.height(14.dp))
-        Caption("On testnet you can still add, receive and send tokens from Home.", Modifier.padding(start = 4.dp), color = Tv.Text3)
-        return
-    }
-    var tab by remember { mutableStateOf(TradeTab.Swap) }
+    var tab by remember { mutableStateOf(TradeTab.Markets) }
+    var preset by remember { mutableStateOf<IntentToken?>(null) }
     Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         TradeTab.entries.forEach { t -> Chip(t.label, selected = t == tab) { tab = t } }
     }
     Spacer(Modifier.height(16.dp))
     when (tab) {
-        TradeTab.Swap -> SwapPanel(vm, bridge = false)
-        TradeTab.Bridge -> BridgePanel(vm)
-        TradeTab.Buy -> RampPanel(vm, buy = true)
-        TradeTab.Sell -> RampPanel(vm, buy = false)
+        TradeTab.Markets -> MarketsPanel(vm) { a -> preset = a; tab = TradeTab.Swap }
+        TradeTab.Swap -> SwapPanel(vm, preset)
     }
-    if (vm.swaps.isNotEmpty()) {
+    if (!vm.tradePreview && vm.swaps.isNotEmpty() && tab == TradeTab.Swap) {
         SectionHeader("Recent", Modifier.padding(top = 26.dp))
         Group {
             vm.swaps.take(10).forEachIndexed { i, r ->
@@ -113,209 +118,359 @@ private fun SwapRow(vm: AppViewModel, r: SwapRecord) {
     )
 }
 
-/** Tokens the wallet can pay a swap from: NEAR tokens on Home with a balance (native NEAR can't be swapped: 1Click takes wNEAR). */
-private fun sources(vm: AppViewModel): List<TokenInfo> = vm.shownTokens.filter { it.raw.signum() > 0 }.map { it.token }
+/** The chain an asset lives on, by name ("Ethereum"); "NEAR" for NEAR tokens. */
+private fun chainName(t: IntentToken) = if (t.onNear) "NEAR" else ChainAddress.chain(t.blockchain)?.name ?: t.blockchain
+
+private fun IntentToken.sameAs(o: IntentToken?) = o != null && assetId == o.assetId
+
+/** "33.2484", "0.00012345": six significant digits, no trailing zeros. */
+private fun show(v: BigDecimal): String =
+    if (v.signum() == 0) "0" else v.round(MathContext(6, RoundingMode.DOWN)).stripTrailingZeros().toPlainString()
 
 /**
- * Swap (to a token on NEAR) or bridge out (to [chain], paid to [recipient]):
- * pick, type an amount, see a live preview quote, review, slide.
+ * One screen for swaps and bridges: what you send (a token in this wallet,
+ * or one on another chain to bring in) and what you receive (any token on
+ * NEAR, or one on another chain, which takes the receiver's address).
  */
 @Composable
-private fun SwapPanel(vm: AppViewModel, bridge: Boolean, chain: String? = null, recipient: String = "", recipientOk: Boolean = true) {
-    var from by remember { mutableStateOf<TokenInfo?>(null) }
-    var to by remember(chain) { mutableStateOf<IntentToken?>(null) }
+private fun SwapPanel(vm: AppViewModel, preset: IntentToken?) {
+    val preview = vm.tradePreview
+    val all = vm.intentTokens
+    val known = KnownTokens.on(Network.MAINNET).map { it.contract }
+    val nearTokens = all.filter { it.onNear && it.nearContract != null && it.price != null }
+        .sortedWith(compareBy({ it.nearContract !in known }, { known.indexOf(it.nearContract) }, { it.symbol.lowercase() }))
+    val otherChains = all.filter { !it.onNear && ChainAddress.chain(it.blockchain) != null && it.price != null }
+        .sortedWith(compareBy({ it.symbol.lowercase() }, { chainName(it) }))
+    // what can be sent from here: in a preview every NEAR token, else the wallet's tokens with a balance
+    val walletContracts = vm.shownTokens.filter { it.raw.signum() > 0 }.map { it.token.contract }
+    val sendable = if (preview) nearTokens else nearTokens.filter { it.nearContract in walletContracts }
+
+    var from by remember { mutableStateOf<IntentToken?>(null) }
+    var to by remember(preset) { mutableStateOf(preset) }
     var amount by remember { mutableStateOf("") }
-    var pickFrom by remember { mutableStateOf(false) }
-    var pickTo by remember { mutableStateOf(false) }
+    var address by remember { mutableStateOf("") }
+    var pick by remember { mutableStateOf<Boolean?>(null) } // true: send side, false: receive side
     var quote by remember { mutableStateOf<SwapQuote?>(null) }
+    var quoting by remember { mutableStateOf(false) }
     var quoteError by remember { mutableStateOf<String?>(null) }
     var review by remember { mutableStateOf(false) }
-    val srcs = sources(vm)
-    LaunchedEffect(srcs.size) { if (from == null) from = srcs.firstOrNull() }
-    // default output: USDC on NEAR for a swap; the same symbol on the chosen chain for a bridge
-    LaunchedEffect(vm.intentTokens, chain, from) {
-        if (to == null || (bridge && to?.blockchain != chain)) {
-            to = if (bridge) vm.intentTokens.filter { it.blockchain == chain }.let { l -> l.firstOrNull { it.symbol == from?.symbol } ?: l.firstOrNull { it.symbol.startsWith("USDC") } ?: l.firstOrNull() }
-            else vm.intentTokens.firstOrNull { it.nearContract == KnownTokens.on(vm.network).firstOrNull()?.contract }
-        }
+    var shown by remember { mutableStateOf<SwapRecord?>(null) }
+    var flips by remember { mutableStateOf(0) }
+
+    LaunchedEffect(all.size, sendable.size, preset) {
+        if (from == null || from!!.sameAs(to)) from = (sendable.firstOrNull { it.nearContract == "wrap.near" && !it.sameAs(to) } ?: sendable.firstOrNull { !it.sameAs(to) })
+        if (to == null) to = nearTokens.firstOrNull { it.nearContract == known.first() && !it.sameAs(from) } ?: nearTokens.firstOrNull { !it.sameAs(from) }
     }
+
     val f = from
     val t = to
-    val raw = f?.let { TokenAmount.parse(amount, it.decimals) }
-    val have = f?.let { ff -> vm.tokens?.firstOrNull { it.token.contract == ff.contract }?.raw }
+    val fromInfo = f?.takeIf { it.onNear }?.let { vm.tokenInfoOf(it) }
+    val bridgeIn = f != null && !f.onNear
+    val bridgeOut = !bridgeIn && t != null && !t.onNear
+    val addressChain = when { bridgeIn -> f!!.blockchain; bridgeOut -> t!!.blockchain; else -> null }
+    val addressProblem = if (addressChain == null || address.isBlank()) null else ChainAddress.problem(addressChain, address)
+    val addressOk = addressChain == null || (address.isNotBlank() && addressProblem == null)
+    val raw = f?.let { TokenAmount.parse(amount, it.decimals) }?.takeIf { it.signum() > 0 }
+    val have = if (preview || fromInfo == null) null else vm.tokens?.firstOrNull { it.token.contract == fromInfo.contract }?.raw
     val tooMuch = raw != null && have != null && raw > have
-    val same = !bridge && f != null && t?.nearContract == f.contract
-    // live preview, debounced
-    LaunchedEffect(f, t, amount, recipient, recipientOk) {
-        quote = null; quoteError = null
-        if (f == null || t == null || raw == null || same || (bridge && (!recipientOk || recipient.isBlank()))) return@LaunchedEffect
-        delay(600)
-        try { quote = vm.previewSwap(f, t, raw, if (bridge) recipient.trim() else null) } catch (e: Exception) { quoteError = e.message ?: "No quote" }
+    val inUsd = if (raw != null && f?.price != null) BigDecimal(raw).movePointLeft(f.decimals).multiply(f.price) else null
+    // without a quote yet (no address, still loading): an estimate from 1Click's prices
+    val estimate = if (inUsd != null && t?.price != null && t.price!!.signum() > 0) inUsd.divide(t.price, 12, RoundingMode.DOWN) else null
+    val outAmount = quote?.let { q -> t?.let { BigDecimal(q.amountOut).movePointLeft(it.decimals) } } ?: estimate
+
+    LaunchedEffect(f, t, amount, address) {
+        quote = null; quoteError = null; quoting = false
+        if (f == null || t == null || raw == null || f.sameAs(t) || !addressOk) return@LaunchedEffect
+        if (!bridgeIn && fromInfo == null) return@LaunchedEffect
+        quoting = true
+        delay(500)
+        try {
+            quote = if (bridgeIn) vm.previewBridgeIn(f, t, raw, address.trim()) else vm.previewSwap(fromInfo!!, t, raw, if (bridgeOut) address.trim() else null)
+        } catch (e: Exception) {
+            quoteError = e.message ?: "No quote right now"
+        }
+        quoting = false
     }
 
-    if (srcs.isEmpty()) {
-        Notice(
-            Ic.Info, "Nothing to swap from yet",
-            "Swaps start from a token in this wallet, like USDC or wNEAR. NEAR itself can't be swapped yet: NEAR Intents takes wrapped NEAR, and this wallet's contract can't wrap. Buy USDC, or receive a token, then swap it.",
-            Tv.Text2,
-        )
+    if (all.isEmpty()) {
+        Shimmer(Modifier.fillMaxWidth().height(170.dp)); Spacer(Modifier.height(8.dp)); Shimmer(Modifier.fillMaxWidth().height(170.dp))
         return
     }
-    PickRow("You pay", f?.let { "${it.symbol} · ${have?.let { h -> TokenAmount.format(h, it.decimals) } ?: "…"} held" } ?: "Choose") { pickFrom = true }
-    Spacer(Modifier.height(10.dp))
-    TvField("Amount", amount, { amount = it.trim().replace(',', '.') }, placeholder = "0.0", number = true,
-        error = when { tooMuch -> "More than the wallet holds"; amount.isNotEmpty() && raw == null -> "Enter an amount like 10"; else -> null },
-        trailing = {
-            Text("Max", style = Type.CaptionStrong, color = Tv.Text, modifier = Modifier.clip(RoundedCornerShape(12.dp)).background(Tv.GlassStrong)
-                .clickable { if (f != null && have != null) amount = TokenAmount.format(have, f.decimals, maxFraction = f.decimals) }.padding(horizontal = 12.dp, vertical = 8.dp))
-        })
-    Spacer(Modifier.height(10.dp))
-    PickRow(if (bridge) "They get (on ${ChainAddress.chain(chain ?: "")?.name ?: "the other chain"})" else "You get", t?.symbol ?: if (vm.intentTokens.isEmpty()) "Loading…" else "Choose") { if (vm.intentTokens.isNotEmpty()) pickTo = true }
-    if (same) Caption("Pick a different token to get.", Modifier.padding(top = 6.dp, start = 4.dp), color = Tv.Warn)
 
-    val q = quote
-    val instant = f != null && raw != null && vm.swapIsInstant(f, raw)
-    Spacer(Modifier.height(14.dp))
-    Column(Modifier.fillMaxWidth().surface(20.dp).padding(horizontal = 16.dp, vertical = 8.dp)) {
-        when {
-            q != null && f != null && t != null -> {
-                InfoRow("You get about", "${TokenAmount.format(q.amountOut, t.decimals, maxFraction = 6)} ${t.symbol}")
-                InfoRow("At least", "${TokenAmount.format(q.minAmountOut, t.decimals, maxFraction = 6)} ${t.symbol}")
-                Swap.rate(q, f.decimals, t.decimals)?.let { InfoRow("Rate", "1 ${f.symbol} = $it ${t.symbol}") }
-                q.amountInUsd?.toBigDecimalOrNull()?.let { InfoRow("Value", Prices.usd(it)) }
-                InfoRow("Takes", if (q.timeEstimateSecs > 0) "about ${(q.timeEstimateSecs + 59) / 60} min" else "a few minutes")
-            }
-            quoteError != null -> Caption(quoteError!!, Modifier.padding(vertical = 8.dp), color = Tv.Warn)
-            raw != null && t != null && !same -> Row(Modifier.padding(vertical = 10.dp)) { Shimmer(Modifier.size(200.dp, 18.dp)) }
-            else -> Caption("Enter an amount to see a quote.", Modifier.padding(vertical = 8.dp), color = Tv.Text3)
-        }
-        InfoRow("Route", "NEAR Intents")
-        if (raw != null && f != null) InfoRow(
-            "Goes out", if (instant) "Instantly" else "Would wait: not allowed for swaps",
-            if (instant) Tv.Positive else Tv.Warn,
-        )
-    }
-    if (raw != null && f != null && !instant) Notice(
-        Ic.Timer, "Make ${f.symbol} instant first",
-        "A quote lasts minutes, and a payment over your instant limit waits ${hoursLabel(vm.wallet?.delays?.transfer ?: 3600)}. Set an instant limit for ${f.symbol} on its token page (Home → ${f.symbol}), or swap less." +
-            if (vm.wallet?.allowlist?.isNotEmpty() == true) " With instant receivers set, deposit addresses always wait." else "",
-        Tv.Warn, Modifier.padding(top = 12.dp),
-    )
-    Spacer(Modifier.height(14.dp))
-    TvButton(
-        if (bridge) "Review bridge" else "Review swap", Modifier.fillMaxWidth(),
-        enabled = vm.busy == null && q != null && instant && !tooMuch && !same && (!bridge || recipientOk),
-    ) { review = true }
-
-    if (pickFrom) TokenListSheet("Pay with", srcs.map { PickItem(it.symbol, it.name + if (!it.verified) " · unverified" else "", it.verified) }, { pickFrom = false }) { i -> from = srcs[i]; pickFrom = false }
-    if (pickTo) {
-        val list = if (bridge) vm.intentTokens.filter { it.blockchain == chain } else vm.intentTokens.filter { it.onNear && it.nearContract != null }
-        val verified = KnownTokens.on(vm.network).map { it.contract }.toSet()
-        val sorted = list.sortedWith(compareBy({ it.nearContract !in verified && !bridge }, { it.symbol }))
-        TokenListSheet("Get", sorted.map { PickItem(it.symbol, if (bridge) (ChainAddress.chain(it.blockchain)?.name ?: it.blockchain) else (it.nearContract?.let { c -> if (c in verified) "Verified · ${shortAccount(c, 22)}" else "Unverified · ${shortAccount(c, 22)}" } ?: ""), bridge || it.nearContract in verified) }, { pickTo = false }) { i -> to = sorted[i]; pickTo = false }
-    }
-    if (review && q != null && f != null && t != null && raw != null) GlassSheet({ review = false }) {
-        Text(if (bridge) "Review bridge" else "Review swap", style = Type.H2, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
-        Spacer(Modifier.height(16.dp))
-        Column(Modifier.fillMaxWidth().surface(20.dp).padding(horizontal = 16.dp, vertical = 8.dp)) {
-            InfoRow("You pay", "${TokenAmount.format(raw, f.decimals, maxFraction = f.decimals)} ${f.symbol}")
-            InfoRow("You get at least", "${TokenAmount.format(q.minAmountOut, t.decimals, maxFraction = 6)} ${t.symbol}")
-            if (bridge) {
-                InfoRow("On", ChainAddress.chain(t.blockchain)?.name ?: t.blockchain)
-            }
-            Swap.rate(q, f.decimals, t.decimals)?.let { InfoRow("Rate", "1 ${f.symbol} = $it ${t.symbol}") }
-            InfoRow("Route", "NEAR Intents (1Click)")
-            InfoRow("Goes out", "Instantly", Tv.Positive)
-        }
-        if (bridge) {
-            Spacer(Modifier.height(10.dp))
-            Column(Modifier.fillMaxWidth().surface(20.dp).padding(horizontal = 16.dp, vertical = 12.dp)) {
-                Text("To (on ${ChainAddress.chain(t.blockchain)?.name})", style = Type.Caption, color = Tv.Text2)
+    Box {
+        Column {
+            // ---- send
+            SwapCard(
+                vm, f, "Send", onPick = { pick = true },
+                addressLabel = if (bridgeIn) "Refund address on ${chainName(f!!)}" else null, address = address, onAddress = { address = it.trim() }, addressError = if (bridgeIn) addressProblem else null,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (have != null && fromInfo != null) SmallPill("Half") { amount = TokenAmount.format(have.divide(BigInteger.TWO), fromInfo.decimals, maxFraction = fromInfo.decimals) }
+                    else Spacer(Modifier.width(56.dp))
+                    BasicTextField(
+                        amount, { v -> amount = v.trim().replace(',', '.').filter { it.isDigit() || it == '.' } },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        textStyle = Type.Hero.copy(fontSize = 40.sp, color = if (tooMuch) Tv.Danger else Tv.Text, textAlign = TextAlign.Center),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        cursorBrush = SolidColor(Tv.Text),
+                        decorationBox = { inner ->
+                            Box(contentAlignment = Alignment.Center) {
+                                if (amount.isEmpty()) Text("0", style = Type.Hero.copy(fontSize = 40.sp), color = Tv.Text3, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                                inner()
+                            }
+                        },
+                    )
+                    if (have != null && fromInfo != null) SmallPill("Max") { amount = TokenAmount.format(have, fromInfo.decimals, maxFraction = fromInfo.decimals) }
+                    else Spacer(Modifier.width(56.dp))
+                }
                 Text(
-                    androidx.compose.ui.text.buildAnnotatedString {
-                        val r = recipient.trim(); val cut = (r.length - 6).coerceAtLeast(0)
-                        append(r.substring(0, cut))
-                        pushStyle(androidx.compose.ui.text.SpanStyle(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, color = Tv.Text))
-                        append(r.substring(cut)); pop()
+                    when {
+                        have != null && fromInfo != null -> "Balance: ${TokenAmount.format(have, fromInfo.decimals)} ${fromInfo.symbol}"
+                        inUsd != null -> "≈ " + Markets.price(inUsd.toDouble())
+                        else -> " "
                     },
-                    style = Type.Body, color = Tv.Text2, modifier = Modifier.padding(top = 2.dp),
+                    style = Type.Caption, color = if (tooMuch) Tv.Danger else Tv.Text2, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                 )
             }
+            // the flip button sits on the seam between the cards
+            Box(Modifier.fillMaxWidth().height(8.dp).zIndex(1f), contentAlignment = Alignment.Center) {
+                val turn by animateFloatAsState(flips * 180f, spring(dampingRatio = 0.7f, stiffness = 400f), label = "flip")
+                Box(
+                    Modifier.requiredSize(48.dp).clip(CircleShape).background(Tv.Accent).border(4.dp, Tv.Bg, CircleShape)
+                        .pressable(haptic = true) {
+                            val a = from; val b = to
+                            if (a != null && b != null) {
+                                from = b
+                                // two other-chain tokens can't pair: the far side becomes USDC on NEAR
+                                to = if (!b.onNear && !a.onNear) nearTokens.firstOrNull { it.nearContract == known.first() } else a
+                                address = ""; amount = ""; flips++
+                            }
+                        },
+                    contentAlignment = Alignment.Center,
+                ) { TvIcon(Ic.Down, 20.dp, Tv.OnAccent, Modifier.rotate(turn)) }
+            }
+            // ---- receive
+            SwapCard(
+                vm, t, "Receive", onPick = { pick = false },
+                addressLabel = if (bridgeOut) "Their address on ${chainName(t!!)}" else null, address = address, onAddress = { address = it.trim() }, addressError = if (bridgeOut) addressProblem else null,
+            ) {
+                Box(Modifier.fillMaxWidth().height(52.dp), contentAlignment = Alignment.Center) {
+                    when {
+                        quoting && outAmount == null -> Shimmer(Modifier.size(140.dp, 36.dp))
+                        outAmount != null -> Text((if (quote == null) "≈" else "") + show(outAmount), style = Type.Hero.copy(fontSize = 40.sp), color = if (quote == null) Tv.Text2 else Tv.Text, maxLines = 1)
+                        else -> Text("0", style = Type.Hero.copy(fontSize = 40.sp), color = Tv.Text3)
+                    }
+                }
+                val outUsd = quote?.amountOutUsd?.toBigDecimalOrNull() ?: estimate?.let { e -> t?.price?.let { e.multiply(it) } }
+                Text(outUsd?.let { "≈ " + Markets.price(it.toDouble()) } ?: " ", style = Type.Caption, color = Tv.Text2, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
+            }
         }
-        Notice(
-            Ic.Info, "What your card approves",
-            "A payment of ${f.symbol} from this wallet to a NEAR Intents deposit address. What arrives is NEAR Intents' promise, not something your card or the wallet's contract can enforce. If the price moves too far, the deposit comes back to this wallet, less a small fee.",
-            Tv.Text2, Modifier.padding(top = 12.dp),
-        )
-        if (t.onNear && t.nearContract !in KnownTokens.on(vm.network).map { it.contract }.toSet()) Notice(
-            Ic.Warning, "Check the token", "${t.symbol} isn't on Tapvault's list. Its name is whatever its creator chose.", Tv.Warn, Modifier.padding(top = 10.dp),
-        )
-        Spacer(Modifier.height(20.dp))
-        SlideToConfirm(if (bridge) "Slide to bridge" else "Slide to swap") {
+    }
+
+    // ---- action
+    val q = quote
+    val instant = preview || bridgeIn || (fromInfo != null && raw != null && vm.swapIsInstant(fromInfo, raw))
+    val verb = if (bridgeIn || bridgeOut) "Bridge" else "Swap"
+    val ready = raw != null && t != null && f != null && !f.sameAs(t) && addressOk && outAmount != null
+    Spacer(Modifier.height(16.dp))
+    TvButton(
+        when {
+            tooMuch -> "Not enough ${f?.symbol}"
+            !instant && raw != null -> "Over your instant limit"
+            bridgeIn && !preview -> "Get deposit address"
+            else -> verb
+        },
+        Modifier.fillMaxWidth(),
+        enabled = vm.busy == null && ready && !tooMuch && instant && (preview || q != null),
+    ) {
+        if (bridgeIn && !preview) vm.bridgeIn(f!!, t!!, amount, address) { shown = it } else review = true
+    }
+    when {
+        !instant && raw != null && fromInfo != null -> Caption("Set an instant limit for ${fromInfo.symbol} on its token page, or swap less.", Modifier.fillMaxWidth().padding(top = 8.dp), align = TextAlign.Center, color = Tv.Text3)
+        quoteError != null -> Caption(quoteError!!, Modifier.fillMaxWidth().padding(top = 8.dp), align = TextAlign.Center, color = Tv.Warn)
+    }
+
+    // ---- details
+    if (f != null && t != null && raw != null && outAmount != null) {
+        Spacer(Modifier.height(14.dp))
+        Column(Modifier.fillMaxWidth().surface(22.dp).padding(horizontal = 16.dp, vertical = 8.dp)) {
+            val inn = BigDecimal(raw).movePointLeft(f.decimals)
+            if (inn.signum() > 0) InfoRow("Rate", "1 ${f.symbol} = ${show(outAmount.divide(inn, 12, RoundingMode.DOWN))} ${t.symbol}")
+            if (q != null) {
+                InfoRow("Minimum received", "${show(BigDecimal(q.minAmountOut).movePointLeft(t.decimals))} ${t.symbol}")
+                val a = q.amountInUsd?.toBigDecimalOrNull(); val b = q.amountOutUsd?.toBigDecimalOrNull()
+                if (a != null && b != null && a.signum() > 0) InfoRow("Fees and price impact", String.format(java.util.Locale.US, "%.2f%%", (a - b).divide(a, 6, RoundingMode.HALF_UP).toDouble() * 100))
+                if (q.timeEstimateSecs > 0) InfoRow("Arrives in", if (q.timeEstimateSecs < 90) "~${q.timeEstimateSecs} s" else "~${(q.timeEstimateSecs + 59) / 60} min")
+            }
+            InfoRow("Route", if (bridgeIn || bridgeOut) "NEAR Intents · ${chainName(if (bridgeIn) f else t)}" else "NEAR Intents")
+        }
+    }
+
+    pick?.let { sendSide ->
+        val items = if (sendSide) sendable + otherChains else if (bridgeIn) nearTokens.filter { it.nearContract in known } else nearTokens + otherChains
+        TokenPicker(vm, if (sendSide) "Send" else "Receive", items.filter { !it.sameAs(if (sendSide) to else from) }, showBalances = sendSide && !preview, onDismiss = { pick = null }) { picked ->
+            if (sendSide) {
+                from = picked
+                if (!picked.onNear && to?.onNear == false) to = nearTokens.firstOrNull { it.nearContract == known.first() }
+            } else to = picked
+            address = ""; pick = null
+        }
+    }
+    if (review && f != null && t != null && raw != null && outAmount != null) {
+        ConfirmSheet(vm, f, t, raw, q, outAmount, if (bridgeOut) address.trim() else null, bridgeIn, preview, onDismiss = { review = false }) {
             review = false
-            vm.swap(f, t, amount, if (bridge) recipient.trim() else null)
+            if (fromInfo != null) vm.swap(fromInfo, t, amount, if (bridgeOut) address.trim() else null)
         }
-        Spacer(Modifier.height(6.dp))
-        TvButton("Edit", Modifier.fillMaxWidth(), Btn.Ghost) { review = false }
     }
-}
-
-/** Bridge: send a token to an address on another chain, or get a deposit address that brings one here. */
-@Composable
-private fun BridgePanel(vm: AppViewModel) {
-    var out by remember { mutableStateOf(true) }
-    val chains = ChainAddress.CHAINS.filter { c -> vm.intentTokens.any { it.blockchain == c.id } }.ifEmpty { ChainAddress.CHAINS }
-    var chain by remember { mutableStateOf("eth") }
-    var pickChain by remember { mutableStateOf(false) }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Chip("Send out", selected = out) { out = true }
-        Chip("Receive in", selected = !out) { out = false }
-    }
-    Spacer(Modifier.height(12.dp))
-    PickRow(if (out) "To chain" else "From chain", ChainAddress.chain(chain)?.name ?: chain) { pickChain = true }
-    Spacer(Modifier.height(10.dp))
-    if (out) {
-        var address by remember { mutableStateOf("") }
-        val problem = if (address.isBlank()) null else ChainAddress.problem(chain, address)
-        TvField("Their ${ChainAddress.chain(chain)?.name} address", address, { address = it.trim() }, placeholder = ChainAddress.chain(chain)?.example ?: "", error = problem)
-        Spacer(Modifier.height(12.dp))
-        SwapPanel(vm, bridge = true, chain = chain, recipient = address, recipientOk = address.isNotBlank() && problem == null)
-    } else {
-        BridgeInPanel(vm, chain)
-    }
-    if (pickChain) TokenListSheet("Chain", chains.map { PickItem(it.name, it.example, true) }, { pickChain = false }) { i -> chain = chains[i].id; pickChain = false }
-}
-
-@Composable
-private fun BridgeInPanel(vm: AppViewModel, chain: String) {
-    val origin = vm.intentTokens.filter { it.blockchain == chain }
-    val dests = vm.intentTokens.filter { it.nearContract != null && it.nearContract in KnownTokens.on(vm.network).map { k -> k.contract }.toSet() }
-    var from by remember(chain) { mutableStateOf(origin.firstOrNull { it.symbol.startsWith("USDC") } ?: origin.firstOrNull()) }
-    var to by remember(chain) { mutableStateOf<IntentToken?>(null) }
-    LaunchedEffect(from, dests) { if (to == null) to = dests.firstOrNull { it.symbol == from?.symbol } ?: dests.firstOrNull { it.symbol == "USDC" } ?: dests.firstOrNull() }
-    var amount by remember { mutableStateOf("") }
-    var refund by remember { mutableStateOf("") }
-    var pickFrom by remember { mutableStateOf(false) }
-    var pickTo by remember { mutableStateOf(false) }
-    var shown by remember { mutableStateOf<SwapRecord?>(null) }
-    val f = from
-    val raw = f?.let { TokenAmount.parse(amount, it.decimals) }
-    val refundProblem = if (refund.isBlank()) null else ChainAddress.problem(chain, refund)
-    PickRow("You send (on ${ChainAddress.chain(chain)?.name})", f?.symbol ?: "Loading…") { if (origin.isNotEmpty()) pickFrom = true }
-    Spacer(Modifier.height(10.dp))
-    TvField("Amount", amount, { amount = it.trim().replace(',', '.') }, placeholder = "0.0", number = true, error = if (amount.isNotEmpty() && raw == null) "Enter an amount like 10" else null)
-    Spacer(Modifier.height(10.dp))
-    PickRow("This wallet gets", to?.symbol ?: "Choose") { if (dests.isNotEmpty()) pickTo = true }
-    Spacer(Modifier.height(10.dp))
-    TvField("Your ${ChainAddress.chain(chain)?.name} address, for refunds", refund, { refund = it.trim() }, placeholder = ChainAddress.chain(chain)?.example ?: "", error = refundProblem)
-    Caption("If the transfer can't complete, NEAR Intents sends your deposit back there.", Modifier.padding(top = 6.dp, start = 4.dp), color = Tv.Text3)
-    Spacer(Modifier.height(14.dp))
-    TvButton("Get deposit address", Modifier.fillMaxWidth(), enabled = vm.busy == null && f != null && to != null && raw != null && refund.isNotBlank() && refundProblem == null) {
-        vm.bridgeIn(f!!, to!!, amount, refund) { shown = it }
-    }
-    if (pickFrom) TokenListSheet("Send", origin.map { PickItem(it.symbol, ChainAddress.chain(it.blockchain)?.name ?: it.blockchain, true) }, { pickFrom = false }) { i -> from = origin[i]; to = null; pickFrom = false }
-    if (pickTo) TokenListSheet("Get", dests.map { PickItem(it.symbol, it.nearContract?.let { c -> shortAccount(c, 22) } ?: "", true) }, { pickTo = false }) { i -> to = dests[i]; pickTo = false }
     shown?.let { r -> DepositSheet(r) { shown = null } }
+}
+
+/** One side of a swap: its token chip, a "Send"/"Receive" pill, the amount, and an address when the token is on another chain. */
+@Composable
+private fun SwapCard(
+    vm: AppViewModel, token: IntentToken?, label: String, onPick: () -> Unit,
+    addressLabel: String?, address: String, onAddress: (String) -> Unit, addressError: String?,
+    body: @Composable () -> Unit,
+) {
+    val shape = RoundedCornerShape(28.dp)
+    Column(
+        Modifier.fillMaxWidth().clip(shape)
+            .background(Tv.Surface)
+            .background(Brush.linearGradient(listOf(Color(0xFF6E5BB0).copy(alpha = 0.30f), Color(0xFFB06E8C).copy(alpha = 0.12f), Color.Transparent)))
+            .border(1.dp, Tv.Stroke, shape)
+            .padding(16.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.clip(RoundedCornerShape(24.dp)).background(Tv.GlassStrong).clickable(onClick = onPick).padding(start = 6.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (token != null) TokenMark(token.symbol, 32.dp, vm.iconFor(token)) else Box(Modifier.size(32.dp))
+                Spacer(Modifier.width(8.dp))
+                Column {
+                    Text(token?.symbol ?: "Choose", style = Type.BodyStrong, maxLines = 1)
+                    if (token != null && !token.onNear) Text(chainName(token), style = Type.Overline, color = Tv.Text2)
+                }
+                Spacer(Modifier.width(4.dp))
+                TvIcon(Ic.ChevronDown, 16.dp, Tv.Text2)
+            }
+            Spacer(Modifier.weight(1f))
+            Text(label, style = Type.Caption, color = Tv.Text2, modifier = Modifier.border(1.dp, Tv.StrokeStrong, RoundedCornerShape(50)).padding(horizontal = 12.dp, vertical = 4.dp))
+        }
+        Spacer(Modifier.height(14.dp))
+        body()
+        // room for the flip button on the seam
+        Spacer(Modifier.height(10.dp))
+        if (addressLabel != null) {
+            Spacer(Modifier.height(12.dp))
+            TvField("", address, onAddress, placeholder = addressLabel, error = addressError)
+        }
+    }
+}
+
+@Composable
+private fun SmallPill(text: String, onClick: () -> Unit) {
+    Text(
+        text, style = Type.CaptionStrong, color = Tv.OnAccent,
+        modifier = Modifier.width(56.dp).clip(RoundedCornerShape(50)).background(Tv.Accent).clickable(onClick = onClick).padding(vertical = 5.dp),
+        textAlign = TextAlign.Center,
+    )
+}
+
+/** Pick a token: search, logos, the chain it's on, and (sending) what the wallet holds. */
+@Composable
+private fun TokenPicker(vm: AppViewModel, title: String, items: List<IntentToken>, showBalances: Boolean, onDismiss: () -> Unit, onPick: (IntentToken) -> Unit) {
+    var q by remember { mutableStateOf("") }
+    val known = KnownTokens.on(Network.MAINNET).map { it.contract }
+    GlassSheet(onDismiss) {
+        Text(title, style = Type.H2)
+        Spacer(Modifier.height(12.dp))
+        TvField("", q, { q = it }, placeholder = "Search name or chain")
+        Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()).padding(top = 10.dp)) {
+            val shown = items.filter { q.isBlank() || it.symbol.contains(q.trim(), true) || chainName(it).contains(q.trim(), true) }
+            if (shown.isEmpty()) Caption("Nothing matches.", Modifier.padding(8.dp), color = Tv.Text3)
+            shown.forEach { it ->
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable { onPick(it) }.padding(horizontal = 6.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TokenMark(it.symbol, 38.dp, vm.iconFor(it))
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(it.symbol, style = Type.BodyStrong, maxLines = 1)
+                            if (it.onNear && it.nearContract !in known) Text("  unverified", style = Type.Caption, color = Tv.Warn)
+                        }
+                        Text(if (it.onNear) "NEAR" + (it.nearContract?.let { c -> " · " + shortAccount(c, 18) } ?: "") else chainName(it), style = Type.Caption, color = Tv.Text2, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    val bal = if (showBalances) vm.tokens?.firstOrNull { tb -> tb.token.contract == it.nearContract } else null
+                    Text(
+                        bal?.let { b -> TokenAmount.format(b.raw, b.token.decimals) } ?: Markets.price(it.price?.toDouble()),
+                        style = Type.Body, color = Tv.Text2, maxLines = 1,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+/**
+ * Before a swap goes out: what is paid and what arrives. On mainnet a slide
+ * sends it; in a preview the same summary shows what mainnet would do.
+ */
+@Composable
+private fun ConfirmSheet(
+    vm: AppViewModel, f: IntentToken, t: IntentToken, raw: BigInteger, q: SwapQuote?, out: BigDecimal, recipient: String?, bridgeIn: Boolean, preview: Boolean,
+    onDismiss: () -> Unit, onConfirm: () -> Unit,
+) {
+    val pay = show(BigDecimal(raw).movePointLeft(f.decimals))
+    val atLeast = q?.let { show(BigDecimal(it.minAmountOut).movePointLeft(t.decimals)) }
+    val time = q?.timeEstimateSecs?.takeIf { it > 0 }?.let { if (it < 90) "~$it s" else "~${(it + 59) / 60} min" }
+    GlassSheet(onDismiss) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+            TokenMark(f.symbol, 52.dp, vm.iconFor(f))
+            Box(Modifier.padding(horizontal = 14.dp)) { TvIcon(Ic.Chevron, 22.dp, Tv.Text2) }
+            TokenMark(t.symbol, 52.dp, vm.iconFor(t))
+        }
+        Spacer(Modifier.height(14.dp))
+        Text("$pay ${f.symbol}", style = Type.H2, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+        Text("for ${atLeast?.let { "at least $it" } ?: "≈ ${show(out)}"} ${t.symbol}" + (if (!t.onNear) " on ${chainName(t)}" else ""), style = Type.Body, color = Tv.Text2, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(18.dp))
+        val approve = if (vm.wallet?.phoneOnly == true) "Approve with your fingerprint" else "Tap your card, then fingerprint"
+        val steps = if (bridgeIn) listOf(
+            Ic.Qr to "Get a deposit address on ${chainName(f)}",
+            Ic.Send to "Send $pay ${f.symbol} from your ${chainName(f)} wallet",
+            Ic.Receive to "Get ≈ ${show(out)} ${t.symbol} here",
+        ) else listOf(
+            Ic.Card to approve,
+            Ic.Send to "Pay $pay ${f.symbol} to NEAR Intents",
+            Ic.Receive to ("Get ${atLeast ?: "≈ " + show(out)} ${t.symbol}" + (recipient?.let { " at ${shortAccount(it, 14)}" } ?: "") + (time?.let { " · $it" } ?: "")),
+        )
+        Column(Modifier.fillMaxWidth().surface(22.dp).padding(horizontal = 16.dp, vertical = 6.dp)) {
+            steps.forEach { (icon, text) ->
+                Row(Modifier.padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconTile(icon, Tv.Text, Tv.GlassStrong, 34.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Text(text, style = Type.Body, modifier = Modifier.weight(1f))
+                }
+            }
+        }
+        if (t.onNear && t.nearContract !in KnownTokens.on(Network.MAINNET).map { it.contract }) {
+            Caption("${t.symbol} isn't on Tapvault's list: ${shortAccount(t.nearContract ?: "", 28)}", Modifier.fillMaxWidth().padding(top = 10.dp), align = TextAlign.Center, color = Tv.Warn)
+        }
+        Spacer(Modifier.height(18.dp))
+        if (preview) {
+            if (vm.network.isTestnet && vm.mainnetEnabled) {
+                TvButton("Switch to mainnet", Modifier.fillMaxWidth(), icon = Ic.Layers, enabled = vm.busy == null) { onDismiss(); vm.switchNetwork(Network.MAINNET) }
+            } else {
+                TvButton("Available on mainnet", Modifier.fillMaxWidth(), icon = Ic.Lock, enabled = false) {}
+            }
+            Caption("Preview · nothing is sent", Modifier.fillMaxWidth().padding(top = 8.dp), align = TextAlign.Center, color = Tv.Text3)
+        } else {
+            SlideToConfirm(if (recipient != null) "Slide to bridge" else "Slide to swap") { onConfirm() }
+            Spacer(Modifier.height(6.dp))
+            TvButton("Edit", Modifier.fillMaxWidth(), Btn.Ghost) { onDismiss() }
+        }
+    }
 }
 
 @Composable
@@ -334,97 +489,12 @@ private fun DepositSheet(r: SwapRecord, onDismiss: () -> Unit) {
             }
             Text(r.depositAddress, style = Type.Body, modifier = Modifier.padding(top = 2.dp))
         }
-        Notice(
-            Ic.Warning, "Only ${r.from} on ${r.chain}",
-            "Send exactly ${r.amountIn}. Another token or chain is lost; less than that is refunded." +
-                (r.deadline?.let { " The address works until " + java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(it)) + "." } ?: ""),
-            Tv.Warn, Modifier.padding(top = 12.dp),
+        Caption(
+            "Only ${r.from} on ${r.chain}, exactly ${r.amountIn}." +
+                (r.deadline?.let { " Works until " + java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(it)) + "." } ?: ""),
+            Modifier.fillMaxWidth().padding(top = 10.dp), align = TextAlign.Center, color = Tv.Warn,
         )
         Spacer(Modifier.height(12.dp))
         TvButton("Done", Modifier.fillMaxWidth(), Btn.Secondary) { onDismiss() }
-    }
-}
-
-/** Buy or sell for cash through Ramp Network's page: KYC and payment happen there, never in Tapvault. */
-@Composable
-private fun RampPanel(vm: AppViewModel, buy: Boolean) {
-    val uri = LocalUriHandler.current
-    var asset by remember { mutableStateOf("NEAR") }
-    val usdc = KnownTokens.on(vm.network).firstOrNull { it.symbol == "USDC" }
-    var registered by remember { mutableStateOf<Boolean?>(null) }
-    LaunchedEffect(asset, vm.busy) {
-        registered = null
-        if (asset == "USDC" && usdc != null && vm.busy == null) registered = runCatching { vm.tokenRegistered(usdc.contract) }.getOrNull()
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Ramp.ASSETS.forEach { (sym, _) -> Chip(sym, selected = asset == sym) { asset = sym } }
-    }
-    Spacer(Modifier.height(14.dp))
-    Notice(
-        if (buy) Ic.Card else Ic.Send, if (buy) "Buy $asset with your bank card or transfer" else "Sell $asset for cash",
-        if (buy) "${Ramp.PROVIDER} opens in your browser with this wallet's account filled in. They check your identity and take the payment; Tapvault never sees your card or bank details. The $asset arrives here, usually within minutes."
-        else "${Ramp.PROVIDER} opens in your browser. When they show a deposit address and amount, come back and tap \"Pay the sale\": it's a normal payment from this wallet, approved with your card, so it follows your instant limits.",
-        Tv.Text2,
-    )
-    if (asset == "USDC" && registered == false && usdc != null) Notice(
-        Ic.Info, "Enable USDC first", "This wallet must be registered with USDC to receive it (about 0.00125 NEAR from your fee account).", Tv.Warn, Modifier.padding(top = 12.dp),
-    ) { TvButton("Enable USDC", Modifier.fillMaxWidth(), Btn.Secondary, height = 48.dp, enabled = vm.busy == null) { vm.enableToken(usdc) } }
-    Spacer(Modifier.height(14.dp))
-    TvButton(
-        "Continue with ${Ramp.PROVIDER}", Modifier.fillMaxWidth(), icon = Ic.External,
-        enabled = vm.busy == null && (asset != "USDC" || !buy || registered == true),
-    ) { uri.openUri(vm.rampUrl(buy, asset)) }
-    if (!buy) {
-        Spacer(Modifier.height(10.dp))
-        TvButton("Pay the sale", Modifier.fillMaxWidth(), Btn.Secondary, enabled = vm.busy == null) {
-            vm.openSend(AppViewModel.SendDraft(token = if (asset == "USDC") usdc else null, label = "Sale via ${Ramp.PROVIDER}"))
-        }
-    }
-    Caption("Availability, limits and fees depend on your country and are set by ${Ramp.PROVIDER}.", Modifier.padding(top = 12.dp, start = 4.dp), color = Tv.Text3)
-}
-
-@Composable
-private fun PickRow(label: String, value: String, onClick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Tv.Glass).clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(label, style = Type.Caption, color = Tv.Text2)
-            Text(value, style = Type.BodyStrong, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        TvIcon(Ic.ChevronDown, 18.dp, Tv.Text2)
-    }
-}
-
-private class PickItem(val title: String, val sub: String, val trusted: Boolean)
-
-/** A searchable list sheet for tokens and chains. */
-@Composable
-private fun TokenListSheet(title: String, items: List<PickItem>, onDismiss: () -> Unit, onPick: (Int) -> Unit) {
-    var q by remember { mutableStateOf("") }
-    GlassSheet(onDismiss) {
-        Text(title, style = Type.H2)
-        Spacer(Modifier.height(12.dp))
-        if (items.size > 8) TvField("", q, { q = it }, placeholder = "Search")
-        Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()).padding(top = 10.dp)) {
-            Group {
-                var first = true
-                items.forEachIndexed { i, it ->
-                    if (q.isNotBlank() && !it.title.contains(q.trim(), ignoreCase = true) && !it.sub.contains(q.trim(), ignoreCase = true)) return@forEachIndexed
-                    if (!first) GroupDivider()
-                    first = false
-                    Row(Modifier.fillMaxWidth().clickable { onPick(i) }.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        TokenMark(it.title, 34.dp)
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(it.title, style = Type.BodyStrong, maxLines = 1)
-                            Caption(it.sub, color = if (it.trusted) Tv.Text2 else Tv.Warn)
-                        }
-                    }
-                }
-            }
-        }
-        Spacer(Modifier.height(10.dp))
     }
 }

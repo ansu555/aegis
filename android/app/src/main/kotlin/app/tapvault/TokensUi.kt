@@ -55,14 +55,14 @@ import kotlinx.coroutines.launch
 fun TokensSection(vm: AppViewModel, modifier: Modifier = Modifier) {
     var manage by remember { mutableStateOf(false) }
     var open by remember { mutableStateOf<TokenBalance?>(null) }
-    LaunchedEffect(vm.activeId, vm.network) { vm.refreshTokens(); vm.refreshPrices() }
+    LaunchedEffect(vm.activeId, vm.network) { vm.refreshTokens(); vm.refreshPrices(); vm.refreshMarkets() }
     Column(modifier) {
         SectionHeader("Tokens", action = "Manage") { manage = true }
         Group {
-            TokenRow("NEAR", "NEAR", vm.balance?.let { Near.format(it, 4) }, verified = true, usd = vm.balance?.let { b -> vm.prices?.value(null, b, 24) })
+            TokenRow("NEAR", "NEAR", vm.balance?.let { Near.format(it, 4) }, verified = true, usd = vm.balance?.let { b -> vm.prices?.value(null, b, 24) }, icon = vm.iconForContract(null))
             vm.shownTokens.forEach { tb ->
                 GroupDivider()
-                TokenRow(tb.token.symbol, tb.token.name, TokenAmount.format(tb.raw, tb.token.decimals), tb.token.verified, vm.prices?.value(tb.token.contract, tb.raw, tb.token.decimals)) { open = tb }
+                TokenRow(tb.token.symbol, tb.token.name, TokenAmount.format(tb.raw, tb.token.decimals), tb.token.verified, vm.prices?.value(tb.token.contract, tb.raw, tb.token.decimals), vm.iconForContract(tb.token.contract)) { open = tb }
             }
             if (vm.tokens == null) {
                 GroupDivider()
@@ -77,12 +77,12 @@ fun TokensSection(vm: AppViewModel, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun TokenRow(symbol: String, name: String, amount: String?, verified: Boolean, usd: java.math.BigDecimal? = null, onClick: (() -> Unit)? = null) {
+private fun TokenRow(symbol: String, name: String, amount: String?, verified: Boolean, usd: java.math.BigDecimal? = null, icon: String? = null, onClick: (() -> Unit)? = null) {
     Row(
         Modifier.fillMaxWidth().let { if (onClick != null) it.clickable(onClick = onClick) else it }.heightIn(min = 64.dp).padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        TokenMark(symbol)
+        TokenMark(symbol, url = icon)
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(symbol, style = Type.BodyStrong, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -96,9 +96,15 @@ private fun TokenRow(symbol: String, name: String, amount: String?, verified: Bo
     }
 }
 
-/** A token's mark: its symbol's first letter in a circle (token icons are whatever their creator uploaded, so none are drawn). */
+/**
+ * A token's mark: its CoinGecko logo when [url] is given (never an icon the
+ * token's creator uploaded), else its symbol's first letter in a circle.
+ */
 @Composable
-fun TokenMark(symbol: String, size: Dp = 40.dp) {
+fun TokenMark(symbol: String, size: Dp = 40.dp, url: String? = null) = CoinIcon(url, symbol, size)
+
+@Composable
+fun LetterMark(symbol: String, size: Dp = 40.dp) {
     Box(Modifier.size(size).background(Tv.GlassStrong, CircleShape).glassRim(size / 2, shape = CircleShape), contentAlignment = Alignment.Center) {
         Text(symbol.trim().firstOrNull()?.uppercase() ?: "?", style = Type.Title.copy(fontSize = (size.value * 0.4f).sp), color = Tv.Text)
     }
@@ -164,7 +170,7 @@ fun ManageTokensSheet(vm: AppViewModel, onDismiss: () -> Unit, onOpen: (TokenBal
                         if (i > 0) GroupDivider()
                         val shown = vm.tokenPrefs.isShown(tb.token.contract, tb.token.verified, tb.raw)
                         Row(Modifier.fillMaxWidth().clickable { onOpen(tb) }.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            TokenMark(tb.token.symbol, 36.dp)
+                            TokenMark(tb.token.symbol, 36.dp, vm.iconForContract(tb.token.contract))
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(tb.token.symbol, style = Type.BodyStrong, maxLines = 1)
@@ -216,7 +222,7 @@ fun TokenSheet(vm: AppViewModel, tb: TokenBalance, onDismiss: () -> Unit) {
     }
     GlassSheet(onDismiss) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TokenMark(t.symbol, 48.dp)
+            TokenMark(t.symbol, 48.dp, vm.iconForContract(t.contract))
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(t.symbol, style = Type.H2, maxLines = 1, overflow = TextOverflow.Ellipsis)
